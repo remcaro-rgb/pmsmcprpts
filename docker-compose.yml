@@ -51,5 +51,15 @@ services:
     depends_on:
       - mcp
 
+  # Chat website at http://localhost:3000; proxies /api/chat to the agent.
+  web:
+    build: ./web
+    environment:
+      AGENT_URL: http://agent:8001
+    ports:
+      - "127.0.0.1:${PMS_WEB_PORT:-3000}:3000"
+    depends_on:
+      - agent
+
 volumes:
   pgdata:

@@ -4,27 +4,35 @@ A chatbot website that answers questions about a hotel property-management-syste
 database and generates spreadsheets, charts, PowerPoint decks and PDF/Word reports.
 See [docs/design.md](docs/design.md) for the full design.
 
-**Status:** milestones 1–3 — sample PMS database, the MCP server that exposes it, and the Claude
-agent API. The web UI and document generation come next.
+**Status:** milestones 1–4: the sample PMS database, the MCP server that exposes it, the Claude
+agent API and the chat website. Document generation (charts, Excel, PowerPoint, PDF/Word) is next.
 
 ## Quick start
 
 ```bash
-cp .env.example .env
+cp .env.example .env         # then set ANTHROPIC_API_KEY
 docker compose up -d db      # Postgres 16 with the pms schema and read-only role
 docker compose run --rm seed # load ~2 years of synthetic data (~1 minute)
-docker compose up -d mcp     # MCP server at http://localhost:8000/mcp
-docker compose up -d agent   # Claude agent API at http://localhost:8001 (needs ANTHROPIC_API_KEY in .env)
+docker compose up -d         # MCP server, Claude agent API and the website
 ```
 
-Ask a question from the command line:
+Open http://localhost:3000 and ask a question. Services:
+
+| Service | URL |
+|---|---|
+| Website | http://localhost:3000 |
+| Agent API | http://localhost:8001/api/chat |
+| MCP server | http://localhost:8000/mcp |
+| Postgres | `postgresql://pms_readonly:pms_readonly@localhost:5432/pms` |
+
+Or ask from the command line:
 
 ```bash
 curl -N http://localhost:8001/api/chat -H 'content-type: application/json' \
   -d '{"message": "How did occupancy and ADR compare across the three hotels last quarter?"}'
 ```
 
-Set `PMS_DB_PORT` / `PMS_MCP_PORT` / `PMS_AGENT_PORT` to use ports other than 5432 / 8000 / 8001.
+Set `PMS_DB_PORT` / `PMS_MCP_PORT` / `PMS_AGENT_PORT` / `PMS_WEB_PORT` to use other ports.
 
 ## Sample data
 
@@ -144,6 +152,29 @@ Details:
 Run it locally with `pip install -r agent/requirements.txt`, then `python -m pms_agent` from
 `agent/` (set `ANTHROPIC_API_KEY` and `PMS_MCP_URL`).
 
+## Website
+
+`web/` is a Next.js chat app. Answers stream in as Markdown. Each tool step is a collapsible card
+with its input (the SQL, or the KPI parameters) and the result table. There's a Stop button and
+starter questions, and it works in light and dark mode and at phone width. The browser only talks
+to the site's own `/api/chat` route, which proxies the agent's event stream (`AGENT_URL`).
+
+Develop locally (with the agent running on port 8001):
+
+```bash
+cd web && npm install
+AGENT_URL=http://localhost:8001 npm run dev
+```
+
+To try the UI without an Anthropic API key, run the stand-in agent instead of the real one. It is
+the real agent service and MCP server with a scripted stand-in for Claude that runs real queries
+and answers from their results:
+
+```bash
+PMS_DATABASE_URL=postgresql://pms_readonly:pms_readonly@localhost:5432/pms \
+  python web/e2e/fake_agent.py --port 8001
+```
+
 ## Tests
 
 ```bash
@@ -159,3 +190,17 @@ pytest
   client against the seeded database.
 - `agent/tests` drive the tool loop and the SSE endpoint with a scripted fake Claude client
   (no API key needed) against real in-process MCP servers.
+
+Website:
+
+```bash
+cd web
+npm test                      # unit tests: SSE parser and stream-event reducer
+npm run build
+PMS_DATABASE_URL=postgresql://pms_readonly:pms_readonly@localhost:5432/pms npm run e2e
+```
+
+The browser tests start the stand-in agent and the production build, then check a starter
+question end to end (tool card, SQL, result table, Markdown answer), follow-up questions in one
+conversation, Stop, and refusals. If Playwright's own Chromium isn't installed, set
+`PW_CHROMIUM_PATH` to a Chromium binary.

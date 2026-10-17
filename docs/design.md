@@ -114,7 +114,7 @@ returns a `dataset_id` plus a preview; doc tools accept `dataset_id`.
 db/            schema.sql, views.sql, seed.py
 mcp_server/    pms_mcp/{server,db,sql_guard,datasets}.py (+ doc tools later), tests/
 agent/         pms_agent/{app,loop,config,prompts,conversations}.py, tests/
-web/           Next.js app
+web/           Next.js app: app/ (page + /api/chat proxy), components/, lib/ (SSE, reducer), e2e/
 docker-compose.yml, .env.example, README.md
 ```
 
@@ -134,10 +134,10 @@ docker-compose.yml, .env.example, README.md
 
 ## Milestones
 
-1. DB schema, views, seeder, docker-compose with Postgres.
-2. MCP server: `describe_schema`, `run_sql`, `get_kpis` + tests (usable from Claude Desktop immediately).
-3. Agent service with Claude tool loop + SSE.
-4. Web chat UI with streaming and SQL/table display.
+1. ✅ DB schema, views, seeder, docker-compose with Postgres.
+2. ✅ MCP server: `describe_schema`, `run_sql`, `get_kpis` + tests (usable from Claude Desktop immediately).
+3. ✅ Agent service with Claude tool loop + SSE.
+4. ✅ Web chat UI with streaming and SQL/table display.
 5. Doc tools: charts → xlsx → pptx → pdf/docx, with artifact cards.
 6. Golden-question evals, polish, README.
 

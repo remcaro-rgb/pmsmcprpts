@@ -1,0 +1,69 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --color-accent: #2563eb;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  @apply bg-stone-50 text-stone-900 antialiased dark:bg-stone-950 dark:text-stone-100;
+}
+
+/* Markdown answer styling (no typography plugin needed). */
+.markdown {
+  @apply text-[15px] leading-7;
+}
+.markdown > * + * {
+  @apply mt-3;
+}
+.markdown h1,
+.markdown h2,
+.markdown h3 {
+  @apply mt-5 font-semibold;
+}
+.markdown h1 {
+  @apply text-xl;
+}
+.markdown h2 {
+  @apply text-lg;
+}
+.markdown ul {
+  @apply list-disc pl-6;
+}
+.markdown ol {
+  @apply list-decimal pl-6;
+}
+.markdown li + li {
+  @apply mt-1;
+}
+.markdown a {
+  @apply text-accent underline;
+}
+.markdown code {
+  @apply rounded bg-stone-200/70 px-1 py-0.5 font-mono text-[13px] dark:bg-stone-800;
+}
+.markdown pre {
+  @apply overflow-x-auto rounded-lg bg-stone-900 p-3 text-stone-100;
+}
+.markdown pre code {
+  @apply bg-transparent p-0;
+}
+.markdown table {
+  @apply block w-max max-w-full overflow-x-auto border-collapse text-sm;
+}
+.markdown th,
+.markdown td {
+  @apply whitespace-nowrap border-b border-stone-200 px-3 py-1.5 text-left dark:border-stone-800;
+}
+.markdown th {
+  @apply font-semibold text-stone-600 dark:text-stone-300;
+}
+.markdown blockquote {
+  @apply border-l-4 border-stone-300 pl-3 text-stone-600 dark:border-stone-700 dark:text-stone-400;
+}
