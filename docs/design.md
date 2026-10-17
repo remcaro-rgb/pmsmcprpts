@@ -88,12 +88,16 @@ returns a `dataset_id` plus a preview; doc tools accept `dataset_id`.
 
 ## Agent service (FastAPI)
 
-- `POST /api/chat` — `{conversation_id, message}` → SSE events: `text`, `tool_start`,
-  `tool_result`, `artifact`, `done`, `error`.
-- `GET /files/{file_id}` — serves generated files.
+- `POST /api/chat` — `{conversation_id, message}` → SSE events: `conversation`, `thinking`,
+  `text`, `tool_start`, `tool_call`, `tool_result`, `done`, `refusal`, `error` (`artifact` comes
+  with the document tools).
+- `GET /files/{file_id}` — serves generated files (milestone 5).
+- Claude Opus 5.5 at `medium` effort with summarized adaptive thinking; refusal fallbacks
+  (`fallbacks: "default"`) on. A failed turn is rolled back so history stays valid.
 - System prompt: role, KPI glossary, "always inspect schema before writing SQL", "state the
   date range and hotels you assumed", "prefer views for KPIs".
-- Prompt caching on the system prompt + tool definitions; max ~15 tool iterations per turn.
+- Prompt caching (top-level `cache_control`) over system prompt, tools and the append-only
+  history; max 15 tool steps per turn.
 - Conversations kept in memory (demo); easy to move to Postgres later.
 
 ## Web UI (Next.js)
@@ -109,7 +113,7 @@ returns a `dataset_id` plus a preview; doc tools accept `dataset_id`.
 ```
 db/            schema.sql, views.sql, seed.py
 mcp_server/    pms_mcp/{server,db,sql_guard,datasets}.py (+ doc tools later), tests/
-agent/         main.py (FastAPI), claude_loop.py, mcp_client.py, tests/
+agent/         pms_agent/{app,loop,config,prompts,conversations}.py, tests/
 web/           Next.js app
 docker-compose.yml, .env.example, README.md
 ```

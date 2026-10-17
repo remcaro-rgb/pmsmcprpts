@@ -73,25 +73,31 @@ def build_server(dsn: str, statement_timeout_ms: int = 15000) -> MCPServer:
 
     async def load_schema() -> dict[str, Any]:
         if not schema_cache:
-            settings = await db.query(
-                "SELECT business_date, data_start, (SELECT max(stay_date) FROM pms.reservation_nights) "
-                "FROM pms.system_settings")
-            hotels = await db.query(
-                "SELECT code, name, city, country, star_rating, total_rooms, currency "
-                "FROM pms.hotels ORDER BY id")
-            relations = await db.query(SCHEMA_SQL)
-            business_date, data_start, data_end = settings.rows[0]
-            schema_cache.update({
-                "business_date": business_date,
-                "data_start": data_start,
-                "data_end": data_end,
-                "hotels": [dict(zip([c["name"] for c in hotels.columns], r)) for r in hotels.rows],
-                "relations": [
-                    {"name": name, "kind": kind, "comment": comment, "columns": columns}
-                    for name, kind, comment, columns in relations.rows
-                ],
-            })
+            try:
+                schema_cache.update(await _read_schema())
+            except QueryError as e:
+                raise ToolError(str(e)) from e
         return schema_cache
+
+    async def _read_schema() -> dict[str, Any]:
+        settings = await db.query(
+            "SELECT business_date, data_start, (SELECT max(stay_date) FROM pms.reservation_nights) "
+            "FROM pms.system_settings")
+        hotels = await db.query(
+            "SELECT code, name, city, country, star_rating, total_rooms, currency "
+            "FROM pms.hotels ORDER BY id")
+        relations = await db.query(SCHEMA_SQL)
+        business_date, data_start, data_end = settings.rows[0]
+        return {
+            "business_date": business_date,
+            "data_start": data_start,
+            "data_end": data_end,
+            "hotels": [dict(zip([c["name"] for c in hotels.columns], r)) for r in hotels.rows],
+            "relations": [
+                {"name": name, "kind": kind, "comment": comment, "columns": columns}
+                for name, kind, comment, columns in relations.rows
+            ],
+        }
 
     async def run(query, params, source) -> Dataset:
         try:

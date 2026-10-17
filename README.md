@@ -4,7 +4,8 @@ A chatbot website that answers questions about a hotel property-management-syste
 database and generates spreadsheets, charts, PowerPoint decks and PDF/Word reports.
 See [docs/design.md](docs/design.md) for the full design.
 
-**Status:** milestones 1–2 — sample PMS database and the MCP server that exposes it.
+**Status:** milestones 1–3 — sample PMS database, the MCP server that exposes it, and the Claude
+agent API. The web UI and document generation come next.
 
 ## Quick start
 
@@ -13,10 +14,17 @@ cp .env.example .env
 docker compose up -d db      # Postgres 16 with the pms schema and read-only role
 docker compose run --rm seed # load ~2 years of synthetic data (~1 minute)
 docker compose up -d mcp     # MCP server at http://localhost:8000/mcp
-psql postgresql://pms_readonly:pms_readonly@localhost:5432/pms
+docker compose up -d agent   # Claude agent API at http://localhost:8001 (needs ANTHROPIC_API_KEY in .env)
 ```
 
-Set `PMS_DB_PORT` / `PMS_MCP_PORT` to use ports other than 5432 / 8000.
+Ask a question from the command line:
+
+```bash
+curl -N http://localhost:8001/api/chat -H 'content-type: application/json' \
+  -d '{"message": "How did occupancy and ADR compare across the three hotels last quarter?"}'
+```
+
+Set `PMS_DB_PORT` / `PMS_MCP_PORT` / `PMS_AGENT_PORT` to use ports other than 5432 / 8000 / 8001.
 
 ## Sample data
 
@@ -105,10 +113,41 @@ Claude Desktop (stdio), in `claude_desktop_config.json`:
 Run it locally with `pip install -r mcp_server/requirements.txt`, then
 `python -m pms_mcp --help` from `mcp_server/`.
 
+## Agent API
+
+`agent/` is a FastAPI service that runs Claude with the MCP server's tools.
+
+`POST /api/chat` with `{"message": "...", "conversation_id": "..."}` (omit the id to start a new
+conversation) returns a stream of server-sent events:
+
+| Event | Data |
+|---|---|
+| `conversation` | `{id}`: pass it back to continue the conversation |
+| `thinking` | `{text}`: summarized reasoning, streamed |
+| `tool_start` | `{id, name}`: a tool call began |
+| `tool_call` | `{id, name, input}`: the complete tool input (e.g. the SQL) |
+| `tool_result` | `{id, name, is_error, result}`: the tool's result, tables trimmed to 50 preview rows |
+| `text` | `{text}`: answer text, streamed |
+| `done` | `{stop_reason, usage}` |
+| `refusal` / `error` | `{message, ...}`: the turn failed and is not kept in the history |
+
+Details:
+- **Model:** `claude-opus-5-5` at `medium` effort (`PMS_CLAUDE_MODEL`, `PMS_CLAUDE_EFFORT`), with
+  adaptive thinking and up to 15 tool steps per message (`PMS_MAX_TOOL_STEPS`).
+- **Prompt caching:** the system prompt, tools and conversation history are cached between steps.
+  Histories are append-only so the cache stays warm.
+- **Refusal fallbacks:** if Claude's safety filters decline a request, the API retries it on a
+  recommended fallback model (`fallbacks: "default"`; set `PMS_SERVER_FALLBACKS=false` on
+  platforms other than the Claude API).
+- **Storage:** conversations are kept in memory and lost on restart.
+
+Run it locally with `pip install -r agent/requirements.txt`, then `python -m pms_agent` from
+`agent/` (set `ANTHROPIC_API_KEY` and `PMS_MCP_URL`).
+
 ## Tests
 
 ```bash
-pip install -r db/requirements-dev.txt -r mcp_server/requirements-dev.txt
+pip install -r db/requirements-dev.txt -r mcp_server/requirements-dev.txt -r agent/requirements-dev.txt
 PMS_TEST_ADMIN_URL=postgresql://pms:pms@localhost:5432/postgres \
 PMS_TEST_DATABASE_URL=postgresql://pms_readonly:pms_readonly@localhost:5432/pms \
 pytest
@@ -118,3 +157,5 @@ pytest
   double-booked rooms, statuses consistent with the business date, closed folios fully paid, KPI sanity).
 - `mcp_server/tests` unit-test the SQL guard and call every tool through an in-process MCP
   client against the seeded database.
+- `agent/tests` drive the tool loop and the SSE endpoint with a scripted fake Claude client
+  (no API key needed) against real in-process MCP servers.
