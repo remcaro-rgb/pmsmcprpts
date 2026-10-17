@@ -67,9 +67,11 @@ channel, and realistic ancillary spend.
 
 Data:
 - `describe_schema()` — tables, columns, views, and KPI definitions (also exposed as an MCP resource).
-- `run_sql(query, limit=1000)` — single `SELECT`/`WITH` only (parsed with `sqlglot`), read-only
-  role, `statement_timeout` 15s, row cap. Returns columns + rows + truncated flag.
-- `get_kpis(hotel_ids, start, end, granularity)` — fast path over `v_daily_kpis`.
+- `run_sql(query, preview_rows=100)` — single `SELECT`/`WITH` only (parsed with `sqlglot`),
+  read-only role and transaction, `statement_timeout` 15s, 50k-row cap. Returns `dataset_id`,
+  columns, row count, truncated flag and a preview.
+- `get_kpis(start, end, hotels, granularity, by_hotel)` — fast path over `v_daily_kpis`.
+- `get_dataset(dataset_id, offset, limit)` — page through a stored result.
 
 Documents (each takes a `dataset` = query result or inline rows, so data flows SQL → doc
 without the LLM re-typing numbers):
@@ -106,7 +108,7 @@ returns a `dataset_id` plus a preview; doc tools accept `dataset_id`.
 
 ```
 db/            schema.sql, views.sql, seed.py
-mcp_server/    server.py, tools/{data,charts,xlsx,pptx,report}.py, tests/
+mcp_server/    pms_mcp/{server,db,sql_guard,datasets}.py (+ doc tools later), tests/
 agent/         main.py (FastAPI), claude_loop.py, mcp_client.py, tests/
 web/           Next.js app
 docker-compose.yml, .env.example, README.md

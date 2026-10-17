@@ -27,5 +27,16 @@ services:
         condition: service_healthy
     restart: "no"
 
+  # MCP server (streamable HTTP at http://localhost:8000/mcp), connects as the read-only role.
+  mcp:
+    build: ./mcp_server
+    environment:
+      PMS_DATABASE_URL: postgresql://pms_readonly:${PMS_READONLY_PASSWORD:-pms_readonly}@db:5432/${POSTGRES_DB:-pms}
+    ports:
+      - "127.0.0.1:${PMS_MCP_PORT:-8000}:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+
 volumes:
   pgdata:
