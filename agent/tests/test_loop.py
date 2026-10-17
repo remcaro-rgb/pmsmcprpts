@@ -177,3 +177,10 @@ def test_service_token_is_sent_to_url_targets():
     assert not isinstance(with_token._mcp().server, str)  # a transport carrying the bearer header
     without = Agent(Settings(mcp_url="http://mcp:7070/mcp", mcp_token=None), FakeClient())
     assert without._mcp().server == "http://mcp:7070/mcp"
+
+
+def test_service_bearer_carries_the_website_user():
+    from pms_agent.loop import service_bearer
+
+    assert service_bearer("t" * 40, None) == "t" * 40
+    assert service_bearer("t" * 40, "ann@hotel.example") == "t" * 40 + ":YW5uQGhvdGVsLmV4YW1wbGU"

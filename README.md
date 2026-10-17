@@ -232,6 +232,27 @@ download. Spreadsheets, decks and reports appear as download cards. There's a St
 starter questions, and it works in light and dark mode and at phone width. The browser only talks
 to the site's own `/api/chat` and `/api/files/{id}` routes, which proxy the agent (`AGENT_URL`).
 
+### Sign-in
+
+Set `WEB_AUTH=oidc` to require sign-in. The website signs people in with OpenID Connect (Google,
+Microsoft Entra ID, Okta, Auth0, Keycloak…) and lets in only the accounts on the same allowlist as
+the MCP connector (`PMS_ALLOWED_EMAILS` / `PMS_ALLOWED_DOMAINS`). It needs:
+
+| Variable | |
+|---|---|
+| `WEB_PUBLIC_URL` | Where people open the site, e.g. `http://localhost:5050`. Register `${WEB_PUBLIC_URL}/auth/callback` as a redirect URI at the provider. |
+| `WEB_SESSION_SECRET` | 32+ characters (`openssl rand -hex 32`); encrypts the session cookie. |
+| `PMS_OIDC_ISSUER`, `PMS_OIDC_CLIENT_ID`, `PMS_OIDC_CLIENT_SECRET` | The provider app, shared with the MCP server. Set `WEB_OIDC_CLIENT_ID` / `WEB_OIDC_CLIENT_SECRET` to use a separate app for the website. |
+
+Sessions are an encrypted, HTTP-only cookie that lasts 12 hours; the allowlist is re-checked on
+every request, so removing someone takes effect at once. With sign-in on, the chat rate limit
+counts per user, each conversation belongs to the person who started it, and the agent tells the
+MCP server who is asking (the service token followed by the user's email), so stored query results
+are kept per person. The agent trusts the user the website sends it, so keep the agent port private
+(compose binds it to 127.0.0.1).
+
+### Develop
+
 Develop locally (with the agent running on port 7001):
 
 ```bash
@@ -269,10 +290,13 @@ Website:
 
 ```bash
 cd web
-npm test                      # unit tests: SSE parser, stream-event reducer, chart hover
+npm test                      # unit tests: SSE parser, stream-event reducer, chart hover, sign-in helpers
 npm run build
 PMS_DATABASE_URL=postgresql://pms_readonly:pms_readonly@localhost:5432/pms npm run e2e
 ```
+
+The browser tests start a second copy of the site with sign-in on, against a test identity
+provider (`web/e2e/fake_oidc.py`) that signs in as whatever email is typed.
 
 The browser tests start the stand-in agent and the production build, then check a starter
 question end to end (tool card, SQL, result table, Markdown answer), follow-up questions in one

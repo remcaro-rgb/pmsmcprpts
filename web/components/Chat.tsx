@@ -12,7 +12,7 @@ const STARTERS = [
   "Who are our top 10 guests by total spend?",
 ];
 
-export default function Chat() {
+export default function Chat({ user = null }: { user?: string | null }) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [input, setInput] = useState("");
@@ -93,6 +93,14 @@ export default function Chat() {
         >
           New chat
         </button>
+        {user && (
+          <form action="/auth/logout" method="post" className="flex shrink-0 items-center gap-2">
+            <span className="hidden max-w-48 truncate text-xs text-stone-500 sm:inline" title={user}>{user}</span>
+            <button className="whitespace-nowrap rounded-lg px-2 py-1.5 text-sm text-stone-600 hover:bg-stone-100 dark:text-stone-300 dark:hover:bg-stone-900">
+              Sign out
+            </button>
+          </form>
+        )}
       </header>
 
       <div

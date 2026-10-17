@@ -76,6 +76,19 @@ services:
     environment:
       AGENT_URL: http://agent:7001
       CHAT_RATE_LIMIT: ${CHAT_RATE_LIMIT:-20/600}
+      # Website sign-in (off unless WEB_AUTH=oidc); see .env.example.
+      WEB_AUTH: ${WEB_AUTH:-}
+      WEB_PUBLIC_URL: ${WEB_PUBLIC_URL:-}
+      WEB_SESSION_SECRET: ${WEB_SESSION_SECRET:-}
+      WEB_OIDC_CLIENT_ID: ${WEB_OIDC_CLIENT_ID:-}
+      WEB_OIDC_CLIENT_SECRET: ${WEB_OIDC_CLIENT_SECRET:-}
+      PMS_OIDC_ISSUER: ${PMS_OIDC_ISSUER:-}
+      PMS_OIDC_CLIENT_ID: ${PMS_OIDC_CLIENT_ID:-}
+      PMS_OIDC_CLIENT_SECRET: ${PMS_OIDC_CLIENT_SECRET:-}
+      PMS_ALLOWED_EMAILS: ${PMS_ALLOWED_EMAILS:-}
+      PMS_ALLOWED_DOMAINS: ${PMS_ALLOWED_DOMAINS:-}
+      PMS_ALLOW_ANY_USER: ${PMS_ALLOW_ANY_USER:-}
+      TRUST_PROXY: ${WEB_TRUST_PROXY:-false}
     ports:
       - "127.0.0.1:${PMS_WEB_PORT:-5050}:5050"
     depends_on:

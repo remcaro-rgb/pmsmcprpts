@@ -22,7 +22,7 @@ from mcp.client import Client
 from mcp.client.streamable_http import streamable_http_client
 from mcp.shared._httpx_utils import create_mcp_http_client
 
-from pms_mcp.auth import AuthConfig
+from pms_mcp.auth import SERVICE_USER, AuthConfig, service_token_user
 from pms_mcp.server import build_server
 
 DSN = os.environ.get("PMS_TEST_DATABASE_URL")
@@ -206,6 +206,26 @@ async def test_service_token_for_the_website(server):
     async with mcp_client(base, SERVICE_TOKEN) as c:
         r = await c.call_tool("get_kpis", {"start": "2026-01-01", "end": "2026-01-31", "by_hotel": False})
         assert not r.is_error
+    # Acting for a website user: their own dataset store, and other users can't read it.
+    ann = SERVICE_TOKEN + ":" + base64.urlsafe_b64encode(b"ann@hotel.example").decode().rstrip("=")
+    bob = SERVICE_TOKEN + ":" + base64.urlsafe_b64encode(b"bob@hotel.example").decode().rstrip("=")
+    async with mcp_client(base, ann) as c:
+        r = await c.call_tool("run_sql", {"query": "SELECT code FROM pms.hotels ORDER BY code"})
+        dataset_id = r.structured_content["dataset_id"]
+        assert not (await c.call_tool("get_dataset", {"dataset_id": dataset_id})).is_error
+    async with mcp_client(base, bob) as c:
+        assert (await c.call_tool("get_dataset", {"dataset_id": dataset_id})).is_error
+
+
+def test_service_token_user():
+    token = "s" * 40
+    assert service_token_user(token, token) == SERVICE_USER
+    assert service_token_user(token + ":YW5uQGhvdGVsLmV4YW1wbGU", token) == "ann@hotel.example"
+    assert service_token_user("x" * 40, token) is None
+    assert service_token_user(token + "extra", token) is None
+    assert service_token_user(token[:-1], token) is None
+    assert service_token_user(token + ":bm90LWFuLWVtYWls", token) is None  # "not-an-email"
+    assert service_token_user(token + ":%%%", token) is None
 
 
 def test_config_from_env():

@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 import anthropic
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
@@ -53,15 +53,21 @@ def create_app(settings: Settings | None = None, client: Any = None, mcp_target:
                             content_disposition_type="inline" if inline else "attachment")
 
     @app.post("/api/chat")
-    async def chat(req: ChatRequest) -> StreamingResponse:
-        conv = store.get_or_create(req.conversation_id)
+    async def chat(req: ChatRequest, x_pms_user: str | None = Header(default=None)) -> StreamingResponse:
+        # Set by the website after sign-in. The agent is only reachable from the website, which
+        # strips the header from browser requests, so it can be trusted here.
+        user = x_pms_user.strip().lower() if x_pms_user and x_pms_user.strip() else None
+        try:
+            conv = store.get_or_create(req.conversation_id, user)
+        except LookupError:
+            raise HTTPException(404, "Conversation not found.") from None
         if conv.lock.locked():
             raise HTTPException(409, "This conversation is already answering a message.")
 
         async def stream() -> AsyncIterator[str]:
             async with conv.lock:
                 yield _sse("conversation", {"id": conv.id})
-                async for ev in agent.run_turn(conv, req.message):
+                async for ev in agent.run_turn(conv, req.message, user):
                     yield _sse(ev["event"], ev["data"])
 
         return StreamingResponse(stream(), media_type="text/event-stream",

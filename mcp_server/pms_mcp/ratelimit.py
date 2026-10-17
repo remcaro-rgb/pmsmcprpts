@@ -53,7 +53,9 @@ class RateLimitMiddleware:
         if rule is None:
             return await self.app(scope, receive, send)
         auth = dict(scope.get("headers") or []).get(b"authorization", b"")
-        if self.exempt and hmac.compare_digest(auth, self.exempt):
+        # The website's agent: the service token, optionally followed by ":<user>".
+        if (self.exempt and hmac.compare_digest(auth[: len(self.exempt)], self.exempt)
+                and auth[len(self.exempt):len(self.exempt) + 1] in (b"", b":")):
             return await self.app(scope, receive, send)
 
         now = self.clock()

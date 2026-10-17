@@ -58,3 +58,20 @@ async def test_files_endpoint(tmp_path):
         assert r.headers["content-disposition"] == "attachment; filename*=utf-8''Q3%20report.xlsx"
         for bad in ("b" * 32, "..%2F" + "a" * 32, "a" * 32 + ".json"):
             assert (await http.get("/files/" + bad)).status_code == 404
+
+
+async def test_conversations_belong_to_the_signed_in_user():
+    client = FakeClient(text_reply("Hi Ann."), text_reply("Hi again."))
+    app = create_app(Settings(mcp_url="unused"), client, toy_server())
+    transport = httpx2.ASGITransport(app=app)
+    async with httpx2.AsyncClient(transport=transport, base_url="http://test") as http:
+        r = await http.post("/api/chat", json={"message": "Hello"}, headers={"x-pms-user": "Ann@Hotel.example"})
+        conv_id = parse_sse(r.text)[0][1]["id"]
+        other = await http.post("/api/chat", json={"message": "Peek", "conversation_id": conv_id},
+                                headers={"x-pms-user": "bob@hotel.example"})
+        assert other.status_code == 404
+        anonymous = await http.post("/api/chat", json={"message": "Peek", "conversation_id": conv_id})
+        assert anonymous.status_code == 404
+        again = await http.post("/api/chat", json={"message": "Again", "conversation_id": conv_id},
+                                headers={"x-pms-user": "ann@hotel.example"})
+        assert again.status_code == 200 and parse_sse(again.text)[0][1]["id"] == conv_id

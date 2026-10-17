@@ -50,6 +50,11 @@ async def test_forwarded_for_only_when_trusted_and_service_token_exempt():
         assert (await http.post("/token", headers={"x-forwarded-for": "2.2.2.2"})).status_code == 200
         for _ in range(5):
             assert (await http.post("/token", headers={"authorization": "Bearer " + "s" * 40})).status_code == 200
+            assert (await http.post("/token", headers={"authorization": "Bearer " + "s" * 40 + ":YQ"})).status_code == 200
+        # Anything else after the token is just another client.
+        statuses = [(await http.post("/token", headers={"authorization": "Bearer " + "s" * 41})).status_code
+                    for _ in range(3)]
+        assert statuses[-1] == 429
     async with make_client(clock) as http:  # untrusted: the header is ignored, the socket address counts
         await http.post("/token", headers={"x-forwarded-for": "3.3.3.3"})
         await http.post("/token", headers={"x-forwarded-for": "4.4.4.4"})

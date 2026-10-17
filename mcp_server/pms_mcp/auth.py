@@ -55,6 +55,26 @@ def current_user() -> str:
     return token.subject if token and token.subject else LOCAL_USER
 
 
+def service_token_user(token: str, service_token: str) -> str | None:
+    """Who a service-token bearer acts for, or None if it isn't the service token.
+
+    The website's agent sends `<service token>` or `<service token>:<base64url email>` to act
+    for the user signed in to the website."""
+    head, rest = token[: len(service_token)], token[len(service_token):]
+    if not hmac.compare_digest(head.encode(), service_token.encode()):
+        return None
+    if not rest:
+        return SERVICE_USER
+    if not rest.startswith(":"):
+        return None
+    try:
+        encoded = rest[1:]
+        email = base64.urlsafe_b64decode(encoded + "=" * (-len(encoded) % 4)).decode().strip().lower()
+    except (ValueError, UnicodeDecodeError):
+        return None
+    return email if "@" in email and len(email) <= 320 else None
+
+
 def _hash(value: str) -> str:
     return hashlib.sha256(value.encode()).hexdigest()
 
@@ -328,9 +348,11 @@ class OIDCAuthProvider:
                            refresh_token.resource)
 
     async def load_access_token(self, token: str) -> AccessToken | None:
-        if self.config.service_token and hmac.compare_digest(token, self.config.service_token):
-            return AccessToken(token=token, client_id=SERVICE_USER, scopes=[SCOPE], subject=SERVICE_USER,
-                               resource=f"{self.config.public_url}/mcp")
+        if self.config.service_token:
+            user = service_token_user(token, self.config.service_token)
+            if user is not None:
+                return AccessToken(token=token, client_id=SERVICE_USER, scopes=[SCOPE], subject=user,
+                                   resource=f"{self.config.public_url}/mcp")
         row = self._load(token, "access")
         if not row:
             return None

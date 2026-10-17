@@ -1,6 +1,7 @@
 """The Claude tool-use loop: streams one chat turn and runs tool calls on the MCP server."""
 
 import asyncio
+import base64
 import json
 import logging
 from collections.abc import AsyncIterator
@@ -28,6 +29,13 @@ Event = dict[str, Any]
 
 def _event(kind: str, /, **data: Any) -> Event:
     return {"event": kind, "data": data}
+
+
+def service_bearer(token: str, user: str | None) -> str:
+    """The MCP service token, plus the signed-in website user it acts for (base64url email)."""
+    if not user:
+        return token
+    return f"{token}:{base64.urlsafe_b64encode(user.encode()).decode().rstrip('=')}"
 
 
 def _error_message(e: BaseException) -> str:
@@ -79,10 +87,10 @@ class ChatAgent:
         # A URL, or an in-process MCPServer (tests).
         self.mcp_target = mcp_target or settings.mcp_url
 
-    def _mcp(self) -> Client:
+    def _mcp(self, user: str | None = None) -> Client:
         target = self.mcp_target
         if isinstance(target, str) and self.settings.mcp_token:
-            http = create_mcp_http_client(headers={"Authorization": f"Bearer {self.settings.mcp_token}"})
+            http = create_mcp_http_client(headers={"Authorization": f"Bearer {service_bearer(self.settings.mcp_token, user)}"})
             target = streamable_http_client(target, http_client=http)
         return Client(target)
 
@@ -102,7 +110,7 @@ class ChatAgent:
             params["fallbacks"] = "default"
         return params
 
-    async def run_turn(self, conv: Conversation, user_text: str) -> AsyncIterator[Event]:
+    async def run_turn(self, conv: Conversation, user_text: str, user: str | None = None) -> AsyncIterator[Event]:
         """Run one user turn, yielding UI events. The caller must hold conv.lock.
 
         History is only kept when the turn completes; on refusal, error or disconnect it is
@@ -112,7 +120,7 @@ class ChatAgent:
         conv.messages.append({"role": "user", "content": user_text})
         completed = False
         try:
-            async with self._mcp() as mcp:
+            async with self._mcp(user) as mcp:
                 # Errors are caught inside the client's context: raised through it they
                 # would arrive wrapped in an ExceptionGroup by its task group.
                 try:
