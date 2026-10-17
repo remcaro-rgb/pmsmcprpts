@@ -1,0 +1,142 @@
+# PMS Reports Chat — Design
+
+A demo website where hotel staff chat with an AI assistant that answers questions about a
+hotel property-management-system (PMS) database and generates documents — Excel workbooks,
+charts, PowerPoint decks, and PDF/Word reports — from that data.
+
+## Decisions
+
+| Topic | Choice |
+|---|---|
+| Data | Synthetic sample PMS database: 3 hotels, 2 years of history |
+| Engine | PostgreSQL 16 |
+| Web UI | Next.js (App Router) + Tailwind |
+| Backend | Python FastAPI agent service |
+| LLM ↔ data | Standalone **MCP server** (Python, `mcp` SDK) — also usable from Claude Desktop / Claude Code |
+| LLM | Claude via Anthropic API, tool use + streaming (model configurable via env) |
+| Auth | None (demo) |
+| Run | Local `docker compose up` |
+
+## Architecture
+
+```
+┌─────────────┐  SSE stream   ┌──────────────────┐  MCP (streamable HTTP)  ┌──────────────────┐   SQL (read-only role)  ┌────────────┐
+│ Next.js web │ ◀───────────▶ │ FastAPI agent    │ ◀─────────────────────▶ │ pms-mcp server   │ ──────────────────────▶ │ Postgres   │
+│ chat + docs │   /api/chat   │ Claude tool loop │                         │ data + doc tools │                         │ pms schema │
+└─────────────┘               └──────────────────┘                         └────────┬─────────┘                         └────────────┘
+       ▲  GET /files/{id}                                                           │ writes
+       └─────────────────────────────────── shared volume: ./artifacts ◀────────────┘
+```
+
+1. User sends a message; web calls `POST /api/chat` (SSE).
+2. Agent service holds conversation state, lists tools from the MCP server, and runs the
+   Claude tool-use loop, bridging each `tool_use` block to an MCP `call_tool`.
+3. MCP tools query Postgres through a **read-only role** and write generated files to a
+   shared `artifacts/` volume, returning `{file_id, filename, mime, preview}`.
+4. Agent streams text deltas, tool-progress events, and artifact events to the UI.
+   The UI renders text as markdown, tables as grids, charts inline (Vega-Lite), and
+   files as download cards.
+
+## Sample PMS schema (`pms`)
+
+- `hotels` (id, name, city, star_rating, total_rooms, currency)
+- `room_types` (id, hotel_id, code, name, max_occupancy, base_rate)
+- `rooms` (id, hotel_id, room_type_id, number, floor, status)
+- `guests` (id, first_name, last_name, email, country, loyalty_tier, created_at)
+- `companies` / `travel_agents` (corporate & OTA accounts)
+- `rate_plans` (id, hotel_id, code, name, refundable, includes_breakfast)
+- `reservations` (id, hotel_id, guest_id, channel, source_id, rate_plan_id, booked_at,
+  arrival, departure, adults, children, status [confirmed/cancelled/no_show/checked_in/checked_out],
+  cancelled_at)
+- `reservation_rooms` (reservation_id, room_type_id, room_id, nightly rate per stay date)
+- `folios` / `folio_charges` (room, F&B, spa, minibar, taxes; posted_at, amount)
+- `payments` (folio_id, method, amount, paid_at)
+- `housekeeping_tasks` (room_id, date, type, status, staff_id)
+- `staff` (id, hotel_id, department, role)
+- `reviews` (reservation_id, score, source, comment, created_at)
+
+Plus reporting **views** that encode industry definitions once, so the LLM doesn't reinvent them:
+`v_daily_kpis` (hotel, date, rooms_available, rooms_sold, occupancy, ADR, RevPAR, revenue by
+department), `v_pickup`, `v_channel_mix`, `v_guest_stays`.
+
+**Seeder** (`db/seed.py`, Faker + deterministic RNG seed): ~600 rooms, ~150k reservations,
+with seasonality, weekday/weekend patterns, lead-time distributions, a cancellation rate by
+channel, and realistic ancillary spend.
+
+## MCP tools
+
+Data:
+- `describe_schema()` — tables, columns, views, and KPI definitions (also exposed as an MCP resource).
+- `run_sql(query, limit=1000)` — single `SELECT`/`WITH` only (parsed with `sqlglot`), read-only
+  role, `statement_timeout` 15s, row cap. Returns columns + rows + truncated flag.
+- `get_kpis(hotel_ids, start, end, granularity)` — fast path over `v_daily_kpis`.
+
+Documents (each takes a `dataset` = query result or inline rows, so data flows SQL → doc
+without the LLM re-typing numbers):
+- `make_chart(dataset, spec)` — Vega-Lite spec → returns spec for inline render + PNG/SVG via `vl-convert`.
+- `make_spreadsheet(sheets[])` — openpyxl; header styles, number formats, frozen panes,
+  optional native Excel charts.
+- `make_presentation(title, slides[])` — python-pptx; slide kinds: title, kpi_tiles,
+  chart, table, bullets.
+- `make_report(title, sections[], format="pdf"|"docx")` — markdown + charts + tables →
+  PDF (WeasyPrint) or DOCX (python-docx).
+
+To keep large results out of the LLM context, `run_sql` stores full results server-side and
+returns a `dataset_id` plus a preview; doc tools accept `dataset_id`.
+
+## Agent service (FastAPI)
+
+- `POST /api/chat` — `{conversation_id, message}` → SSE events: `text`, `tool_start`,
+  `tool_result`, `artifact`, `done`, `error`.
+- `GET /files/{file_id}` — serves generated files.
+- System prompt: role, KPI glossary, "always inspect schema before writing SQL", "state the
+  date range and hotels you assumed", "prefer views for KPIs".
+- Prompt caching on the system prompt + tool definitions; max ~15 tool iterations per turn.
+- Conversations kept in memory (demo); easy to move to Postgres later.
+
+## Web UI (Next.js)
+
+- Chat pane with streaming markdown, collapsible "ran SQL" blocks showing the query.
+- Inline Vega-Lite charts; result tables via a lightweight data grid.
+- Artifact cards (icon, name, size, download); side panel listing this session's files.
+- Starter prompts: "Occupancy and ADR by month for 2025, all hotels", "Build a PowerPoint
+  on Q3 performance for the Lisbon hotel", "Export cancellations by channel to Excel".
+
+## Repo layout
+
+```
+db/            schema.sql, views.sql, seed.py
+mcp_server/    server.py, tools/{data,charts,xlsx,pptx,report}.py, tests/
+agent/         main.py (FastAPI), claude_loop.py, mcp_client.py, tests/
+web/           Next.js app
+docker-compose.yml, .env.example, README.md
+```
+
+## Safety & correctness
+
+- DB role with `SELECT` only on `pms` schema; SQL parsed and rejected if not a single read query.
+- Row/time limits; file size limits; artifacts expire after 24h.
+- Numbers in documents come from tool datasets, never from LLM-typed values.
+- No PII concerns (synthetic data), but guest fields are still fake-only.
+
+## Testing
+
+- Unit: SQL guard, each doc generator (open output and assert structure).
+- Golden questions: ~20 NL questions with expected SQL results on the fixed-seed DB,
+  run against the agent as an eval.
+- E2E: Playwright — ask a question, receive a chart and a downloadable .xlsx.
+
+## Milestones
+
+1. DB schema, views, seeder, docker-compose with Postgres.
+2. MCP server: `describe_schema`, `run_sql`, `get_kpis` + tests (usable from Claude Desktop immediately).
+3. Agent service with Claude tool loop + SSE.
+4. Web chat UI with streaming and SQL/table display.
+5. Doc tools: charts → xlsx → pptx → pdf/docx, with artifact cards.
+6. Golden-question evals, polish, README.
+
+## Open questions
+
+- Hotel names/locations and currency for the synthetic chain?
+- Should decks follow a brand template (.potx) later?
+- Persist conversation history across restarts?
