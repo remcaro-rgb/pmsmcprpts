@@ -27,7 +27,7 @@ services:
         condition: service_healthy
     restart: "no"
 
-  # MCP server (streamable HTTP at http://localhost:7000/mcp), connects as the read-only role.
+  # MCP server (streamable HTTP at http://localhost:7070/mcp), connects as the read-only role.
   mcp:
     build: ./mcp_server
     environment:
@@ -36,7 +36,7 @@ services:
     volumes:
       - artifacts:/artifacts
     ports:
-      - "127.0.0.1:${PMS_MCP_PORT:-7000}:7000"
+      - "127.0.0.1:${PMS_MCP_PORT:-7070}:7070"
     depends_on:
       db:
         condition: service_healthy
@@ -46,7 +46,7 @@ services:
     build: ./agent
     environment:
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
-      PMS_MCP_URL: http://mcp:7000/mcp
+      PMS_MCP_URL: http://mcp:7070/mcp
       PMS_CLAUDE_MODEL: ${PMS_CLAUDE_MODEL:-claude-opus-5-5}
       PMS_CLAUDE_EFFORT: ${PMS_CLAUDE_EFFORT:-medium}
       PMS_ARTIFACTS_DIR: /artifacts
@@ -57,13 +57,13 @@ services:
     depends_on:
       - mcp
 
-  # Chat website at http://localhost:5000; proxies /api/chat to the agent.
+  # Chat website at http://localhost:5050; proxies /api/chat to the agent.
   web:
     build: ./web
     environment:
       AGENT_URL: http://agent:7001
     ports:
-      - "127.0.0.1:${PMS_WEB_PORT:-5000}:5000"
+      - "127.0.0.1:${PMS_WEB_PORT:-5050}:5050"
     depends_on:
       - agent
 

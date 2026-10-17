@@ -17,13 +17,13 @@ docker compose run --rm seed # load ~2 years of synthetic data (~1 minute)
 docker compose up -d         # MCP server, Claude agent API and the website
 ```
 
-Open http://localhost:5000 and ask a question. Services:
+Open http://localhost:5050 and ask a question. Services:
 
 | Service | URL |
 |---|---|
-| Website | http://localhost:5000 |
+| Website | http://localhost:5050 |
 | Agent API | http://localhost:7001/api/chat |
-| MCP server | http://localhost:7000/mcp |
+| MCP server | http://localhost:7070/mcp |
 | Postgres | `postgresql://pms_readonly:pms_readonly@localhost:5432/pms` |
 
 Or ask from the command line:
@@ -109,7 +109,7 @@ which only has `SELECT` privileges.
 Claude Code, against the Docker service:
 
 ```bash
-claude mcp add --transport http pms-reports http://localhost:7000/mcp
+claude mcp add --transport http pms-reports http://localhost:7070/mcp
 ```
 
 Claude Desktop (stdio), in `claude_desktop_config.json`:

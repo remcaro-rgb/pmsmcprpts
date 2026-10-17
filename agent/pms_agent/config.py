@@ -9,7 +9,7 @@ def _env_list(name: str, default: str) -> list[str]:
 
 @dataclass(frozen=True)
 class Settings:
-    mcp_url: str = field(default_factory=lambda: os.environ.get("PMS_MCP_URL", "http://localhost:7000/mcp"))
+    mcp_url: str = field(default_factory=lambda: os.environ.get("PMS_MCP_URL", "http://localhost:7070/mcp"))
     model: str = field(default_factory=lambda: os.environ.get("PMS_CLAUDE_MODEL", "claude-opus-5-5"))
     effort: str = field(default_factory=lambda: os.environ.get("PMS_CLAUDE_EFFORT", "medium"))
     max_tokens: int = field(default_factory=lambda: int(os.environ.get("PMS_CLAUDE_MAX_TOKENS", "64000")))
@@ -21,4 +21,4 @@ class Settings:
     artifacts_dir: str = field(default_factory=lambda: os.environ.get(
         "PMS_ARTIFACTS_DIR", os.path.join(tempfile.gettempdir(), "pms-artifacts")))
     cors_origins: list[str] = field(
-        default_factory=lambda: _env_list("PMS_CORS_ORIGINS", "http://localhost:5000"))
+        default_factory=lambda: _env_list("PMS_CORS_ORIGINS", "http://localhost:5050"))
