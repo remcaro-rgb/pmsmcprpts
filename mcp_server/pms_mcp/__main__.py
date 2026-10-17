@@ -1,7 +1,7 @@
 """Run the PMS MCP server.
 
     PMS_DATABASE_URL=postgresql://pms_readonly:pms_readonly@localhost:5432/pms python -m pms_mcp
-    python -m pms_mcp --transport streamable-http --host 0.0.0.0 --port 8000
+    python -m pms_mcp --transport streamable-http --host 0.0.0.0 --port 7000
 """
 
 import argparse
@@ -14,7 +14,7 @@ def main() -> None:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--transport", choices=["stdio", "streamable-http"], default="stdio")
     p.add_argument("--host", default="127.0.0.1")
-    p.add_argument("--port", type=int, default=8000)
+    p.add_argument("--port", type=int, default=7000)
     p.add_argument("--dsn", default=os.environ.get("PMS_DATABASE_URL"), help="defaults to $PMS_DATABASE_URL")
     p.add_argument("--statement-timeout-ms", type=int,
                    default=int(os.environ.get("PMS_STATEMENT_TIMEOUT_MS", "15000")))

@@ -3,7 +3,7 @@
 
 export const dynamic = "force-dynamic";
 
-const AGENT_URL = process.env.AGENT_URL ?? "http://localhost:8001";
+const AGENT_URL = process.env.AGENT_URL ?? "http://localhost:7001";
 
 export async function POST(req: Request): Promise<Response> {
   let upstream: Response;

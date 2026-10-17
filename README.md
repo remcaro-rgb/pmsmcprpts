@@ -17,19 +17,19 @@ docker compose run --rm seed # load ~2 years of synthetic data (~1 minute)
 docker compose up -d         # MCP server, Claude agent API and the website
 ```
 
-Open http://localhost:3000 and ask a question. Services:
+Open http://localhost:5000 and ask a question. Services:
 
 | Service | URL |
 |---|---|
-| Website | http://localhost:3000 |
-| Agent API | http://localhost:8001/api/chat |
-| MCP server | http://localhost:8000/mcp |
+| Website | http://localhost:5000 |
+| Agent API | http://localhost:7001/api/chat |
+| MCP server | http://localhost:7000/mcp |
 | Postgres | `postgresql://pms_readonly:pms_readonly@localhost:5432/pms` |
 
 Or ask from the command line:
 
 ```bash
-curl -N http://localhost:8001/api/chat -H 'content-type: application/json' \
+curl -N http://localhost:7001/api/chat -H 'content-type: application/json' \
   -d '{"message": "How did occupancy and ADR compare across the three hotels last quarter?"}'
 ```
 
@@ -109,7 +109,7 @@ which only has `SELECT` privileges.
 Claude Code, against the Docker service:
 
 ```bash
-claude mcp add --transport http pms-reports http://localhost:8000/mcp
+claude mcp add --transport http pms-reports http://localhost:7000/mcp
 ```
 
 Claude Desktop (stdio), in `claude_desktop_config.json`:
@@ -174,11 +174,11 @@ download. Spreadsheets, decks and reports appear as download cards. There's a St
 starter questions, and it works in light and dark mode and at phone width. The browser only talks
 to the site's own `/api/chat` and `/api/files/{id}` routes, which proxy the agent (`AGENT_URL`).
 
-Develop locally (with the agent running on port 8001):
+Develop locally (with the agent running on port 7001):
 
 ```bash
 cd web && npm install
-AGENT_URL=http://localhost:8001 npm run dev
+AGENT_URL=http://localhost:7001 npm run dev
 ```
 
 To try the UI without an Anthropic API key, run the stand-in agent instead of the real one. It is
@@ -187,7 +187,7 @@ and answers from their results:
 
 ```bash
 PMS_DATABASE_URL=postgresql://pms_readonly:pms_readonly@localhost:5432/pms \
-  python web/e2e/fake_agent.py --port 8001
+  python web/e2e/fake_agent.py --port 7001
 ```
 
 ## Tests

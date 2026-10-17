@@ -2,7 +2,7 @@
 
 export const dynamic = "force-dynamic";
 
-const AGENT_URL = process.env.AGENT_URL ?? "http://localhost:8001";
+const AGENT_URL = process.env.AGENT_URL ?? "http://localhost:7001";
 const PASS_HEADERS = ["content-type", "content-disposition", "content-length"];
 
 export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> }): Promise<Response> {

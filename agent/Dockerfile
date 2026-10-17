@@ -3,5 +3,5 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY pms_agent ./pms_agent
-EXPOSE 8001
-CMD ["python", "-m", "pms_agent", "--host", "0.0.0.0", "--port", "8001"]
+EXPOSE 7001
+CMD ["python", "-m", "pms_agent", "--host", "0.0.0.0", "--port", "7001"]
