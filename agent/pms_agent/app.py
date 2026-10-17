@@ -4,7 +4,7 @@ import json
 import re
 from collections.abc import AsyncIterator
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import anthropic
 from fastapi import FastAPI, Header, HTTPException
@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field
 
 from .config import Settings
 from .conversations import ConversationStore
+from .prompts import MESSAGES
 from .loop import ChatAgent
 
 FILE_ID = re.compile(r"^[0-9a-f]{32}$")
@@ -22,6 +23,8 @@ FILE_ID = re.compile(r"^[0-9a-f]{32}$")
 class ChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=8000)
     conversation_id: str | None = Field(default=None, max_length=64)
+    # Website language: "es" answers in Latin American Spanish.
+    language: Literal["en", "es"] = "en"
 
 
 def _sse(event: str, data: Any) -> str:
@@ -64,15 +67,15 @@ def create_app(settings: Settings | None = None, client: Any = None, mcp_target:
         try:
             conv = store.get_or_create(req.conversation_id, user)
         except LookupError:
-            raise HTTPException(404, "Conversation not found.") from None
+            raise HTTPException(404, MESSAGES[req.language]["not_found"]) from None
         if conv.lock.locked():
-            raise HTTPException(409, "This conversation is already answering a message.")
+            raise HTTPException(409, MESSAGES[req.language]["busy"])
 
         async def stream() -> AsyncIterator[str]:
             async with conv.lock:
                 yield _sse("conversation", {"id": conv.id})
                 events = []
-                async for ev in agent.run_turn(conv, req.message, user):
+                async for ev in agent.run_turn(conv, req.message, user, req.language):
                     events.append(ev)
                     yield _sse(ev["event"], ev["data"])
                 # Only completed turns are kept, matching the history (failed turns are rolled back).

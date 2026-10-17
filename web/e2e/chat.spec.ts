@@ -158,11 +158,49 @@ test("on phones the conversation list opens as a drawer", async ({ page }) => {
   await expect(sidebar).toBeHidden();
 });
 
+test.describe("in Latin American Spanish", () => {
+  test.use({ locale: "es-MX" });
+
+  test("follows the browser language, answers in Spanish, and remembers the switch", async ({ page }) => {
+    await page.goto("/");
+    await expect(page.locator("html")).toHaveAttribute("lang", "es-419");
+    await expect(page.getByRole("heading", { name: "¿Qué te gustaría saber?" })).toBeVisible();
+
+    await page.getByRole("button", { name: /¿Qué canales de reserva/ }).click();
+    const answer = page.getByTestId("assistant-message");
+    await expect(answer.locator("details", { hasText: "Ejecutó una consulta SQL" })).toContainText("7 filas");
+    await expect(answer).toContainText("Esto es lo que muestra la base de datos");
+    await expect(answer).toContainText("tokens de entrada");
+
+    await page.getByLabel("Idioma").selectOption("en");
+    await expect(page.getByRole("button", { name: "New chat" })).toBeVisible();
+    await expect(page.locator("html")).toHaveAttribute("lang", "en");
+    await page.reload();
+    await expect(page.getByLabel("Language")).toHaveValue("en"); // the cookie beats the browser language
+    await page.getByLabel("Language").selectOption("es");
+    await page.reload();
+    await expect(page.getByRole("button", { name: "Nuevo chat" })).toBeVisible();
+  });
+
+  test("charts get Spanish dates and controls", async ({ page }) => {
+    await page.goto("/");
+    const box = page.getByLabel("Mensaje");
+    await box.fill("Hazme un gráfico de la ocupación mensual");
+    await box.press("Enter");
+    const chart = page.getByTestId("chart");
+    await expect(chart).toContainText("Ocupación por hotel");
+    await chart.getByRole("button", { name: "Ver datos" }).click();
+    await expect(chart.locator("tbody tr").first()).toContainText("octubre de 2025");
+    await expect(chart.getByRole("link", { name: "Descargar PNG" })).toBeVisible();
+    await expect(page.getByTestId("assistant-message")).toContainText("Los tres hoteles tuvieron su pico en verano.");
+  });
+});
+
 test("rate-limits chat messages and says when to retry", async ({ request }) => {
-  // The test server allows 16 messages per 10 minutes per client; earlier tests used some.
+  // The test server allows 20 messages per 10 minutes per client; earlier tests used some.
   let status = 200;
   let body: { detail?: string } = {};
-  for (let i = 0; i < 17 && status !== 429; i++) {
+  for (let i = 0; i < 21 && status !== 429; i++) {
     const r = await request.post("/api/chat", { data: { message: "" } }); // rejected by the agent, still counted
     status = r.status();
     if (status === 429) body = await r.json();

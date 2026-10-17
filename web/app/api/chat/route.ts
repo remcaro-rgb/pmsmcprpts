@@ -2,6 +2,7 @@
 // so the browser only talks to this origin.
 
 import { USER_HEADER } from "@/lib/auth";
+import { messages, requestLocale } from "@/lib/i18n";
 import { SlidingWindowLimiter, clientKey, parseLimit } from "@/lib/ratelimit";
 
 export const dynamic = "force-dynamic";
@@ -14,10 +15,11 @@ const TRUST_PROXY = process.env.TRUST_PROXY === "true";
 export async function POST(req: Request): Promise<Response> {
   // Set by proxy.ts from the session when sign-in is on (and always stripped from the browser request).
   const user = req.headers.get(USER_HEADER);
+  const t = messages(requestLocale(req));
   const wait = limiter.check(clientKey(req.headers, user, TRUST_PROXY));
   if (wait > 0) {
     return Response.json(
-      { detail: `You've sent a lot of messages. Try again in ${wait} seconds.` },
+      { detail: t.rateLimited(wait) },
       { status: 429, headers: { "retry-after": String(wait) } },
     );
   }
@@ -31,7 +33,7 @@ export async function POST(req: Request): Promise<Response> {
       signal: req.signal,
     });
   } catch {
-    return Response.json({ detail: "The assistant service is not reachable." }, { status: 502 });
+    return Response.json({ detail: t.serviceUnreachable }, { status: 502 });
   }
   return new Response(upstream.body, {
     status: upstream.status,

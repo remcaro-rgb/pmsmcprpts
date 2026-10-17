@@ -1,34 +1,28 @@
+"use client";
+
 import { chartOf, fileOf, isTableResult, type ToolPart } from "@/lib/chat";
+import { formatNumber, type Locale, type Messages } from "@/lib/i18n";
 import Chevron from "./Chevron";
 import DataTable from "./DataTable";
-
-const LABELS: Record<string, string> = {
-  describe_schema: "Read the database schema",
-  run_sql: "Ran a SQL query",
-  get_kpis: "Fetched KPIs",
-  get_dataset: "Read a stored result",
-  make_chart: "Made a chart",
-  make_spreadsheet: "Created a spreadsheet",
-  make_presentation: "Created a presentation",
-  make_report: "Created a report",
-};
+import { useI18n } from "./I18n";
 
 function Status({ status }: { status: ToolPart["status"] }) {
+  const { t } = useI18n();
   if (status === "running") {
-    return <span className="size-3.5 animate-spin rounded-full border-2 border-stone-300 border-t-accent" aria-label="running" />;
+    return <span className="size-3.5 animate-spin rounded-full border-2 border-stone-300 border-t-accent" aria-label={t.running} />;
   }
-  if (status === "error") return <span className="text-red-600" aria-label="failed">✕</span>;
-  return <span className="text-emerald-600" aria-label="done">✓</span>;
+  if (status === "error") return <span className="text-red-600" aria-label={t.failed}>✕</span>;
+  return <span className="text-emerald-600" aria-label={t.done}>✓</span>;
 }
 
-function summary(part: ToolPart): string | null {
+function summary(part: ToolPart, t: Messages, locale: Locale): string | null {
   const file = fileOf(part.result);
   if (file && !chartOf(part.result)) return file.filename;
   if (isTableResult(part.result)) {
     const n = part.result.row_count;
-    return `${n.toLocaleString("en-US")} ${n === 1 ? "row" : "rows"}`;
+    return t.rows(formatNumber(n, locale), n === 1);
   }
-  if (part.status === "error") return "failed";
+  if (part.status === "error") return t.failed;
   return null;
 }
 
@@ -69,6 +63,7 @@ function Input({ part }: { part: ToolPart }) {
 }
 
 function Result({ part }: { part: ToolPart }) {
+  const { t } = useI18n();
   const result = part.result;
   if (part.status === "running" || result === undefined) return null;
   if (part.status === "error") {
@@ -84,7 +79,7 @@ function Result({ part }: { part: ToolPart }) {
   if (Array.isArray(r?.relations)) {
     return (
       <p className="text-[13px] text-stone-600 dark:text-stone-400">
-        {r.relations.length} tables and views · business date {r.business_date}
+        {t.schemaSummary(r.relations.length, String(r.business_date))}
       </p>
     );
   }
@@ -96,12 +91,13 @@ function Result({ part }: { part: ToolPart }) {
 }
 
 export default function ToolCard({ part }: { part: ToolPart }) {
-  const extra = summary(part);
+  const { locale, t } = useI18n();
+  const extra = summary(part, t, locale);
   return (
     <details className="group rounded-lg border border-stone-200 bg-white dark:border-stone-800 dark:bg-stone-900/60">
       <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2 text-[13px] text-stone-700 select-none dark:text-stone-300">
         <Status status={part.status} />
-        <span className="font-medium">{LABELS[part.name] ?? part.name}</span>
+        <span className="font-medium">{t.tools[part.name] ?? part.name}</span>
         {extra && <span className="text-stone-500">· {extra}</span>}
         <Chevron className="ml-auto text-stone-400" />
       </summary>

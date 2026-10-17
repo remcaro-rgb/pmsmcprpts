@@ -101,3 +101,23 @@ async def test_saved_conversations_api():
         assert (await http.delete(f"/api/conversations/{conv_id}", headers={"x-pms-user": "bob@x.example"})).status_code == 404
         assert (await http.delete(f"/api/conversations/{conv_id}", headers=ann)).status_code == 204
         assert (await http.get(f"/api/conversations/{conv_id}", headers=ann)).status_code == 404
+
+
+async def test_spanish_conversations():
+    client = FakeClient(text_reply("Hola."))
+    app = create_app(Settings(mcp_url="unused", conversations_db=":memory:"), client, toy_server())
+    transport = httpx2.ASGITransport(app=app)
+    async with httpx2.AsyncClient(transport=transport, base_url="http://test") as http:
+        r = await http.post("/api/chat", json={"message": "Hola", "language": "es"})
+        assert parse_sse(r.text)[-1][0] == "done"
+        system = client.messages.requests[-1]["system"]
+        assert "Latin American Spanish" in system and 'language="es"' in system
+        r = await http.post("/api/chat", json={"message": "Hola", "conversation_id": "conv_0000000000000000",
+                                               "language": "es"})
+        assert r.status_code == 404 and r.json()["detail"] == "No se encontró la conversación."
+        assert (await http.post("/api/chat", json={"message": "Hi", "language": "fr"})).status_code == 422
+    english = FakeClient(text_reply("Hi."))
+    app = create_app(Settings(mcp_url="unused", conversations_db=":memory:"), english, toy_server())
+    async with httpx2.AsyncClient(transport=httpx2.ASGITransport(app=app), base_url="http://test") as http:
+        await http.post("/api/chat", json={"message": "Hi"})
+    assert "Spanish" not in english.messages.requests[-1]["system"]

@@ -1,4 +1,5 @@
 import { USER_HEADER } from "./auth";
+import { messages, requestLocale } from "./i18n";
 
 export const AGENT_URL = process.env.AGENT_URL ?? "http://localhost:7001";
 
@@ -9,7 +10,7 @@ export async function relay(req: Request, path: string, method = "GET"): Promise
   try {
     upstream = await fetch(`${AGENT_URL}${path}`, { method, headers: user ? { [USER_HEADER]: user } : {} });
   } catch {
-    return Response.json({ detail: "The assistant service is not reachable." }, { status: 502 });
+    return Response.json({ detail: messages(requestLocale(req)).serviceUnreachable }, { status: 502 });
   }
   return new Response(upstream.status === 204 ? null : upstream.body, {
     status: upstream.status,

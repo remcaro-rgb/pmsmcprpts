@@ -33,7 +33,7 @@ export default defineConfig({
       url: `http://127.0.0.1:${WEB_PORT}`,
       env: {
         AGENT_URL: `http://127.0.0.1:${AGENT_PORT}`, PORT: String(WEB_PORT), HOSTNAME: "127.0.0.1",
-        CHAT_RATE_LIMIT: "16/600",
+        CHAT_RATE_LIMIT: "20/600",
       },
       reuseExistingServer: !process.env.CI,
     },

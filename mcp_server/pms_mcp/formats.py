@@ -5,6 +5,8 @@ import re
 from datetime import date
 from typing import Any, Literal
 
+from .i18n import Lang, fmt_date
+
 Kind = Literal["percent", "currency", "integer", "decimal", "date", "text"]
 KINDS = ("percent", "currency", "integer", "decimal", "date", "text")
 
@@ -39,7 +41,7 @@ def to_date(value: Any) -> date | None:
     return None
 
 
-def format_value(value: Any, kind: Kind) -> str:
+def format_value(value: Any, kind: Kind, lang: Lang = "en") -> str:
     """Full-precision display value (tables, tooltips, KPI tiles)."""
     if value is None:
         return "—"
@@ -53,15 +55,15 @@ def format_value(value: Any, kind: Kind) -> str:
         return f"{value:,.2f}"
     if kind == "date":
         d = to_date(value)
-        return d.strftime("%-d %b %Y") if d else str(value)
+        return fmt_date(d, "day", lang) if d else str(value)
     return str(value)
 
 
-def format_headline(value: Any, kind: Kind) -> str:
+def format_headline(value: Any, kind: Kind, lang: Lang = "en") -> str:
     """Display value for KPI tiles: large money and counts compacted (€11.1M) so they fit."""
     if isinstance(value, (int, float)) and abs(value) >= 100_000 and kind in ("currency", "integer", "decimal"):
         return (CURRENCY_SYMBOL if kind == "currency" else "") + compact(value)
-    return format_value(value, kind)
+    return format_value(value, kind, lang)
 
 
 def compact(value: float) -> str:
@@ -98,7 +100,7 @@ def nice_ticks(lo: float, hi: float, count: int = 5) -> list[float]:
     return ticks
 
 
-def date_labels(values: list[str]) -> tuple[list[str], list[str]]:
+def date_labels(values: list[str], lang: Lang = "en") -> tuple[list[str], list[str]]:
     """(short tick labels, full tooltip labels) for a sequence of ISO dates."""
     dates = [to_date(v) for v in values]
     if any(d is None for d in dates):
@@ -106,9 +108,9 @@ def date_labels(values: list[str]) -> tuple[list[str], list[str]]:
     if all(d.day == 1 for d in dates):
         months = {d.month for d in dates}
         if months <= {1, 4, 7, 10} and len(dates) > 1:
-            labels = [f"Q{(d.month - 1) // 3 + 1} {d.year}" for d in dates]
+            labels = [fmt_date(d, "quarter", lang) for d in dates]
             return labels, labels
         multi_year = len({d.year for d in dates}) > 1
-        short = [d.strftime("%b '%y") if multi_year else d.strftime("%b") for d in dates]
-        return short, [d.strftime("%B %Y") for d in dates]
-    return [d.strftime("%-d %b") for d in dates], [d.strftime("%a %-d %b %Y") for d in dates]
+        short = [fmt_date(d, "month_year_short" if multi_year else "month", lang) for d in dates]
+        return short, [fmt_date(d, "month_year", lang) for d in dates]
+    return [fmt_date(d, "day_month", lang) for d in dates], [fmt_date(d, "weekday", lang) for d in dates]

@@ -1,17 +1,22 @@
+"use client";
+
 import type { TableResult } from "@/lib/chat";
+import { formatNumber, type Locale, type Messages } from "@/lib/i18n";
+import { useI18n } from "./I18n";
 
 const NUMERIC_TYPES = new Set(["int2", "int4", "int8", "numeric", "float4", "float8"]);
-const numberFormat = new Intl.NumberFormat("en-US", { maximumFractionDigits: 4 });
 
-function formatCell(value: unknown): string {
+function formatCell(value: unknown, t: Messages, locale: Locale): string {
   if (value === null || value === undefined) return "—";
-  if (typeof value === "number") return numberFormat.format(value);
-  if (typeof value === "boolean") return value ? "yes" : "no";
+  if (typeof value === "number") return formatNumber(value, locale, 4);
+  if (typeof value === "boolean") return value ? t.yes : t.no;
   if (typeof value === "object") return JSON.stringify(value);
   return String(value);
 }
 
 export default function DataTable({ table }: { table: TableResult }) {
+  const { locale, t } = useI18n();
+  const count = (n: number) => formatNumber(n, locale);
   const numeric = table.columns.map((c) => NUMERIC_TYPES.has(c.type));
   return (
     <div>
@@ -34,7 +39,7 @@ export default function DataTable({ table }: { table: TableResult }) {
               <tr key={r} className="border-t border-stone-100 dark:border-stone-800/70">
                 {row.map((cell, i) => (
                   <td key={i} className={`whitespace-nowrap px-2.5 py-1 ${numeric[i] ? "text-right" : "text-left"}`}>
-                    {formatCell(cell)}
+                    {formatCell(cell, t, locale)}
                   </td>
                 ))}
               </tr>
@@ -44,9 +49,9 @@ export default function DataTable({ table }: { table: TableResult }) {
       </div>
       <p className="mt-1.5 text-xs text-stone-500">
         {table.rows.length < table.row_count
-          ? `Showing ${table.rows.length} of ${numberFormat.format(table.row_count)} rows`
-          : `${numberFormat.format(table.row_count)} ${table.row_count === 1 ? "row" : "rows"}`}
-        {table.truncated ? " (result capped at 50,000 rows)" : ""}
+          ? t.showingRows(count(table.rows.length), count(table.row_count))
+          : t.rows(count(table.row_count), table.row_count === 1)}
+        {table.truncated ? t.rowsCapped : ""}
         {" · "}
         <span className="font-mono">{table.dataset_id}</span>
       </p>

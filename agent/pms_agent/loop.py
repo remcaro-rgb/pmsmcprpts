@@ -14,7 +14,7 @@ from mcp.shared._httpx_utils import create_mcp_http_client
 
 from .config import Settings
 from .conversations import Conversation
-from .prompts import SYSTEM_PROMPT
+from .prompts import LANGUAGE_PROMPTS, MESSAGES, SYSTEM_PROMPT
 
 log = logging.getLogger(__name__)
 
@@ -110,7 +110,8 @@ class ChatAgent:
             params["fallbacks"] = "default"
         return params
 
-    async def run_turn(self, conv: Conversation, user_text: str, user: str | None = None) -> AsyncIterator[Event]:
+    async def run_turn(self, conv: Conversation, user_text: str, user: str | None = None,
+                       language: str = "en") -> AsyncIterator[Event]:
         """Run one user turn, yielding UI events. The caller must hold conv.lock.
 
         History is only kept when the turn completes; on refusal, error or disconnect it is
@@ -125,8 +126,9 @@ class ChatAgent:
                 # would arrive wrapped in an ExceptionGroup by its task group.
                 try:
                     tools = tool_definitions((await mcp.list_tools()).tools)
-                    system = SYSTEM_PROMPT + ("\n" + mcp.instructions if mcp.instructions else "")
-                    async for event in self._loop(conv, mcp, system, tools):
+                    system = (SYSTEM_PROMPT + LANGUAGE_PROMPTS[language]
+                              + ("\n" + mcp.instructions if mcp.instructions else ""))
+                    async for event in self._loop(conv, mcp, system, tools, MESSAGES[language]):
                         if event["event"] == "done":
                             completed = True
                         yield event
@@ -135,12 +137,13 @@ class ChatAgent:
                     yield _event("error", message=_error_message(e))
         except Exception as e:  # could not connect to the MCP server
             log.exception("MCP connection failed")
-            yield _event("error", message="Could not reach the data service: " + _error_message(e))
+            yield _event("error", message=MESSAGES[language]["unreachable"].format(error=_error_message(e)))
         finally:
             if not completed:
                 del conv.messages[start:]
 
-    async def _loop(self, conv: Conversation, mcp: Client, system: str, tools: list[dict]) -> AsyncIterator[Event]:
+    async def _loop(self, conv: Conversation, mcp: Client, system: str, tools: list[dict],
+                    text: dict[str, str]) -> AsyncIterator[Event]:
         json_retries = 0
         step = 0
         while step < self.settings.max_tool_steps:
@@ -167,7 +170,7 @@ class ChatAgent:
             if message.stop_reason == "refusal":
                 details = getattr(message, "stop_details", None)
                 yield _event("refusal", category=getattr(details, "category", None),
-                             message="The request was declined by Claude's safety filters.")
+                             message=text["refusal"])
                 return
 
             content = echo_content(message.content)
@@ -187,7 +190,7 @@ class ChatAgent:
                 return
             if message.stop_reason == "max_tokens":
                 # A truncated tool input can parse as a valid partial object; don't run it.
-                yield _event("error", message="The response hit the output limit in the middle of a tool call.")
+                yield _event("error", message=text["max_tokens"])
                 return
 
             for b in tool_uses:
@@ -200,7 +203,7 @@ class ChatAgent:
             conv.messages.append({"role": "user", "content": [r for r, _ in results]})
             step += 1
 
-        yield _event("error", message=f"Stopped after {self.settings.max_tool_steps} tool steps without an answer.")
+        yield _event("error", message=text["max_steps"].format(steps=self.settings.max_tool_steps))
 
     async def _call_tool(self, mcp: Client, block: dict[str, Any]) -> tuple[dict[str, Any], Any]:
         args = block["input"]

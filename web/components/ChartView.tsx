@@ -3,6 +3,7 @@
 import { useState, type CSSProperties } from "react";
 import { nearestIndex } from "@/lib/chart";
 import { fileUrl, type ChartLayout, type ChartPayload, type FileInfo } from "@/lib/chat";
+import { useI18n } from "./I18n";
 
 function SeriesKey({ kind, light, dark }: { kind: ChartPayload["kind"]; light: string; dark: string }) {
   const style = { "--c-l": light, "--c-d": dark } as CSSProperties;
@@ -16,6 +17,7 @@ function SeriesKey({ kind, light, dark }: { kind: ChartPayload["kind"]; light: s
 /** One layout of the chart with its hover/keyboard layer: crosshair (line) or band (bar), and
  * a tooltip listing every series at that x. */
 function ChartCanvas({ chart, layout, className }: { chart: ChartPayload; layout: ChartLayout; className: string }) {
+  const { t } = useI18n();
   const [index, setIndex] = useState<number | null>(null);
   const n = layout.x_positions.length;
   const pctX = (x: number) => `${(x / layout.width) * 100}%`;
@@ -48,7 +50,7 @@ function ChartCanvas({ chart, layout, className }: { chart: ChartPayload; layout
         className="absolute inset-0 cursor-crosshair outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
         tabIndex={0}
         role="application"
-        aria-label={`${chart.title}. Use the left and right arrow keys to read values.`}
+        aria-label={t.chartHelp(chart.title)}
         onPointerMove={onPointerMove}
         onPointerLeave={() => setIndex(null)}
         onBlur={() => setIndex(null)}
@@ -95,6 +97,7 @@ function ChartCanvas({ chart, layout, className }: { chart: ChartPayload; layout
 }
 
 export default function ChartView({ chart, file }: { chart: ChartPayload; file: FileInfo | null }) {
+  const { t } = useI18n();
   const [showData, setShowData] = useState(false);
 
   return (
@@ -118,11 +121,11 @@ export default function ChartView({ chart, file }: { chart: ChartPayload; file: 
           aria-expanded={showData}
           className="font-medium text-stone-600 hover:text-stone-900 dark:text-stone-400 dark:hover:text-stone-100"
         >
-          {showData ? "Hide data" : "Show data"}
+          {showData ? t.hideData : t.showData}
         </button>
         {file && (
           <a href={fileUrl(file)} download={file.filename} className="ml-auto font-medium text-accent hover:underline">
-            Download PNG
+            {t.downloadPng}
           </a>
         )}
       </figcaption>

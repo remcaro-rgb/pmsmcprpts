@@ -51,6 +51,9 @@ test("the API needs a session, and an identity header from the browser is ignore
     headers: { cookie: "pms_session=not-a-real-session" },
   });
   expect(forged.status()).toBe(401);
+
+  const spanish = await request.post("/api/chat", { data: { message: "hola" }, headers: { "accept-language": "es-AR,es;q=0.9" } });
+  expect(await spanish.json()).toEqual({ detail: "Inicia sesión para continuar." });
 });
 
 test("a callback without a pending sign-in asks to start again", async ({ page }) => {

@@ -14,6 +14,8 @@ from pydantic import BaseModel, Field
 
 from .datasets import Dataset, DatasetStore
 from .formats import KINDS, Kind, format_headline, format_value, infer_kind, to_date
+from .i18n import COLUMNS_ES, Lang, fmt_date
+from .i18n import text as i18n_text
 
 ACRONYMS = {"adr": "ADR", "revpar": "RevPAR", "fnb": "F&B", "id": "ID", "kpi": "KPI", "pct": "%"}
 
@@ -71,7 +73,9 @@ class SheetSpec(BaseModel):
 
 # ---------- shared helpers ----------
 
-def pretty(column: str) -> str:
+def pretty(column: str, lang: Lang = "en") -> str:
+    if lang == "es" and column.lower() in COLUMNS_ES:
+        return COLUMNS_ES[column.lower()]
     words = column.split("_")
     out = [ACRONYMS.get(w.lower(), w) for w in words]
     if out and out[0] == words[0]:
@@ -86,9 +90,13 @@ class Table:
     rows: list[list[Any]]  # raw values
     total_rows: int
     source: str
+    lang: Lang = "en"
 
     def formatted(self) -> list[list[str]]:
-        return [[format_value(v, k) for v, k in zip(r, self.kinds)] for r in self.rows]
+        return [[format_value(v, k, self.lang) for v, k in zip(r, self.kinds)] for r in self.rows]
+
+    def showing(self) -> str:
+        return i18n_text("showing", self.lang, shown=f"{len(self.rows):,}", total=f"{self.total_rows:,}")
 
     @property
     def numeric(self) -> list[bool]:
@@ -103,7 +111,7 @@ def get_dataset(store: DatasetStore, dataset_id: str) -> Dataset:
 
 
 def select_table(store: DatasetStore, dataset_id: str, columns: list[str] | None,
-                 formats: dict[str, str] | None, max_rows: int | None) -> Table:
+                 formats: dict[str, str] | None, max_rows: int | None, lang: Lang = "en") -> Table:
     ds = get_dataset(store, dataset_id)
     names = [c["name"] for c in ds.columns]
     columns = columns or names
@@ -115,10 +123,10 @@ def select_table(store: DatasetStore, dataset_id: str, columns: list[str] | None
     formats = formats or {}
     kinds = [formats.get(c) or infer_kind(c, ds.columns[i]["type"], [r[i] for r in ds.rows])
              for c, i in zip(columns, idx)]
-    return Table([pretty(c) for c in columns], kinds, rows, len(ds.rows), ds.source)
+    return Table([pretty(c, lang) for c in columns], kinds, rows, len(ds.rows), ds.source, lang)
 
 
-def kpi_value(store: DatasetStore, k: KpiSpec) -> str:
+def kpi_value(store: DatasetStore, k: KpiSpec, lang: Lang = "en") -> str:
     ds = get_dataset(store, k.dataset_id)
     names = [c["name"] for c in ds.columns]
     if k.column not in names:
@@ -128,7 +136,7 @@ def kpi_value(store: DatasetStore, k: KpiSpec) -> str:
     i = names.index(k.column)
     value = ds.rows[k.row][i]
     kind = k.format or infer_kind(k.column, ds.columns[i]["type"], [r[i] for r in ds.rows])
-    return format_headline(value, kind)
+    return format_headline(value, kind, lang)
 
 
 def paragraphs(text: str) -> list[tuple[str, str]]:
@@ -143,9 +151,9 @@ def paragraphs(text: str) -> list[tuple[str, str]]:
     return out
 
 
-def source_line(business_date: str) -> str:
+def source_line(business_date: str, lang: Lang = "en") -> str:
     d = to_date(business_date)
-    return f"Source: hotel PMS database · data as of {d.strftime('%-d %b %Y') if d else business_date}"
+    return i18n_text("source", lang, date=fmt_date(d, "day", lang) if d else business_date)
 
 
 # ---------- spreadsheet ----------
@@ -154,7 +162,8 @@ EXCEL_FORMATS = {"percent": "0.0%", "currency": "€#,##0.00", "integer": "#,##0
                  "date": "yyyy-mm-dd"}
 
 
-def build_xlsx(store: DatasetStore, title: str, sheets: list[SheetSpec], business_date: str) -> bytes:
+def build_xlsx(store: DatasetStore, title: str, sheets: list[SheetSpec], business_date: str,
+               lang: Lang = "en") -> bytes:
     from openpyxl import Workbook
     from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
     from openpyxl.utils import get_column_letter
@@ -170,8 +179,8 @@ def build_xlsx(store: DatasetStore, title: str, sheets: list[SheetSpec], busines
     header_border = Border(bottom=Side(style="thin", color="C3C2B7"))
 
     for spec in sheets:
-        table = select_table(store, spec.dataset_id, spec.columns, spec.formats, None)
-        name = re.sub(r"[\[\]:*?/\\]", "", spec.name).strip()[:31] or "Sheet"
+        table = select_table(store, spec.dataset_id, spec.columns, spec.formats, None, lang)
+        name = re.sub(r"[\[\]:*?/\\]", "", spec.name).strip()[:31] or i18n_text("sheet_default", lang)
         base, n = name, 2
         while name.lower() in used:
             name = f"{base[:28]} {n}"
@@ -191,20 +200,23 @@ def build_xlsx(store: DatasetStore, title: str, sheets: list[SheetSpec], busines
                     cell.number_format = EXCEL_FORMATS[kind]
             if table.numeric[ci - 1]:
                 ws.cell(1, ci).alignment = Alignment(horizontal="right")
-            sample = [format_value(r[ci - 1], kind) for r in table.rows[:200]]
+            sample = [format_value(r[ci - 1], kind, lang) for r in table.rows[:200]]
             ws.column_dimensions[letter].width = min(50, max([len(header)] + [len(s) for s in sample]) + 3)
         ws.freeze_panes = "A2"
         if table.rows:
             ws.auto_filter.ref = ws.dimensions
         about_rows.append((name, len(table.rows), table.source))
 
-    ws = wb.create_sheet("About")
+    about = i18n_text("about", lang)
+    while about.lower() in used:  # a data sheet already has that name
+        about += " "
+    ws = wb.create_sheet(about)
     ws.append([title])
     ws["A1"].font = Font(bold=True, size=14)
-    ws.append(["Generated", datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")])
-    ws.append(["Data as of (business date)", business_date])
+    ws.append([i18n_text("generated", lang), datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")])
+    ws.append([i18n_text("as_of", lang), business_date])
     ws.append([])
-    ws.append(["Sheet", "Rows", "Source query"])
+    ws.append([i18n_text("sheet", lang), i18n_text("rows", lang), i18n_text("query", lang)])
     for cell in ws[5]:
         cell.font, cell.fill = header_font, header_fill
     for r in about_rows:
@@ -221,7 +233,7 @@ def build_xlsx(store: DatasetStore, title: str, sheets: list[SheetSpec], busines
 # ---------- presentation ----------
 
 def build_pptx(store: DatasetStore, charts: dict[str, bytes], title: str, subtitle: str | None,
-               slides: list[Slide], business_date: str) -> bytes:
+               slides: list[Slide], business_date: str, lang: Lang = "en") -> bytes:
     from pptx import Presentation
     from pptx.dml.color import RGBColor
     from pptx.enum.shapes import MSO_SHAPE
@@ -266,7 +278,7 @@ def build_pptx(store: DatasetStore, charts: dict[str, bytes], title: str, subtit
 
     def frame(slide, heading, number):
         textbox(slide, 0.6, 0.4, 12.1, 0.8, heading, 28, bold=True)
-        textbox(slide, 0.6, 6.95, 10, 0.35, source_line(business_date), 10, MUTED)
+        textbox(slide, 0.6, 6.95, 10, 0.35, source_line(business_date, lang), 10, MUTED)
         textbox(slide, 11.7, 6.95, 1.0, 0.35, str(number), 10, MUTED, align=PP_ALIGN.RIGHT)
 
     # Title slide
@@ -278,7 +290,7 @@ def build_pptx(store: DatasetStore, charts: dict[str, bytes], title: str, subtit
     textbox(s, 0.8, 2.65, 11.5, 1.4, title, 40, bold=True)
     if subtitle:
         textbox(s, 0.8, 3.9, 11.5, 0.8, subtitle, 20, SECONDARY)
-    textbox(s, 0.8, 6.6, 11.5, 0.4, source_line(business_date), 12, MUTED)
+    textbox(s, 0.8, 6.6, 11.5, 0.4, source_line(business_date, lang), 12, MUTED)
 
     for number, spec in enumerate(slides, start=2):
         s = prs.slides.add_slide(blank)
@@ -297,7 +309,7 @@ def build_pptx(store: DatasetStore, charts: dict[str, bytes], title: str, subtit
                 tile.fill.fore_color.rgb = rgb("FCFCFB")
                 tile.line.color.rgb = rgb(HAIRLINE)
                 textbox(s, x + 0.3, 2.25, w - 0.6, 0.5, k.label, 16, SECONDARY)
-                textbox(s, x + 0.3, 2.85, w - 0.6, 1.0, kpi_value(store, k), 40, bold=True)
+                textbox(s, x + 0.3, 2.85, w - 0.6, 1.0, kpi_value(store, k, lang), 40, bold=True)
                 if k.note:
                     textbox(s, x + 0.3, 3.9, w - 0.6, 0.5, k.note, 12, MUTED)
         elif spec.kind == "chart":
@@ -313,7 +325,7 @@ def build_pptx(store: DatasetStore, charts: dict[str, bytes], title: str, subtit
             if not spec.table:
                 raise DocError(f"Slide {spec.title!r}: kind=table needs a table.")
             t = select_table(store, spec.table.dataset_id, spec.table.columns, spec.table.formats,
-                             min(spec.table.max_rows, 14))
+                             min(spec.table.max_rows, 14), lang)
             rows, cols = len(t.rows) + 1, len(t.headers)
             shape = s.shapes.add_table(rows, cols, Inches(0.6), Inches(1.5), Inches(12.1), Inches(0.4 * rows))
             table = shape.table
@@ -331,7 +343,7 @@ def build_pptx(store: DatasetStore, charts: dict[str, bytes], title: str, subtit
                     cell.fill.solid()
                     cell.fill.fore_color.rgb = rgb(HEADER_FILL if r == 0 else "FFFFFF")
             if t.total_rows > len(t.rows):
-                textbox(s, 0.6, 6.55, 12, 0.35, f"Showing {len(t.rows)} of {t.total_rows} rows", 11, MUTED)
+                textbox(s, 0.6, 6.55, 12, 0.35, t.showing(), 11, MUTED)
         else:
             if not spec.bullets:
                 raise DocError(f"Slide {spec.title!r}: kind=bullets needs bullets.")
@@ -345,7 +357,7 @@ def build_pptx(store: DatasetStore, charts: dict[str, bytes], title: str, subtit
 # ---------- report (docx / pdf) ----------
 
 def build_docx(store: DatasetStore, charts: dict[str, bytes], title: str, subtitle: str | None,
-               sections: list[Section], business_date: str) -> bytes:
+               sections: list[Section], business_date: str, lang: Lang = "en") -> bytes:
     from docx import Document
     from docx.enum.text import WD_ALIGN_PARAGRAPH
     from docx.oxml import OxmlElement
@@ -360,7 +372,7 @@ def build_docx(store: DatasetStore, charts: dict[str, bytes], title: str, subtit
         p = doc.add_paragraph(subtitle)
         p.runs[0].font.size = Pt(14)
         p.runs[0].font.color.rgb = RGBColor.from_string(SECONDARY)
-    meta = doc.add_paragraph(source_line(business_date))
+    meta = doc.add_paragraph(source_line(business_date, lang))
     meta.runs[0].font.color.rgb = RGBColor.from_string(MUTED)
     meta.runs[0].font.size = Pt(9)
 
@@ -379,7 +391,7 @@ def build_docx(store: DatasetStore, charts: dict[str, bytes], title: str, subtit
             for i, k in enumerate(sec.kpis):
                 t.cell(0, i).text = k.label
                 t.cell(0, i).paragraphs[0].runs[0].font.color.rgb = RGBColor.from_string(SECONDARY)
-                run = t.cell(1, i).paragraphs[0].add_run(kpi_value(store, k))
+                run = t.cell(1, i).paragraphs[0].add_run(kpi_value(store, k, lang))
                 run.bold, run.font.size = True, Pt(20)
                 if k.note:
                     note = t.cell(1, i).add_paragraph(k.note)
@@ -394,7 +406,7 @@ def build_docx(store: DatasetStore, charts: dict[str, bytes], title: str, subtit
                 raise DocError(f"Unknown chart_id {sec.chart_id!r}; create it with make_chart.")
             doc.add_picture(io.BytesIO(png), width=Inches(6.3))
         if sec.table:
-            t = select_table(store, sec.table.dataset_id, sec.table.columns, sec.table.formats, sec.table.max_rows)
+            t = select_table(store, sec.table.dataset_id, sec.table.columns, sec.table.formats, sec.table.max_rows, lang)
             table = doc.add_table(rows=len(t.rows) + 1, cols=len(t.headers))
             table.style = "Table Grid"
             for r, values in enumerate([t.headers] + t.formatted()):
@@ -409,7 +421,7 @@ def build_docx(store: DatasetStore, charts: dict[str, bytes], title: str, subtit
                     if r == 0:
                         shade(cell, HEADER_FILL)
             if t.total_rows > len(t.rows):
-                note = doc.add_paragraph(f"Showing {len(t.rows)} of {t.total_rows} rows.")
+                note = doc.add_paragraph(t.showing() + ".")
                 note.runs[0].font.size = Pt(9)
     buf = io.BytesIO()
     doc.save(buf)
@@ -417,7 +429,7 @@ def build_docx(store: DatasetStore, charts: dict[str, bytes], title: str, subtit
 
 
 def build_pdf(store: DatasetStore, charts: dict[str, bytes], title: str, subtitle: str | None,
-              sections: list[Section], business_date: str) -> bytes:
+              sections: list[Section], business_date: str, lang: Lang = "en") -> bytes:
     from reportlab.lib import colors
     from reportlab.lib.enums import TA_RIGHT
     from reportlab.lib.pagesizes import A4
@@ -445,7 +457,7 @@ def build_pdf(store: DatasetStore, charts: dict[str, bytes], title: str, subtitl
     story = [Paragraph(escape(title), styles["title"])]
     if subtitle:
         story.append(Paragraph(escape(subtitle), styles["subtitle"]))
-    story += [Spacer(1, 4), Paragraph(escape(source_line(business_date)), styles["meta"]), Spacer(1, 10)]
+    story += [Spacer(1, 4), Paragraph(escape(source_line(business_date, lang)), styles["meta"]), Spacer(1, 10)]
 
     hair = colors.HexColor("#" + HAIRLINE)
     for sec in sections:
@@ -454,7 +466,7 @@ def build_pdf(store: DatasetStore, charts: dict[str, bytes], title: str, subtitl
             story.append(Paragraph(escape(sec.heading), styles["h1"]))
         if sec.kpis:
             cells = [[Paragraph(escape(k.label), styles["kpi_label"]) for k in sec.kpis],
-                     [Paragraph(escape(kpi_value(store, k)), styles["kpi_value"]) for k in sec.kpis]]
+                     [Paragraph(escape(kpi_value(store, k, lang)), styles["kpi_value"]) for k in sec.kpis]]
             if any(k.note for k in sec.kpis):
                 cells.append([Paragraph(escape(k.note or ""), styles["meta"]) for k in sec.kpis])
             t = RLTable(cells, colWidths=[width / len(sec.kpis)] * len(sec.kpis))
@@ -480,7 +492,7 @@ def build_pdf(store: DatasetStore, charts: dict[str, bytes], title: str, subtitl
                 raise DocError(f"Unknown chart_id {sec.chart_id!r}; create it with make_chart.")
             story += [Spacer(1, 6), Image(io.BytesIO(png), width=width, height=width * 450 / 800), Spacer(1, 6)]
         if sec.table:
-            t = select_table(store, sec.table.dataset_id, sec.table.columns, sec.table.formats, sec.table.max_rows)
+            t = select_table(store, sec.table.dataset_id, sec.table.columns, sec.table.formats, sec.table.max_rows, lang)
             data = [[Paragraph(f"<b>{escape(h)}</b>", styles["cell_r" if n else "cell"])
                      for h, n in zip(t.headers, t.numeric)]]
             data += [[Paragraph(escape(v), styles["cell_r" if n else "cell"]) for v, n in zip(row, t.numeric)]
@@ -493,7 +505,7 @@ def build_pdf(store: DatasetStore, charts: dict[str, bytes], title: str, subtitl
             ]))
             story += [table, Spacer(1, 4)]
             if t.total_rows > len(t.rows):
-                story.append(Paragraph(f"Showing {len(t.rows)} of {t.total_rows} rows.", styles["meta"]))
+                story.append(Paragraph(t.showing() + ".", styles["meta"]))
         if sec.heading and len(story) - section_start > 1:
             # Keep the heading on the same page as what follows it (up to and including a chart).
             parts = story[section_start:]

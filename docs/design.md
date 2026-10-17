@@ -158,7 +158,8 @@ docker-compose.yml, .env.example, README.md
    allowlist, per-user data, signed download links).
 7. ✅ CI (GitHub Actions), rate limits, website sign-in (OIDC, same allowlist), saved
    conversations with a sidebar, per-hotel access (PostgreSQL row-level security).
-8. Golden-question evals, polish, README.
+8. ✅ English and Latin American Spanish: website, agent answers, chart and document labels.
+9. Golden-question evals, polish, README.
 
 ## Open questions
 

@@ -309,6 +309,7 @@ def build_server(dsn: str, statement_timeout_ms: int = 15000, artifacts_dir: str
         series: str | None = None,
         subtitle: str | None = None,
         y_format: Literal[KINDS] | None = None,
+        language: Literal["en", "es"] = "en",
     ) -> CallToolResult:
         """Chart one numeric measure from a stored dataset. The chart is shown to the user in
         the chat (interactive) and saved as a PNG; pass the returned chart_id to
@@ -327,9 +328,12 @@ def build_server(dsn: str, statement_timeout_ms: int = 15000, artifacts_dir: str
             series: Column whose values become separate lines/bar colors, e.g. "hotel_code".
             subtitle: Period and scope, e.g. "Monthly, Oct 2025 - Sep 2026".
             y_format: Override the value format inferred from the column name.
+            language: Language of the text the tool adds (dates, column headers, source line):
+                "en", or "es" for Latin American Spanish. Write titles and text in the same language.
         """
         try:
-            chart = build_chart_data(_get(dataset_id), chart_type, x, y, series, title, subtitle, y_format)
+            chart = build_chart_data(_get(dataset_id), chart_type, x, y, series, title, subtitle, y_format,
+                                     language)
         except ChartError as e:
             raise doc_error(e) from e
         svg, _ = render_svg(chart, "light")
@@ -350,7 +354,8 @@ def build_server(dsn: str, statement_timeout_ms: int = 15000, artifacts_dir: str
         return _ok({**summary, "chart": chart_payload(chart)}, for_model=summary, extra_content=[image])
 
     @mcp.tool(annotations=CREATES_FILE)
-    async def make_spreadsheet(title: str, sheets: list[SheetSpec], filename: str | None = None) -> CallToolResult:
+    async def make_spreadsheet(title: str, sheets: list[SheetSpec], filename: str | None = None,
+                               language: Literal["en", "es"] = "en") -> CallToolResult:
         """Create an Excel workbook with one sheet per dataset: formatted header, number formats
         (percent, EUR, integers, dates) inferred from column names, frozen header row, filters,
         plus an About sheet listing each sheet's source query. All rows of each dataset are
@@ -360,10 +365,12 @@ def build_server(dsn: str, statement_timeout_ms: int = 15000, artifacts_dir: str
             title: Workbook title (also the default file name).
             sheets: One entry per sheet.
             filename: Optional file name without extension.
+            language: Language of the text the tool adds (dates, column headers, source line):
+                "en", or "es" for Latin American Spanish. Write titles and text in the same language.
         """
         schema = await load_schema(with_hotels=False)
         try:
-            data = build_xlsx(my_store(), title, sheets, schema["business_date"])
+            data = build_xlsx(my_store(), title, sheets, schema["business_date"], language)
         except DocError as e:
             raise doc_error(e) from e
         info = artifacts.save(data, filename or title, "xlsx")
@@ -371,7 +378,8 @@ def build_server(dsn: str, statement_timeout_ms: int = 15000, artifacts_dir: str
 
     @mcp.tool(annotations=CREATES_FILE)
     async def make_presentation(title: str, slides: list[Slide], subtitle: str | None = None,
-                                filename: str | None = None) -> CallToolResult:
+                                filename: str | None = None,
+                                language: Literal["en", "es"] = "en") -> CallToolResult:
         """Create a 16:9 PowerPoint deck: a title slide, then one slide per entry. Slide kinds:
         kpis (1-4 headline tiles, values read from datasets), chart (a chart_id from make_chart,
         optionally with 2-4 takeaway bullets beside it), table (up to 14 rows from a dataset),
@@ -383,10 +391,12 @@ def build_server(dsn: str, statement_timeout_ms: int = 15000, artifacts_dir: str
             slides: Content slides in order (max 25).
             subtitle: E.g. period and scope.
             filename: Optional file name without extension.
+            language: Language of the text the tool adds (dates, column headers, source line):
+                "en", or "es" for Latin American Spanish. Write titles and text in the same language.
         """
         schema = await load_schema(with_hotels=False)
         try:
-            data = build_pptx(my_store(), my_charts(), title, subtitle, slides, schema["business_date"])
+            data = build_pptx(my_store(), my_charts(), title, subtitle, slides, schema["business_date"], language)
         except DocError as e:
             raise doc_error(e) from e
         info = artifacts.save(data, filename or title, "pptx")
@@ -394,7 +404,8 @@ def build_server(dsn: str, statement_timeout_ms: int = 15000, artifacts_dir: str
 
     @mcp.tool(annotations=CREATES_FILE)
     async def make_report(title: str, sections: list[Section], format: Literal["pdf", "docx"] = "pdf",
-                          subtitle: str | None = None, filename: str | None = None) -> CallToolResult:
+                          subtitle: str | None = None, filename: str | None = None,
+                          language: Literal["en", "es"] = "en") -> CallToolResult:
         """Create a written report as PDF or Word (.docx). Each section can have a heading,
         narrative text (paragraphs; lines starting with '- ' become bullets), KPI tiles, a chart
         (chart_id from make_chart) and a table from a dataset, in that order.
@@ -405,13 +416,15 @@ def build_server(dsn: str, statement_timeout_ms: int = 15000, artifacts_dir: str
             format: "pdf" or "docx".
             subtitle: E.g. period and scope.
             filename: Optional file name without extension.
+            language: Language of the text the tool adds (dates, column headers, source line):
+                "en", or "es" for Latin American Spanish. Write titles and text in the same language.
         """
         if not sections:
             raise ToolError("Provide at least one section.")
         schema = await load_schema(with_hotels=False)
         build = build_pdf if format == "pdf" else build_docx
         try:
-            data = build(my_store(), my_charts(), title, subtitle, sections, schema["business_date"])
+            data = build(my_store(), my_charts(), title, subtitle, sections, schema["business_date"], language)
         except DocError as e:
             raise doc_error(e) from e
         info = artifacts.save(data, filename or title, format)

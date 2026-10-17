@@ -3,6 +3,7 @@
 
 import { NextResponse, type NextRequest } from "next/server";
 import { SESSION_COOKIE, USER_HEADER, authConfig, isAllowed, unseal, type AuthConfig, type Session } from "@/lib/auth";
+import { messages, requestLocale } from "@/lib/i18n";
 import { messagePage } from "@/lib/pages";
 
 const PUBLIC_PATHS = ["/auth/", "/signed-out"];
@@ -16,7 +17,8 @@ export async function proxy(req: NextRequest): Promise<Response> {
   try {
     auth = authConfig();
   } catch (e) {
-    return messagePage("Sign-in is misconfigured", e instanceof Error ? e.message : String(e), 500);
+    const locale = requestLocale(req);
+    return messagePage(messages(locale).misconfiguredTitle, e instanceof Error ? e.message : String(e), 500, false, locale);
   }
   const { pathname, search } = req.nextUrl;
   if (!auth || PUBLIC_PATHS.some((p) => pathname.startsWith(p))) {
@@ -27,7 +29,7 @@ export async function proxy(req: NextRequest): Promise<Response> {
   // Re-check the allowlist so removing someone takes effect without waiting for their cookie to expire.
   if (!session?.email || !isAllowed(auth, session.email)) {
     if (pathname.startsWith("/api/")) {
-      return Response.json({ detail: "Sign in to continue." }, { status: 401 });
+      return Response.json({ detail: messages(requestLocale(req)).signInToContinue }, { status: 401 });
     }
     const login = new URL("/auth/login", auth.publicUrl);
     login.searchParams.set("returnTo", pathname + search);

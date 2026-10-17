@@ -98,7 +98,9 @@ The document tools read every number from stored datasets (by `dataset_id` and c
 from text the model types, so the numbers in a file always match the query. Charts follow a
 validated colour-blind-safe palette, use one y-axis per chart, and come with light and dark
 variants plus a phone layout. Generated files go to `PMS_ARTIFACTS_DIR`, a volume shared with the
-agent, which serves them for download, and expire after 24 hours.
+agent, which serves them for download, and expire after 24 hours. The chart and document tools take
+`language` (`en`, or `es` for Latin American Spanish) for the dates, column headers and source
+lines they add.
 
 Safety: queries are parsed with sqlglot and rejected unless they are a single read query (no
 data-modifying CTEs, `SELECT INTO`, `FOR UPDATE`, `pg_sleep`, file-access or SQL-executing
@@ -224,8 +226,9 @@ Security notes:
 
 `agent/` is a FastAPI service that runs Claude with the MCP server's tools.
 
-`POST /api/chat` with `{"message": "...", "conversation_id": "..."}` (omit the id to start a new
-conversation) returns a stream of server-sent events:
+`POST /api/chat` with `{"message": "...", "conversation_id": "...", "language": "en"}` (omit the id
+to start a new conversation; `language` is `en` or `es` for Latin American Spanish) returns a
+stream of server-sent events:
 
 | Event | Data |
 |---|---|
@@ -271,6 +274,24 @@ download. Spreadsheets, decks and reports appear as download cards. There's a St
 starter questions, and it works in light and dark mode and at phone width. A sidebar (a drawer on
 phones) lists saved conversations to reopen or delete; the open one is kept in the address (`?c=…`). The browser only talks
 to the site's own `/api/chat` and `/api/files/{id}` routes, which proxy the agent (`AGENT_URL`).
+
+### Languages
+
+The site is available in English and Latin American Spanish (es-419). The language follows the
+browser (`Accept-Language`) until someone picks one with the EN/ES switcher in the header, which is
+remembered in the `pms_lang` cookie. In Spanish:
+
+- **Interface:** every label, message, sign-in page and error is translated.
+- **Answers:** the agent answers in neutral Latin American Spanish ("tú", no "vosotros"), with
+  commas for thousands and a period for decimals.
+- **Charts and documents:** the agent passes `language="es"` to the chart and document tools.
+  They then write dates (`T3 2026`, `octubre de 2026`), column headers (`Ingresos por
+  habitaciones`), the source line and the About sheet (`Acerca de`) in Spanish; Claude writes the
+  titles and commentary.
+- **Your own language:** if someone writes in another language, the agent answers in that language.
+
+Website text lives in `web/lib/i18n.ts`. The agent's language instructions and messages are in
+`agent/pms_agent/prompts.py`, and the document labels are in `mcp_server/pms_mcp/i18n.py`.
 
 ### Sign-in
 

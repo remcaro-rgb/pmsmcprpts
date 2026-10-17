@@ -1,3 +1,4 @@
+import { INTL_LOCALE, messages, type Locale, type Messages } from "./i18n";
 import type { SseEvent } from "./sse";
 
 export type Column = { name: string; type: string };
@@ -124,7 +125,7 @@ export function applyEvent(msg: AssistantMessage, ev: SseEvent): AssistantMessag
 }
 
 /** Turns a non-2xx response from /api/chat into a readable message. */
-export function httpErrorMessage(status: number, body: string): string {
+export function httpErrorMessage(status: number, body: string, t: Messages = messages("en")): string {
   try {
     const detail = JSON.parse(body).detail;
     if (typeof detail === "string") return detail;
@@ -132,7 +133,7 @@ export function httpErrorMessage(status: number, body: string): string {
   } catch {
     // not JSON
   }
-  return `Request failed (${status}).`;
+  return t.requestFailed(status);
 }
 
 export type ConversationSummary = { id: string; title: string; updated: number };
@@ -152,12 +153,13 @@ export function messagesFromSaved(saved: SavedConversation): Message[] {
   });
 }
 
-/** "14:05" today, "Mon" this week, else "12 Oct". */
-export function shortDate(seconds: number, now = new Date()): string {
+/** "14:05" today, "Mon" this week, else "12 Oct" (in the given language). */
+export function shortDate(seconds: number, now = new Date(), locale: Locale = "en"): string {
   const d = new Date(seconds * 1000);
+  const tag = locale === "en" ? "en-GB" : INTL_LOCALE[locale];
   if (d.toDateString() === now.toDateString()) {
-    return d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+    return d.toLocaleTimeString(tag, { hour: "2-digit", minute: "2-digit", hour12: false });
   }
-  if (now.getTime() - d.getTime() < 6 * 86400_000) return d.toLocaleDateString("en-GB", { weekday: "short" });
-  return d.toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+  if (now.getTime() - d.getTime() < 6 * 86400_000) return d.toLocaleDateString(tag, { weekday: "short" });
+  return d.toLocaleDateString(tag, { day: "numeric", month: "short" });
 }

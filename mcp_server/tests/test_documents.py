@@ -197,3 +197,50 @@ async def test_make_report(ctx, fmt):
         texts = [p.text for p in doc.paragraphs]
         assert "Summary" in texts and "Lisbon led" in texts
         assert len(doc.inline_shapes) == 1 and len(doc.tables) == 2
+
+
+# ---------- Latin American Spanish ----------
+
+def test_spanish_labels():
+    from pms_mcp.documents import pretty, source_line
+
+    assert date_labels(["2026-07-01", "2026-10-01"], "es")[0] == ["T3 2026", "T4 2026"]
+    assert date_labels(["2025-12-01", "2026-01-01"], "es") == (["dic 25", "ene 26"],
+                                                               ["diciembre de 2025", "enero de 2026"])
+    assert date_labels(["2026-10-16", "2026-10-17"], "es") == (["16 oct", "17 oct"],
+                                                               ["vie 16 oct 2026", "sáb 17 oct 2026"])
+    assert format_value("2026-09-02", "date", "es") == "2 sept 2026"
+    assert pretty("room_revenue", "es") == "Ingresos por habitaciones"
+    assert pretty("hotel_code", "es") == "Hotel" and pretty("adr", "es") == "ADR"
+    assert pretty("some_new_column", "es") == "Some new column"  # not in the glossary
+    assert source_line("2026-10-17", "es") == "Fuente: base de datos del PMS · datos al 17 oct 2026"
+
+
+@needs_db
+@pytest.mark.anyio
+async def test_documents_in_spanish(ctx):
+    from docx import Document
+    from openpyxl import load_workbook
+
+    client, files = ctx
+    ds = await monthly(client)
+    chart = await call(client, "make_chart", dataset_id=ds, x="month", y="occupancy", series="hotel_code",
+                       title="Ocupación por hotel", language="es")
+    assert chart.structured_content["chart"]["x_labels"][:2] == ["enero de 2026", "febrero de 2026"]
+    assert chart.structured_content["file"]["filename"] == "Ocupacion por hotel.png"
+
+    r = await call(client, "make_spreadsheet", title="Ocupación S1 2026", language="es",
+                   sheets=[{"name": "Mensual", "dataset_id": ds}])
+    wb = load_workbook(io.BytesIO(files.read(r.structured_content["file"]["file_id"])))
+    assert wb.sheetnames == ["Mensual", "Acerca de"]
+    assert [c.value for c in wb["Mensual"][1]] == ["Hotel", "Mes", "Ocupación", "Ingresos por habitaciones"]
+    assert wb["Acerca de"]["A2"].value == "Generado"
+
+    r = await call(client, "make_report", title="Desempeño S1 2026", format="docx", language="es", sections=[
+        {"heading": "Ocupación", "chart_id": chart.structured_content["chart_id"],
+         "table": {"dataset_id": ds, "max_rows": 6}}])
+    doc = Document(io.BytesIO(files.read(r.structured_content["file"]["file_id"])))
+    texts = [p.text for p in doc.paragraphs]
+    assert any(t.startswith("Fuente: base de datos del PMS") for t in texts)
+    assert "Mostrando 6 de 18 filas." in texts
+    assert doc.tables[0].cell(0, 2).text == "Ocupación"

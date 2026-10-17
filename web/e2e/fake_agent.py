@@ -89,7 +89,7 @@ def fmt(value, column):
     return str(value)
 
 
-def answer_from(result: dict) -> str:
+def answer_from(result: dict, spanish: bool = False) -> str:
     wanted = [c["name"] for c in result["columns"]
               if c["name"] in ("hotel_code", "period", "channel", "occupancy", "adr", "revpar",
                                "reservations", "cancellation_rate", "room_revenue")]
@@ -97,6 +97,10 @@ def answer_from(result: dict) -> str:
     lines = ["| " + " | ".join(wanted) + " |", "|" + "---|" * len(wanted)]
     for row in result["rows"][:15]:
         lines.append("| " + " | ".join(fmt(row[i], wanted[j]) for j, i in enumerate(idx)) + " |")
+    if spanish:
+        return ("Esto es lo que muestra la base de datos (respuesta simulada para pruebas, armada con el "
+                "resultado de la herramienta):\n\n" + "\n".join(lines)
+                + f"\n\nConjunto de datos: `{result['dataset_id']}`.")
     return ("Here is what the database shows (stand-in answer for testing, built from the tool "
             "result):\n\n" + "\n".join(lines) + f"\n\nSource dataset: `{result['dataset_id']}`.")
 
@@ -141,6 +145,32 @@ PLANS = {
 }
 
 
+# Spanish versions for when the system prompt asks for Latin American Spanish: keywords that pick
+# each plan, closing texts, and the titles the plans give their documents.
+KEYWORDS_ES = {"chart": "gráfico", "excel": "hoja de cálculo", "deck": "presentación", "report": "reporte"}
+CLOSINGS_ES = {
+    "chart": "Esta es la ocupación mensual por hotel de los últimos 12 meses. Los tres hoteles tuvieron su pico en verano.",
+    "excel": "Puse los KPI mensuales por hotel en una hoja de cálculo.",
+    "deck": "La presentación del T3 2026 está lista: KPI principales, RevPAR por hotel y una tabla de KPI.",
+    "report": "El reporte de ocupación está listo en PDF.",
+}
+TITLES_ES = {
+    "Occupancy by hotel": "Ocupación por hotel", "Monthly, Oct 2025 – Sep 2026": "Mensual, oct 2025 – sept 2026",
+    "Monthly KPIs Oct 2025 - Sep 2026": "KPI mensuales oct 2025 - sept 2026", "Monthly by hotel": "Mensual por hotel",
+    "Occupancy report": "Reporte de ocupación", "Occupancy": "Ocupación",
+    "Monthly occupancy for the last 12 months.": "Ocupación mensual de los últimos 12 meses.",
+}
+
+
+def to_spanish(value):
+    """Tool input with Spanish titles and language="es" (document tools)."""
+    if isinstance(value, dict):
+        return {k: to_spanish(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [to_spanish(v) for v in value]
+    return TITLES_ES.get(value, value) if isinstance(value, str) else value
+
+
 def turn_results(messages):
     """Model-facing JSON of every tool result since the last question."""
     results = []
@@ -161,22 +191,25 @@ class ScriptedMessages:
         if isinstance(last["content"], list) and any(b.get("is_error") for b in last["content"]):
             return text_stream("The tool failed: " + last["content"][0]["content"])
         results = turn_results(messages)
+        spanish = "Latin American Spanish" in params["system"]
 
-        plan = next((PLANS[k] for k in PLANS if k in question), None)
-        if plan:
-            steps, closing = plan
+        key = next((k for k in PLANS if k in question or (spanish and KEYWORDS_ES[k] in question)), None)
+        if key:
+            steps, closing = PLANS[key]
             if len(results) < len(steps):
                 name, tool_input = steps[len(results)](results)
+                if spanish and name.startswith("make_"):
+                    tool_input = {**to_spanish(tool_input), "language": "es"}
                 return tool_stream(name, tool_input, f"Step {len(results) + 1}: {name}.")
-            return text_stream(closing)
+            return text_stream(CLOSINGS_ES[key] if spanish else closing)
         if results:  # one query done: answer from it
-            return text_stream(answer_from(results[-1]))
+            return text_stream(answer_from(results[-1], spanish))
         if "refuse" in question:
             return ScriptedStream([], "refusal", [], 0)
         if "slow" in question:
             return text_stream("This answer streams slowly so the Stop button can be tested. " * 40,
                                delay=0.15)
-        if "channel" in question:
+        if "channel" in question or (spanish and "canal" in question):
             return tool_stream("run_sql", {"query": CHANNEL_SQL},
                                "Cancellation rates by channel for 2026 year to date.")
         return tool_stream("get_kpis", Q3, "Last quarter relative to the business date is Q3 2026.")

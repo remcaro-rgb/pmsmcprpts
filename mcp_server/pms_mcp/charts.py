@@ -13,6 +13,7 @@ import vl_convert
 
 from .datasets import Dataset
 from .formats import Kind, date_labels, format_tick, format_value, infer_kind, nice_ticks
+from .i18n import Lang
 
 MAX_SERIES = 8
 MAX_BARS = 60
@@ -52,7 +53,7 @@ class ChartData:
 
 
 def build_chart_data(ds: Dataset, kind: str, x: str, y: str, series: str | None, title: str,
-                     subtitle: str | None, y_format: Kind | None) -> ChartData:
+                     subtitle: str | None, y_format: Kind | None, lang: Lang = "en") -> ChartData:
     names = [c["name"] for c in ds.columns]
     for col in (x, y, series):
         if col is not None and col not in names:
@@ -88,7 +89,7 @@ def build_chart_data(ds: Dataset, kind: str, x: str, y: str, series: str | None,
         raise ChartError(f"{len(categories)} x values is too many (max {MAX_POINTS}); aggregate first.")
 
     if x_kind == "date":
-        ticks, full = date_labels(categories)
+        ticks, full = date_labels(categories, lang)
     else:
         ticks = full = [str(c) for c in categories]
     y_values = [r[yi] for r in ds.rows]

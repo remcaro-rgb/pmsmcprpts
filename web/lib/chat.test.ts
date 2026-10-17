@@ -91,5 +91,7 @@ describe("saved conversations", () => {
     expect(shortDate(new Date(2026, 9, 17, 9, 5).getTime() / 1000, now)).toBe("09:05");
     expect(shortDate(new Date(2026, 9, 15, 9, 5).getTime() / 1000, now)).toBe("Thu");
     expect(shortDate(new Date(2026, 8, 2).getTime() / 1000, now)).toBe("2 Sept");
+    expect(shortDate(new Date(2026, 9, 15, 9, 5).getTime() / 1000, now, "es")).toBe("jue");
+    expect(shortDate(new Date(2026, 8, 2).getTime() / 1000, now, "es")).toBe("2 sept");
   });
 });

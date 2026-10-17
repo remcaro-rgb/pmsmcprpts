@@ -12,6 +12,7 @@ import {
   type PendingLogin,
 } from "@/lib/auth";
 import { oidcClient } from "@/lib/oidc";
+import { messages, requestLocale } from "@/lib/i18n";
 import { messagePage } from "@/lib/pages";
 
 export const dynamic = "force-dynamic";
@@ -20,8 +21,10 @@ export const dynamic = "force-dynamic";
 export async function GET(req: NextRequest): Promise<Response> {
   const auth = authConfig();
   if (!auth) return NextResponse.redirect(new URL("/", req.url));
+  const locale = requestLocale(req);
+  const t = messages(locale);
   const pending = await unseal<PendingLogin>(auth.secret, "login", req.cookies.get(LOGIN_COOKIE)?.value);
-  if (!pending) return messagePage("Sign-in expired", "This sign-in attempt expired. Please sign in again.", 400, true);
+  if (!pending) return messagePage(t.signInExpiredTitle, t.signInExpiredBody, 400, true, locale);
 
   let email: string;
   try {
@@ -40,10 +43,10 @@ export async function GET(req: NextRequest): Promise<Response> {
     if (claims.email_verified === false) throw new Error(`${email} is not verified`);
   } catch (e) {
     const reason = e instanceof Error ? e.message : String(e);
-    return messagePage("Sign-in failed", `We could not verify your sign-in: ${reason}`, 400, true);
+    return messagePage(t.signInFailedTitle, t.signInFailedBody(reason), 400, true, locale);
   }
   if (!isAllowed(auth, email)) {
-    return messagePage("Access not allowed", `${email} is not allowed to use this site. Ask the administrator to add your account.`, 403, true);
+    return messagePage(t.notAllowedTitle, t.notAllowedBody(email), 403, true, locale);
   }
 
   const res = NextResponse.redirect(new URL(pending.returnTo, auth.publicUrl));

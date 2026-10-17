@@ -2,6 +2,7 @@ import * as client from "openid-client";
 import { NextResponse, type NextRequest } from "next/server";
 import { LOGIN_COOKIE, authConfig, cookieOptions, loginTtl, safeReturnTo, seal } from "@/lib/auth";
 import { oidcClient, redirectUri } from "@/lib/oidc";
+import { messages, requestLocale } from "@/lib/i18n";
 import { messagePage } from "@/lib/pages";
 
 export const dynamic = "force-dynamic";
@@ -14,7 +15,9 @@ export async function GET(req: NextRequest): Promise<Response> {
   try {
     oidc = await oidcClient(auth);
   } catch {
-    return messagePage("Sign-in unavailable", "The sign-in provider can't be reached right now. Try again shortly.", 503);
+    const locale = requestLocale(req);
+    const t = messages(locale);
+    return messagePage(t.signInUnavailableTitle, t.signInUnavailableBody, 503, false, locale);
   }
   const verifier = client.randomPKCECodeVerifier();
   const pending = {
