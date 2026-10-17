@@ -41,6 +41,8 @@ services:
       PMS_ALLOWED_EMAILS: ${PMS_ALLOWED_EMAILS:-}
       PMS_ALLOWED_DOMAINS: ${PMS_ALLOWED_DOMAINS:-}
       PMS_MCP_SERVICE_TOKEN: ${PMS_MCP_SERVICE_TOKEN:-}
+      # Which hotels each user sees (row-level security); see .env.example.
+      PMS_HOTEL_ACCESS: ${PMS_HOTEL_ACCESS:-}
       PMS_AUTH_DB: /data/auth.sqlite
       # Public traffic arrives through Caddy, which sets X-Forwarded-For (used for rate limits).
       PMS_TRUST_PROXY: "true"

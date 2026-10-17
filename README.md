@@ -105,6 +105,37 @@ data-modifying CTEs, `SELECT INTO`, `FOR UPDATE`, `pg_sleep`, file-access or SQL
 functions). They then run in a `READ ONLY` transaction with a 15 s timeout as `pms_readonly`,
 which only has `SELECT` privileges.
 
+### Per-hotel access
+
+`PMS_HOTEL_ACCESS` decides which hotels each user sees, and PostgreSQL enforces it with row-level
+security (`db/init/04_hotel_access.sql`), so it holds for every tool and every query the model
+writes, including views and tables that reach a hotel only through a reservation (nights, folios,
+charges, payments, reviews, guest profiles):
+
+```bash
+PMS_HOTEL_ACCESS="ann@hotel.example = LIS,OPO; @lisbon.example = LIS; * = *"
+```
+
+Rules are `email = codes`, `@domain = codes` or `* = codes` (everyone else); the most specific
+match wins and `*` as the codes means all hotels. Unset, everyone sees every hotel; set, anyone with
+no matching rule sees none. Users are the people signed in to the Claude connector or the website;
+local use (stdio, or HTTP without sign-in) and the website without sign-in count as `*`.
+
+How it works: each query runs in a transaction that sets `pms.allowed_hotels` to the user's hotels,
+and the policies on the tables (and `security_invoker` views) only return those hotels' rows.
+Queries can't change the setting: the server runs user SQL as a single prepared statement (so no
+`SET` can follow), and `set_config()` is revoked from everyone but superusers. Connecting as
+`pms_readonly` without the setting shows no hotel data. To add this to a database created before
+this script existed:
+
+```bash
+docker compose exec -T db psql -U pms -d pms < db/init/04_hotel_access.sql
+```
+
+For website users to get their own hotels, the MCP server must know who they are: set
+`PMS_MCP_SERVICE_TOKEN`. With `PMS_PUBLIC_URL` unset, that makes the MCP server private to the
+website's agent (other HTTP clients get 401), and the agent passes on the signed-in user.
+
 ### Use it from Claude
 
 Claude Code, against the Docker service:
@@ -177,8 +208,8 @@ Security notes:
   request, because tokens are checked against the allowlist every time.
 - **Tokens:** access tokens last 1 hour and refresh tokens 30 days. Refresh tokens rotate on use,
   and all tokens are stored hashed.
-- **Privacy between users:** each person's query results and charts are visible only to them.
-  Everyone sees the same hotels.
+- **Privacy between users:** each person's query results and charts are visible only to them,
+  and `PMS_HOTEL_ACCESS` can limit which hotels they see.
 - **Download links:** signed and time-limited.
 - **The website:** its agent keeps working through the service token (`PMS_MCP_TOKEN`), set
   automatically from `PMS_MCP_SERVICE_TOKEN` in Docker Compose.

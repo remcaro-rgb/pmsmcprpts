@@ -15,6 +15,7 @@ from mcp_types import CallToolResult, ContentBlock, ImageContent, TextContent, T
 from starlette.requests import Request
 from starlette.responses import Response
 
+from .access import HotelAccess
 from .artifacts import ArtifactStore, FileInfo
 from .auth import SCOPE, AuthConfig, OIDCAuthProvider, current_user
 from .charts import ChartError, build_chart_data, chart_payload, render_png, render_svg
@@ -92,7 +93,8 @@ def _result(ds: Dataset, preview_rows: int, **extra: Any) -> CallToolResult:
 
 
 def build_server(dsn: str, statement_timeout_ms: int = 15000, artifacts_dir: str | None = None,
-                 auth: AuthConfig | None = None, oidc_http_client=None) -> MCPServer:
+                 auth: AuthConfig | None = None, oidc_http_client=None,
+                 access: HotelAccess | None = None) -> MCPServer:
     """With `auth`, remote users sign in through the configured OIDC provider (HTTP transport),
     each user's datasets and charts are private, and files get signed download links."""
     db = Database(dsn, statement_timeout_ms)
@@ -115,7 +117,15 @@ def build_server(dsn: str, statement_timeout_ms: int = 15000, artifacts_dir: str
             ))
     else:
         mcp = MCPServer("pms-reports", instructions=INSTRUCTIONS)
-    schema_cache: dict[str, Any] = {}
+    access = access or HotelAccess.from_env(os.environ)
+    schema_cache: dict[str, Any] = {}  # the same for everyone: dates and relations, not hotels
+
+    def my_hotels() -> str:
+        hotels = access.hotels_for(current_user())
+        if not hotels:
+            raise ToolError("Your account has no hotels assigned. Ask the administrator to add you "
+                            "to PMS_HOTEL_ACCESS.")
+        return hotels
 
     def my_store():
         return store.scoped(current_user())
@@ -130,28 +140,33 @@ def build_server(dsn: str, statement_timeout_ms: int = 15000, artifacts_dir: str
             ref["download_url"] = provider.download_url(info.file_id)
         return ref
 
-    async def load_schema() -> dict[str, Any]:
-        if not schema_cache:
-            try:
+    async def load_schema(with_hotels: bool = True) -> dict[str, Any]:
+        """Business date, data range, the caller's hotels, and the tables and views."""
+        hotels = my_hotels()
+        try:
+            if not schema_cache:
                 schema_cache.update(await _read_schema())
-            except QueryError as e:
-                raise ToolError(str(e)) from e
-        return schema_cache
+            if not with_hotels:
+                return schema_cache
+            rows = await db.query(
+                "SELECT code, name, city, country, star_rating, total_rooms, currency "
+                "FROM pms.hotels ORDER BY id", hotels=hotels)
+        except QueryError as e:
+            raise ToolError(str(e)) from e
+        visible = [dict(zip([c["name"] for c in rows.columns], r)) for r in rows.rows]
+        shared = {k: v for k, v in schema_cache.items() if k != "relations"}
+        return {**shared, "hotels": visible, "relations": schema_cache["relations"]}
 
     async def _read_schema() -> dict[str, Any]:
         settings = await db.query(
             "SELECT business_date, data_start, (SELECT max(stay_date) FROM pms.reservation_nights) "
             "FROM pms.system_settings")
-        hotels = await db.query(
-            "SELECT code, name, city, country, star_rating, total_rooms, currency "
-            "FROM pms.hotels ORDER BY id")
         relations = await db.query(SCHEMA_SQL)
         business_date, data_start, data_end = settings.rows[0]
         return {
             "business_date": business_date,
             "data_start": data_start,
             "data_end": data_end,
-            "hotels": [dict(zip([c["name"] for c in hotels.columns], r)) for r in hotels.rows],
             "relations": [
                 {"name": name, "kind": kind, "comment": comment, "columns": columns}
                 for name, kind, comment, columns in relations.rows
@@ -160,7 +175,7 @@ def build_server(dsn: str, statement_timeout_ms: int = 15000, artifacts_dir: str
 
     async def run(query, params, source) -> Dataset:
         try:
-            res = await db.query(query, params, max_rows=MAX_STORED_ROWS)
+            res = await db.query(query, params, max_rows=MAX_STORED_ROWS, hotels=my_hotels())
         except QueryError as e:
             raise ToolError(str(e)) from e
         return my_store().put(res.columns, res.rows, res.truncated, source)
@@ -346,7 +361,7 @@ def build_server(dsn: str, statement_timeout_ms: int = 15000, artifacts_dir: str
             sheets: One entry per sheet.
             filename: Optional file name without extension.
         """
-        schema = await load_schema()
+        schema = await load_schema(with_hotels=False)
         try:
             data = build_xlsx(my_store(), title, sheets, schema["business_date"])
         except DocError as e:
@@ -369,7 +384,7 @@ def build_server(dsn: str, statement_timeout_ms: int = 15000, artifacts_dir: str
             subtitle: E.g. period and scope.
             filename: Optional file name without extension.
         """
-        schema = await load_schema()
+        schema = await load_schema(with_hotels=False)
         try:
             data = build_pptx(my_store(), my_charts(), title, subtitle, slides, schema["business_date"])
         except DocError as e:
@@ -393,7 +408,7 @@ def build_server(dsn: str, statement_timeout_ms: int = 15000, artifacts_dir: str
         """
         if not sections:
             raise ToolError("Provide at least one section.")
-        schema = await load_schema()
+        schema = await load_schema(with_hotels=False)
         build = build_pdf if format == "pdf" else build_docx
         try:
             data = build(my_store(), my_charts(), title, subtitle, sections, schema["business_date"])

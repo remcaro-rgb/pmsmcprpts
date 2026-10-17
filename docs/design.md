@@ -157,7 +157,7 @@ docker-compose.yml, .env.example, README.md
 6. ✅ Remote connector: users connect their own Claude accounts (OAuth 2.1 + OIDC sign-in,
    allowlist, per-user data, signed download links).
 7. ✅ CI (GitHub Actions), rate limits, website sign-in (OIDC, same allowlist), saved
-   conversations with a sidebar.
+   conversations with a sidebar, per-hotel access (PostgreSQL row-level security).
 8. Golden-question evals, polish, README.
 
 ## Open questions

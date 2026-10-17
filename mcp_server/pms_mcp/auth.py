@@ -24,7 +24,8 @@ from urllib.parse import urlencode
 
 import httpx2
 import jwt
-from mcp.server.auth.middleware.auth_context import get_access_token
+from mcp.server.auth.middleware.auth_context import auth_context_var, get_access_token
+from mcp.server.auth.middleware.bearer_auth import AuthenticatedUser
 from mcp.server.auth.provider import (
     AccessToken,
     AuthorizationCode,
@@ -388,3 +389,30 @@ def _page(title: str, message: str, status: int) -> HTMLResponse:
         f"margin:15vh auto;padding:0 1rem;color:#0b0b0b'><h1 style='font-size:1.4rem'>{escape(title)}</h1>"
         f"<p style='color:#52514e;line-height:1.5'>{escape(message)}</p></body>",
         status_code=status)
+
+
+class ServiceTokenMiddleware:
+    """For a private MCP server (no PMS_PUBLIC_URL): only the website's agent may call it, with
+    PMS_MCP_SERVICE_TOKEN, and tools see the website user it acts for (for per-hotel access)."""
+
+    def __init__(self, app, service_token: str):
+        if len(service_token) < 32:
+            raise ValueError("PMS_MCP_SERVICE_TOKEN must be at least 32 characters (openssl rand -hex 32).")
+        self.app, self.service_token = app, service_token
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            return await self.app(scope, receive, send)
+        auth = dict(scope.get("headers") or []).get(b"authorization", b"").decode("latin-1")
+        scheme, _, token = auth.partition(" ")
+        user = service_token_user(token, self.service_token) if scheme.lower() == "bearer" else None
+        if user is None:
+            response = Response('{"error": "invalid_token"}', status_code=401, media_type="application/json",
+                                headers={"WWW-Authenticate": 'Bearer error="invalid_token"'})
+            return await response(scope, receive, send)
+        access = AccessToken(token=token, client_id=SERVICE_USER, scopes=[SCOPE], subject=user)
+        context = auth_context_var.set(AuthenticatedUser(access))
+        try:
+            await self.app(scope, receive, send)
+        finally:
+            auth_context_var.reset(context)

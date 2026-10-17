@@ -60,6 +60,7 @@ jobs:
         run: |
           psql -d pms -v ON_ERROR_STOP=1 -q -f db/init/01_schema.sql -f db/init/02_views.sql
           POSTGRES_USER=pms POSTGRES_DB=pms PMS_READONLY_PASSWORD=pms_readonly bash db/init/03_readonly_role.sh
+          psql -d pms -v ON_ERROR_STOP=1 -q -f db/init/04_hotel_access.sql
           python db/seed.py
 
       - name: Python tests
