@@ -184,6 +184,10 @@ Security notes:
   automatically from `PMS_MCP_SERVICE_TOKEN` in Docker Compose.
 - **Without sign-in:** when `PMS_PUBLIC_URL` is unset, the server runs as before, local and
   without sign-in.
+- **Rate limits** per client IP over 5 minutes: 30 sign-in requests, 120 downloads and 600 MCP
+  requests. Over the limit, clients get HTTP 429 with `Retry-After`. The website's service token
+  is exempt. Behind the bundled Caddy, the client IP comes from `X-Forwarded-For`
+  (`PMS_TRUST_PROXY=true`, set in Compose). Set `PMS_RATE_LIMIT=off` to disable.
 
 ## Agent API
 
@@ -220,7 +224,8 @@ Run it locally with `pip install -r agent/requirements.txt`, then `python -m pms
 
 ## Website
 
-`web/` is a Next.js chat app. Answers stream in as Markdown. Each tool step is a collapsible card
+`web/` is a Next.js chat app. Chat messages are rate-limited per user, or per IP without
+sign-in (`CHAT_RATE_LIMIT`, default `20/600`: 20 messages per 10 minutes). Answers stream in as Markdown. Each tool step is a collapsible card
 with its input (the SQL, or the KPI parameters) and the result table. Charts appear inline with a
 hover crosshair and tooltip (also reachable with the arrow keys), a "Show data" table and a PNG
 download. Spreadsheets, decks and reports appear as download cards. There's a Stop button and

@@ -42,6 +42,8 @@ services:
       PMS_ALLOWED_DOMAINS: ${PMS_ALLOWED_DOMAINS:-}
       PMS_MCP_SERVICE_TOKEN: ${PMS_MCP_SERVICE_TOKEN:-}
       PMS_AUTH_DB: /data/auth.sqlite
+      # Public traffic arrives through Caddy, which sets X-Forwarded-For (used for rate limits).
+      PMS_TRUST_PROXY: "true"
     volumes:
       - artifacts:/artifacts
       - mcpdata:/data
@@ -73,6 +75,7 @@ services:
     build: ./web
     environment:
       AGENT_URL: http://agent:7001
+      CHAT_RATE_LIMIT: ${CHAT_RATE_LIMIT:-20/600}
     ports:
       - "127.0.0.1:${PMS_WEB_PORT:-5050}:5050"
     depends_on:

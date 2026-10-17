@@ -11,6 +11,7 @@ import argparse
 import os
 
 from .auth import AuthConfig
+from .ratelimit import RateLimitMiddleware
 from .server import build_server
 
 
@@ -36,8 +37,15 @@ def main() -> None:
     server = build_server(args.dsn, args.statement_timeout_ms, auth=auth)
     if args.transport == "stdio":
         server.run("stdio")
-    else:
-        server.run("streamable-http", host=args.host, port=args.port)
+        return
+    import uvicorn
+
+    app = server.streamable_http_app(host=args.host)
+    if os.environ.get("PMS_RATE_LIMIT", "on").lower() != "off":
+        # Trust X-Forwarded-For only behind a proxy (e.g. the bundled Caddy); otherwise clients could spoof it.
+        app = RateLimitMiddleware(app, trust_proxy=os.environ.get("PMS_TRUST_PROXY", "").lower() == "true",
+                                  service_token=auth.service_token if auth else None)
+    uvicorn.run(app, host=args.host, port=args.port)
 
 
 if __name__ == "__main__":

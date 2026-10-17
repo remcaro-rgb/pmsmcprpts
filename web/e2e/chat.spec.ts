@@ -115,3 +115,16 @@ for (const [prompt, ext, magic] of [
     expect(bytes.subarray(0, magic.length).toString()).toBe(magic);
   });
 }
+
+test("rate-limits chat messages and says when to retry", async ({ request }) => {
+  // The test server allows 12 messages per 10 minutes per client; earlier tests used some.
+  let status = 200;
+  let body: { detail?: string } = {};
+  for (let i = 0; i < 13 && status !== 429; i++) {
+    const r = await request.post("/api/chat", { data: { message: "" } }); // rejected by the agent, still counted
+    status = r.status();
+    if (status === 429) body = await r.json();
+  }
+  expect(status).toBe(429);
+  expect(body.detail).toMatch(/Try again in \d+ seconds/);
+});
