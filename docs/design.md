@@ -44,11 +44,11 @@ charts, PowerPoint decks, and PDF/Word reports — from that data.
 - `rooms` (id, hotel_id, room_type_id, number, floor, status)
 - `guests` (id, first_name, last_name, email, country, loyalty_tier, created_at)
 - `companies` / `travel_agents` (corporate & OTA accounts)
-- `rate_plans` (id, hotel_id, code, name, refundable, includes_breakfast)
+- `rate_plans` (id, hotel_id, code, name, refundable, includes_breakfast, price_factor)
 - `reservations` (id, hotel_id, guest_id, channel, source_id, rate_plan_id, booked_at,
   arrival, departure, adults, children, status [confirmed/cancelled/no_show/checked_in/checked_out],
   cancelled_at)
-- `reservation_rooms` (reservation_id, room_type_id, room_id, nightly rate per stay date)
+- `reservation_nights` (reservation_id, stay_date, rate) — one row per room night
 - `folios` / `folio_charges` (room, F&B, spa, minibar, taxes; posted_at, amount)
 - `payments` (folio_id, method, amount, paid_at)
 - `housekeeping_tasks` (room_id, date, type, status, staff_id)
@@ -137,6 +137,6 @@ docker-compose.yml, .env.example, README.md
 
 ## Open questions
 
-- Hotel names/locations and currency for the synthetic chain?
+- Hotel names/locations: defaulted to Lisbon, Barcelona and Porto (EUR); see README.
 - Should decks follow a brand template (.potx) later?
 - Persist conversation history across restarts?
