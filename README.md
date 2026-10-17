@@ -4,9 +4,10 @@ A chatbot website that answers questions about a hotel property-management-syste
 database and generates spreadsheets, charts, PowerPoint decks and PDF/Word reports.
 See [docs/design.md](docs/design.md) for the full design.
 
-**Status:** milestones 1–5: the sample PMS database, the MCP server that exposes it, the Claude
-agent API, the chat website, and charts, Excel, PowerPoint and PDF/Word generation. Next: an
-evaluation set of sample questions with known answers.
+**Status:** milestones 1–6: the sample PMS database, the MCP server that exposes it, the Claude
+agent API, the chat website, charts, Excel, PowerPoint and PDF/Word generation, and sign-in so
+people can connect the MCP server to their own Claude accounts. Next: an evaluation set of sample
+questions with known answers.
 
 ## Quick start
 
@@ -131,6 +132,58 @@ Claude Desktop (stdio), in `claude_desktop_config.json`:
 
 Run it locally with `pip install -r mcp_server/requirements.txt`, then
 `python -m pms_mcp --help` from `mcp_server/`.
+
+### Let people connect from their own Claude accounts
+
+Anyone you allow can add the server as a **custom connector** in their own Claude app (web,
+desktop or mobile). They ask questions in their own Claude chats, and their Claude plan covers
+the model usage; no Anthropic API key is needed on your side for them.
+
+How it works: the MCP server acts as an OAuth authorization server, the flow Claude's connectors
+use, with dynamic client registration and PKCE. It hands the actual sign-in to your OpenID
+Connect provider (Google, Microsoft Entra ID, Auth0, Okta, Keycloak, ...), then checks the
+allowlist.
+
+Setup:
+
+1. **A public HTTPS address.** Point a domain (e.g. `pms.example.com`) at the server, with ports
+   80 and 443 open. The bundled Caddy proxy gets the TLS certificate automatically.
+2. **An OIDC app at your sign-in provider**, with redirect URI
+   `https://pms.example.com/oauth/callback`. Note its client ID and secret, and the issuer:
+   - Google: `https://accounts.google.com`
+   - Microsoft Entra ID: `https://login.microsoftonline.com/<tenant-id>/v2.0`
+   - Auth0: `https://<tenant>.auth0.com`
+3. **Settings in `.env`:**
+   ```bash
+   PMS_PUBLIC_URL=https://pms.example.com
+   PMS_DOMAIN=pms.example.com
+   PMS_OIDC_ISSUER=https://accounts.google.com
+   PMS_OIDC_CLIENT_ID=...
+   PMS_OIDC_CLIENT_SECRET=...
+   PMS_ALLOWED_DOMAINS=yourhotelgroup.com   # and/or PMS_ALLOWED_EMAILS=a@x.com,b@y.com
+   PMS_MCP_SERVICE_TOKEN=$(openssl rand -hex 32)   # keeps the website working; paste the value
+   ```
+4. **Start it:** `docker compose --profile public up -d`.
+5. **Each user, in Claude:** Settings → Connectors → *Add custom connector*, URL
+   `https://pms.example.com/mcp`, then *Connect* and sign in.
+
+What users get:
+- **Tools:** all eight, in their own Claude chats.
+- **Charts:** shown as images.
+- **Files:** spreadsheets, decks and reports come with a download link that works for 24 hours.
+
+Security notes:
+- **Who can connect:** only accounts on the allowlist. Removing someone takes effect on their next
+  request, because tokens are checked against the allowlist every time.
+- **Tokens:** access tokens last 1 hour and refresh tokens 30 days. Refresh tokens rotate on use,
+  and all tokens are stored hashed.
+- **Privacy between users:** each person's query results and charts are visible only to them.
+  Everyone sees the same hotels.
+- **Download links:** signed and time-limited.
+- **The website:** its agent keeps working through the service token (`PMS_MCP_TOKEN`), set
+  automatically from `PMS_MCP_SERVICE_TOKEN` in Docker Compose.
+- **Without sign-in:** when `PMS_PUBLIC_URL` is unset, the server runs as before, local and
+  without sign-in.
 
 ## Agent API
 

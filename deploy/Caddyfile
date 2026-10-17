@@ -1,0 +1,5 @@
+# Public HTTPS entry point for the MCP server (Claude custom connectors).
+# Caddy obtains and renews the TLS certificate for PMS_DOMAIN automatically.
+{$PMS_DOMAIN} {
+	reverse_proxy mcp:7070
+}

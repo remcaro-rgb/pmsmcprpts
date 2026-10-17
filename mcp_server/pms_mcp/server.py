@@ -1,16 +1,22 @@
 """MCP server exposing the sample hotel PMS database as read-only tools."""
 
+import base64
 import json
 import os
 import tempfile
 from datetime import date
 from typing import Any, Literal
+from urllib.parse import quote
 
+from mcp.server.auth.settings import AuthSettings, ClientRegistrationOptions, RevocationOptions
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
-from mcp_types import CallToolResult, TextContent, ToolAnnotations
+from mcp_types import CallToolResult, ContentBlock, ImageContent, TextContent, ToolAnnotations
+from starlette.requests import Request
+from starlette.responses import Response
 
 from .artifacts import ArtifactStore, FileInfo
+from .auth import SCOPE, AuthConfig, OIDCAuthProvider, current_user
 from .charts import ChartError, build_chart_data, chart_payload, render_png, render_svg
 from .datasets import Dataset, DatasetStore
 from .db import Database, QueryError
@@ -30,7 +36,9 @@ Read-only access to a hotel property-management-system (PMS) database (PostgreSQ
 - Results are stored under a dataset_id; page through them with get_dataset.
 - Documents: make_chart, make_spreadsheet, make_presentation and make_report take dataset_ids
   (and chart_ids from make_chart) and read every number from the stored data. Query exactly the
-  rows and columns a document needs first. Charts and files are shown to the user automatically.
+  rows and columns a document needs first. make_chart also returns the chart as an image.
+- When a result includes a download_url and your app doesn't show files itself, give the user that
+  link (it works for 24 hours).
 - Tell the user which hotels and date range an answer covers."""
 
 READ_ONLY = ToolAnnotations(read_only_hint=True, open_world_hint=False)
@@ -56,12 +64,14 @@ MAX_STORED_ROWS = 50_000
 MAX_PREVIEW_ROWS = 1000
 
 
-def _ok(payload: dict[str, Any], for_model: dict[str, Any] | None = None) -> CallToolResult:
+def _ok(payload: dict[str, Any], for_model: dict[str, Any] | None = None,
+        extra_content: list[ContentBlock] | None = None) -> CallToolResult:
     """Structured result plus compact JSON text (the default text rendering is indented,
     which roughly doubles the tokens a model spends reading tables). `for_model` replaces
     the text when the structured payload carries UI-only data (e.g. chart SVGs)."""
     text = json.dumps(for_model or payload, separators=(",", ":"), ensure_ascii=False, default=str)
-    return CallToolResult(content=[TextContent(type="text", text=text)], structured_content=payload)
+    return CallToolResult(content=[TextContent(type="text", text=text), *(extra_content or [])],
+                          structured_content=payload)
 
 
 def _file(info: FileInfo) -> dict[str, Any]:
@@ -81,14 +91,44 @@ def _result(ds: Dataset, preview_rows: int, **extra: Any) -> CallToolResult:
     })
 
 
-def build_server(dsn: str, statement_timeout_ms: int = 15000, artifacts_dir: str | None = None) -> MCPServer:
+def build_server(dsn: str, statement_timeout_ms: int = 15000, artifacts_dir: str | None = None,
+                 auth: AuthConfig | None = None, oidc_http_client=None) -> MCPServer:
+    """With `auth`, remote users sign in through the configured OIDC provider (HTTP transport),
+    each user's datasets and charts are private, and files get signed download links."""
     db = Database(dsn, statement_timeout_ms)
-    store = DatasetStore()
+    store = DatasetStore(max_datasets=1000)
     artifacts = ArtifactStore(artifacts_dir or os.environ.get("PMS_ARTIFACTS_DIR")
                               or os.path.join(tempfile.gettempdir(), "pms-artifacts"))
-    charts: dict[str, bytes] = {}  # chart_id -> PNG, for embedding in documents
-    mcp = MCPServer("pms-reports", instructions=INSTRUCTIONS)
+    charts: dict[str, tuple[str, bytes]] = {}  # chart_id -> (owner, PNG), for embedding in documents
+    provider = OIDCAuthProvider(auth, oidc_http_client) if auth else None
+    if provider:
+        mcp = MCPServer(
+            "pms-reports", instructions=INSTRUCTIONS, auth_server_provider=provider,
+            auth=AuthSettings(
+                issuer_url=auth.public_url,
+                resource_server_url=f"{auth.public_url}/mcp",
+                validate_token_resource=False,  # tokens are opaque and only issued for this server
+                client_registration_options=ClientRegistrationOptions(
+                    enabled=True, valid_scopes=[SCOPE], default_scopes=[SCOPE]),
+                revocation_options=RevocationOptions(enabled=True),
+                required_scopes=[SCOPE],
+            ))
+    else:
+        mcp = MCPServer("pms-reports", instructions=INSTRUCTIONS)
     schema_cache: dict[str, Any] = {}
+
+    def my_store():
+        return store.scoped(current_user())
+
+    def my_charts() -> dict[str, bytes]:
+        user = current_user()
+        return {cid: png for cid, (owner, png) in charts.items() if owner == user}
+
+    def file_ref(info: FileInfo) -> dict[str, Any]:
+        ref = _file(info)
+        if provider:  # remote clients (e.g. Claude apps) download through a signed link
+            ref["download_url"] = provider.download_url(info.file_id)
+        return ref
 
     async def load_schema() -> dict[str, Any]:
         if not schema_cache:
@@ -123,7 +163,7 @@ def build_server(dsn: str, statement_timeout_ms: int = 15000, artifacts_dir: str
             res = await db.query(query, params, max_rows=MAX_STORED_ROWS)
         except QueryError as e:
             raise ToolError(str(e)) from e
-        return store.put(res.columns, res.rows, res.truncated, source)
+        return my_store().put(res.columns, res.rows, res.truncated, source)
 
     @mcp.tool(annotations=READ_ONLY)
     async def describe_schema(table: str | None = None) -> CallToolResult:
@@ -228,7 +268,7 @@ def build_server(dsn: str, statement_timeout_ms: int = 15000, artifacts_dir: str
             limit: Number of rows to return (max 1000).
         """
         try:
-            ds = store.get(dataset_id)
+            ds = my_store().get(dataset_id)
         except KeyError:
             raise ToolError(f"Unknown or expired dataset_id {dataset_id!r}.") from None
         offset = max(0, offset)
@@ -280,15 +320,19 @@ def build_server(dsn: str, statement_timeout_ms: int = 15000, artifacts_dir: str
         svg, _ = render_svg(chart, "light")
         png = render_png(svg)
         info = artifacts.save(png, title, "png")
-        charts[info.file_id] = png
+        charts[info.file_id] = (current_user(), png)
         summary = {
             "chart_id": info.file_id,
-            "file": _file(info),
+            "file": file_ref(info),
             "series": [name for name, _ in chart.series],
             "points": len(chart.categories),
-            "note": "The chart is displayed to the user.",
+            "note": "The chart image is attached and shown to the user.",
         }
-        return _ok({**summary, "chart": chart_payload(chart)}, for_model=summary)
+        # A 1x image for clients that display tool images (e.g. Claude apps); the website uses
+        # the interactive payload instead.
+        image = ImageContent(type="image", data=base64.b64encode(render_png(svg, scale=1)).decode(),
+                             mime_type="image/png")
+        return _ok({**summary, "chart": chart_payload(chart)}, for_model=summary, extra_content=[image])
 
     @mcp.tool(annotations=CREATES_FILE)
     async def make_spreadsheet(title: str, sheets: list[SheetSpec], filename: str | None = None) -> CallToolResult:
@@ -304,11 +348,11 @@ def build_server(dsn: str, statement_timeout_ms: int = 15000, artifacts_dir: str
         """
         schema = await load_schema()
         try:
-            data = build_xlsx(store, title, sheets, schema["business_date"])
+            data = build_xlsx(my_store(), title, sheets, schema["business_date"])
         except DocError as e:
             raise doc_error(e) from e
         info = artifacts.save(data, filename or title, "xlsx")
-        return _ok({"file": _file(info), "sheets": len(sheets)})
+        return _ok({"file": file_ref(info), "sheets": len(sheets)})
 
     @mcp.tool(annotations=CREATES_FILE)
     async def make_presentation(title: str, slides: list[Slide], subtitle: str | None = None,
@@ -327,11 +371,11 @@ def build_server(dsn: str, statement_timeout_ms: int = 15000, artifacts_dir: str
         """
         schema = await load_schema()
         try:
-            data = build_pptx(store, charts, title, subtitle, slides, schema["business_date"])
+            data = build_pptx(my_store(), my_charts(), title, subtitle, slides, schema["business_date"])
         except DocError as e:
             raise doc_error(e) from e
         info = artifacts.save(data, filename or title, "pptx")
-        return _ok({"file": _file(info), "slides": len(slides) + 1})
+        return _ok({"file": file_ref(info), "slides": len(slides) + 1})
 
     @mcp.tool(annotations=CREATES_FILE)
     async def make_report(title: str, sections: list[Section], format: Literal["pdf", "docx"] = "pdf",
@@ -352,17 +396,37 @@ def build_server(dsn: str, statement_timeout_ms: int = 15000, artifacts_dir: str
         schema = await load_schema()
         build = build_pdf if format == "pdf" else build_docx
         try:
-            data = build(store, charts, title, subtitle, sections, schema["business_date"])
+            data = build(my_store(), my_charts(), title, subtitle, sections, schema["business_date"])
         except DocError as e:
             raise doc_error(e) from e
         info = artifacts.save(data, filename or title, format)
-        return _ok({"file": _file(info), "sections": len(sections)})
+        return _ok({"file": file_ref(info), "sections": len(sections)})
 
     def _get(dataset_id: str) -> Dataset:
         try:
-            return store.get(dataset_id)
+            return my_store().get(dataset_id)
         except KeyError:
             raise ToolError(f"Unknown or expired dataset_id {dataset_id!r}; run the query again.") from None
+
+    if provider:
+        @mcp.custom_route("/oauth/callback", methods=["GET"])
+        async def oauth_callback(request: Request) -> Response:
+            return await provider.handle_callback(request)
+
+        @mcp.custom_route("/files/{file_id}", methods=["GET"])
+        async def download(request: Request) -> Response:
+            file_id = request.path_params["file_id"]
+            if not provider.link_is_valid(file_id, request.query_params.get("exp", ""),
+                                          request.query_params.get("sig", "")):
+                return Response("This download link is invalid or has expired.", status_code=403)
+            try:
+                info, data = artifacts.info(file_id), artifacts.read(file_id)
+            except KeyError:
+                return Response("File not found or expired.", status_code=404)
+            disposition = "inline" if info.mime.startswith("image/") else "attachment"
+            return Response(data, media_type=info.mime, headers={
+                "Content-Disposition": f"{disposition}; filename*=utf-8''{quote(info.filename)}",
+                "Cache-Control": "private, max-age=3600"})
 
     @mcp.resource("pms://schema", name="schema", mime_type="application/json",
                   description="Tables, views, hotels and business date of the PMS database.")

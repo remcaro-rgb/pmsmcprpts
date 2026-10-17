@@ -122,6 +122,17 @@ web/           Next.js app: app/ (page + /api/chat proxy), components/, lib/ (SS
 docker-compose.yml, .env.example, README.md
 ```
 
+## Remote access (Claude custom connectors)
+
+- The MCP server is an OAuth 2.1 authorization server (SDK `auth_server_provider`): dynamic client
+  registration, PKCE, `/authorize` → upstream OIDC login → `/oauth/callback` → code → `/token`.
+- Identity comes from the OIDC ID token (signature checked against the provider's JWKS, issuer,
+  audience, nonce, verified email); an email/domain allowlist decides access, checked on every
+  request. Clients, codes and tokens (hashed) live in SQLite on a volume.
+- Per-user data: datasets and charts carry their owner; tools only see the caller's.
+- Files: HMAC-signed links valid 24h served by the MCP server; charts also returned as images.
+- The website's agent authenticates with a shared service token.
+
 ## Safety & correctness
 
 - DB role with `SELECT` only on `pms` schema; SQL parsed and rejected if not a single read query.
@@ -143,7 +154,9 @@ docker-compose.yml, .env.example, README.md
 3. ✅ Agent service with Claude tool loop + SSE.
 4. ✅ Web chat UI with streaming and SQL/table display.
 5. ✅ Doc tools: charts → xlsx → pptx → pdf/docx, with artifact cards.
-6. Golden-question evals, polish, README.
+6. ✅ Remote connector: users connect their own Claude accounts (OAuth 2.1 + OIDC sign-in,
+   allowlist, per-user data, signed download links).
+7. Golden-question evals, polish, README.
 
 ## Open questions
 

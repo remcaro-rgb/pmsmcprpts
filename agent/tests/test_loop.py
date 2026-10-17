@@ -168,3 +168,12 @@ async def test_with_real_pms_server():
     assert tool_names[:4] == ["describe_schema", "run_sql", "get_kpis", "get_dataset"]
     assert "make_chart" in tool_names
     assert "business date" in client.messages.requests[0]["system"]
+
+
+def test_service_token_is_sent_to_url_targets():
+    from pms_agent.loop import ChatAgent as Agent
+
+    with_token = Agent(Settings(mcp_url="http://mcp:7070/mcp", mcp_token="t" * 40), FakeClient())
+    assert not isinstance(with_token._mcp().server, str)  # a transport carrying the bearer header
+    without = Agent(Settings(mcp_url="http://mcp:7070/mcp", mcp_token=None), FakeClient())
+    assert without._mcp().server == "http://mcp:7070/mcp"

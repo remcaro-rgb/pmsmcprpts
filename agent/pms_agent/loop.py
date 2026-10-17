@@ -8,6 +8,8 @@ from typing import Any
 
 import anthropic
 from mcp.client import Client
+from mcp.client.streamable_http import streamable_http_client
+from mcp.shared._httpx_utils import create_mcp_http_client
 
 from .config import Settings
 from .conversations import Conversation
@@ -77,6 +79,13 @@ class ChatAgent:
         # A URL, or an in-process MCPServer (tests).
         self.mcp_target = mcp_target or settings.mcp_url
 
+    def _mcp(self) -> Client:
+        target = self.mcp_target
+        if isinstance(target, str) and self.settings.mcp_token:
+            http = create_mcp_http_client(headers={"Authorization": f"Bearer {self.settings.mcp_token}"})
+            target = streamable_http_client(target, http_client=http)
+        return Client(target)
+
     def _request(self, system: str, tools: list[dict], messages: list[dict]) -> dict[str, Any]:
         params: dict[str, Any] = {
             "model": self.settings.model,
@@ -103,7 +112,7 @@ class ChatAgent:
         conv.messages.append({"role": "user", "content": user_text})
         completed = False
         try:
-            async with Client(self.mcp_target) as mcp:
+            async with self._mcp() as mcp:
                 # Errors are caught inside the client's context: raised through it they
                 # would arrive wrapped in an ExceptionGroup by its task group.
                 try:

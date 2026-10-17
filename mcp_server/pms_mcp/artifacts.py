@@ -56,6 +56,12 @@ class ArtifactStore:
             raise KeyError(file_id)
         return (self.dir / file_id).read_bytes()
 
+    def info(self, file_id: str) -> FileInfo:
+        if not FILE_ID.match(file_id) or not (self.dir / f"{file_id}.json").is_file():
+            raise KeyError(file_id)
+        meta = json.loads((self.dir / f"{file_id}.json").read_text())
+        return FileInfo(meta["file_id"], meta["filename"], meta["mime"], meta["size"])
+
     def _expire(self) -> None:
         cutoff = time.time() - TTL_SECONDS
         for meta in self.dir.glob("*.json"):

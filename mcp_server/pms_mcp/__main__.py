@@ -2,11 +2,15 @@
 
     PMS_DATABASE_URL=postgresql://pms_readonly:pms_readonly@localhost:5432/pms python -m pms_mcp
     python -m pms_mcp --transport streamable-http --host 0.0.0.0 --port 7070
+
+Remote sign-in (for Claude custom connectors) turns on when PMS_PUBLIC_URL is set; see the
+README for PMS_OIDC_ISSUER, PMS_OIDC_CLIENT_ID, PMS_OIDC_CLIENT_SECRET and the allowlist.
 """
 
 import argparse
 import os
 
+from .auth import AuthConfig
 from .server import build_server
 
 
@@ -22,7 +26,14 @@ def main() -> None:
     if not args.dsn:
         p.error("set --dsn or PMS_DATABASE_URL")
 
-    server = build_server(args.dsn, args.statement_timeout_ms)
+    try:
+        auth = AuthConfig.from_env(os.environ)
+    except ValueError as e:
+        p.error(str(e))
+    if auth and args.transport != "streamable-http":
+        p.error("Sign-in (PMS_PUBLIC_URL) needs --transport streamable-http.")
+
+    server = build_server(args.dsn, args.statement_timeout_ms, auth=auth)
     if args.transport == "stdio":
         server.run("stdio")
     else:

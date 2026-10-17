@@ -33,8 +33,18 @@ services:
     environment:
       PMS_DATABASE_URL: postgresql://pms_readonly:${PMS_READONLY_PASSWORD:-pms_readonly}@db:5432/${POSTGRES_DB:-pms}
       PMS_ARTIFACTS_DIR: /artifacts
+      # Remote sign-in for Claude custom connectors: on when PMS_PUBLIC_URL is set (see README).
+      PMS_PUBLIC_URL: ${PMS_PUBLIC_URL:-}
+      PMS_OIDC_ISSUER: ${PMS_OIDC_ISSUER:-}
+      PMS_OIDC_CLIENT_ID: ${PMS_OIDC_CLIENT_ID:-}
+      PMS_OIDC_CLIENT_SECRET: ${PMS_OIDC_CLIENT_SECRET:-}
+      PMS_ALLOWED_EMAILS: ${PMS_ALLOWED_EMAILS:-}
+      PMS_ALLOWED_DOMAINS: ${PMS_ALLOWED_DOMAINS:-}
+      PMS_MCP_SERVICE_TOKEN: ${PMS_MCP_SERVICE_TOKEN:-}
+      PMS_AUTH_DB: /data/auth.sqlite
     volumes:
       - artifacts:/artifacts
+      - mcpdata:/data
     ports:
       - "127.0.0.1:${PMS_MCP_PORT:-7070}:7070"
     depends_on:
@@ -47,6 +57,7 @@ services:
     environment:
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       PMS_MCP_URL: http://mcp:7070/mcp
+      PMS_MCP_TOKEN: ${PMS_MCP_SERVICE_TOKEN:-}
       PMS_CLAUDE_MODEL: ${PMS_CLAUDE_MODEL:-claude-opus-5-5}
       PMS_CLAUDE_EFFORT: ${PMS_CLAUDE_EFFORT:-medium}
       PMS_ARTIFACTS_DIR: /artifacts
@@ -67,7 +78,24 @@ services:
     depends_on:
       - agent
 
+  # Public HTTPS for the MCP server: docker compose --profile public up -d
+  caddy:
+    image: caddy:2.10
+    profiles: ["public"]
+    environment:
+      PMS_DOMAIN: ${PMS_DOMAIN:-}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+    depends_on:
+      - mcp
+
 volumes:
   pgdata:
+  mcpdata:
+  caddy_data:
   # Generated charts and documents: written by mcp, served for download by agent.
   artifacts:
