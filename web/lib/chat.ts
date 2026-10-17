@@ -134,3 +134,30 @@ export function httpErrorMessage(status: number, body: string): string {
   }
   return `Request failed (${status}).`;
 }
+
+export type ConversationSummary = { id: string; title: string; updated: number };
+
+/** A saved conversation: each turn's question and the events its answer streamed. */
+export type SavedConversation = ConversationSummary & { turns: { user: string; events: SseEvent[] }[] };
+
+/** Rebuilds the messages of a saved conversation by replaying each answer's events. */
+export function messagesFromSaved(saved: SavedConversation): Message[] {
+  return saved.turns.flatMap((turn, i): Message[] => {
+    const start: AssistantMessage = { role: "assistant", id: `${saved.id}-${i}-a`, parts: [], status: "streaming" };
+    const answer = turn.events.reduce(applyEvent, start);
+    return [
+      { role: "user", id: `${saved.id}-${i}-u`, text: turn.user },
+      answer.status === "streaming" ? { ...answer, status: "done" } : answer,
+    ];
+  });
+}
+
+/** "14:05" today, "Mon" this week, else "12 Oct". */
+export function shortDate(seconds: number, now = new Date()): string {
+  const d = new Date(seconds * 1000);
+  if (d.toDateString() === now.toDateString()) {
+    return d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+  }
+  if (now.getTime() - d.getTime() < 6 * 86400_000) return d.toLocaleDateString("en-GB", { weekday: "short" });
+  return d.toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+}

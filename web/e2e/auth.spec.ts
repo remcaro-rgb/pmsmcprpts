@@ -1,7 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 
 // Runs against the instance with sign-in on (WEB_AUTH=oidc) and the test identity provider,
-// which signs in as whatever email is typed. Only ann@hotel.example is on the allowlist.
+// which signs in as whatever email is typed. Only ann@ and bob@hotel.example are on the allowlist.
 
 async function signInAs(page: Page, email: string) {
   await expect(page.getByRole("heading", { name: "Test provider" })).toBeVisible();
@@ -57,4 +57,24 @@ test("a callback without a pending sign-in asks to start again", async ({ page }
   await page.goto("/auth/callback?code=abc&state=xyz");
   await expect(page.getByRole("heading", { name: "Sign-in expired" })).toBeVisible();
   await expect(page.getByRole("link", { name: "Sign in again" })).toBeVisible();
+});
+
+test("each person sees only their own conversations", async ({ page }) => {
+  await page.goto("/");
+  await signInAs(page, "ann@hotel.example");
+  const box = page.getByLabel("Message");
+  await box.fill("Ann's private question about occupancy");
+  await box.press("Enter");
+  await expect(page.getByTestId("assistant-message")).toContainText("tokens in");
+  const sidebar = page.getByRole("complementary", { name: "Conversations" });
+  await expect(sidebar.getByRole("button", { name: /^Ann's private question/ })).toBeVisible();
+  const annUrl = page.url();
+
+  await page.getByRole("button", { name: "Sign out" }).click();
+  await page.goto(annUrl);
+  await signInAs(page, "bob@hotel.example");
+  await expect(page.getByText("bob@hotel.example")).toBeVisible();
+  await expect(sidebar).toContainText("Your conversations will appear here.");
+  await expect(page.getByText("What would you like to know?")).toBeVisible();
+  await expect(page).toHaveURL(/\/$/);
 });

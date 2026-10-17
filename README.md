@@ -215,9 +215,17 @@ Details:
 - **Refusal fallbacks:** if Claude's safety filters decline a request, the API retries it on a
   recommended fallback model (`fallbacks: "default"`; set `PMS_SERVER_FALLBACKS=false` on
   platforms other than the Claude API).
-- **Storage:** conversations are kept in memory and lost on restart.
+- **Saved conversations:** completed turns are saved in SQLite (`PMS_CONVERSATIONS_DB`; the
+  `agentdata` volume in compose): the Messages API history that continues the conversation, and
+  each answer's events so the website can show it again as it was streamed. Conversations belong
+  to the signed-in website user (`X-PMS-User`), or are shared when sign-in is off.
 
-`GET /files/{file_id}` downloads a generated chart or document.
+| Endpoint | |
+|---|---|
+| `GET /api/conversations` | `{conversations: [{id, title, updated}]}`, newest first |
+| `GET /api/conversations/{id}` | `{id, title, updated, turns: [{user, events}]}` |
+| `DELETE /api/conversations/{id}` | 204; 409 while it is answering |
+| `GET /files/{file_id}` | Downloads a generated chart or document |
 
 Run it locally with `pip install -r agent/requirements.txt`, then `python -m pms_agent` from
 `agent/` (set `ANTHROPIC_API_KEY`, `PMS_MCP_URL` and the same `PMS_ARTIFACTS_DIR` as the MCP server).
@@ -229,7 +237,8 @@ sign-in (`CHAT_RATE_LIMIT`, default `20/600`: 20 messages per 10 minutes). Answe
 with its input (the SQL, or the KPI parameters) and the result table. Charts appear inline with a
 hover crosshair and tooltip (also reachable with the arrow keys), a "Show data" table and a PNG
 download. Spreadsheets, decks and reports appear as download cards. There's a Stop button and
-starter questions, and it works in light and dark mode and at phone width. The browser only talks
+starter questions, and it works in light and dark mode and at phone width. A sidebar (a drawer on
+phones) lists saved conversations to reopen or delete; the open one is kept in the address (`?c=…`). The browser only talks
 to the site's own `/api/chat` and `/api/files/{id}` routes, which proxy the agent (`AGENT_URL`).
 
 ### Sign-in

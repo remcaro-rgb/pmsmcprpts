@@ -33,7 +33,7 @@ export default defineConfig({
       url: `http://127.0.0.1:${WEB_PORT}`,
       env: {
         AGENT_URL: `http://127.0.0.1:${AGENT_PORT}`, PORT: String(WEB_PORT), HOSTNAME: "127.0.0.1",
-        CHAT_RATE_LIMIT: "12/600",
+        CHAT_RATE_LIMIT: "16/600",
       },
       reuseExistingServer: !process.env.CI,
     },
@@ -54,7 +54,7 @@ export default defineConfig({
         PMS_OIDC_ALLOW_HTTP: "true",
         WEB_OIDC_CLIENT_ID: "web",
         WEB_OIDC_CLIENT_SECRET: "web-test-secret",
-        PMS_ALLOWED_EMAILS: "ann@hotel.example",
+        PMS_ALLOWED_EMAILS: "ann@hotel.example,bob@hotel.example",
       },
       reuseExistingServer: !process.env.CI,
     },

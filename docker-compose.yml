@@ -63,8 +63,10 @@ services:
       PMS_CLAUDE_MODEL: ${PMS_CLAUDE_MODEL:-claude-opus-5-5}
       PMS_CLAUDE_EFFORT: ${PMS_CLAUDE_EFFORT:-medium}
       PMS_ARTIFACTS_DIR: /artifacts
+      PMS_CONVERSATIONS_DB: /data/conversations.sqlite
     volumes:
       - artifacts:/artifacts:ro
+      - agentdata:/data
     ports:
       - "127.0.0.1:${PMS_AGENT_PORT:-7001}:7001"
     depends_on:
@@ -111,6 +113,8 @@ services:
 
 volumes:
   pgdata:
+  # Saved conversations (agent).
+  agentdata:
   mcpdata:
   caddy_data:
   # Generated charts and documents: written by mcp, served for download by agent.

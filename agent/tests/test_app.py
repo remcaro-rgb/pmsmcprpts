@@ -26,7 +26,7 @@ def parse_sse(body: str) -> list[tuple[str, dict]]:
 
 async def test_chat_streams_sse_and_keeps_history():
     client = FakeClient(tool_calls(("t1", "lookup", {"code": "LIS"})), text_reply("Done."), text_reply("Again."))
-    app = create_app(Settings(mcp_url="unused"), client, toy_server())
+    app = create_app(Settings(mcp_url="unused", conversations_db=":memory:"), client, toy_server())
     transport = httpx2.ASGITransport(app=app)
     async with httpx2.AsyncClient(transport=transport, base_url="http://test") as http:
         r = await http.post("/api/chat", json={"message": "Check LIS"})
@@ -50,7 +50,7 @@ async def test_files_endpoint(tmp_path):
     (tmp_path / ("a" * 32 + ".json")).write_text(json.dumps({
         "file_id": "a" * 32, "filename": "Q3 report.xlsx",
         "mime": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "size": 7}))
-    app = create_app(Settings(mcp_url="unused", artifacts_dir=str(tmp_path)), FakeClient(), toy_server())
+    app = create_app(Settings(mcp_url="unused", conversations_db=":memory:", artifacts_dir=str(tmp_path)), FakeClient(), toy_server())
     async with httpx2.AsyncClient(transport=httpx2.ASGITransport(app=app), base_url="http://test") as http:
         r = await http.get("/files/" + "a" * 32)
         assert r.status_code == 200 and r.content == b"PK-xlsx"
@@ -62,7 +62,7 @@ async def test_files_endpoint(tmp_path):
 
 async def test_conversations_belong_to_the_signed_in_user():
     client = FakeClient(text_reply("Hi Ann."), text_reply("Hi again."))
-    app = create_app(Settings(mcp_url="unused"), client, toy_server())
+    app = create_app(Settings(mcp_url="unused", conversations_db=":memory:"), client, toy_server())
     transport = httpx2.ASGITransport(app=app)
     async with httpx2.AsyncClient(transport=transport, base_url="http://test") as http:
         r = await http.post("/api/chat", json={"message": "Hello"}, headers={"x-pms-user": "Ann@Hotel.example"})
@@ -75,3 +75,29 @@ async def test_conversations_belong_to_the_signed_in_user():
         again = await http.post("/api/chat", json={"message": "Again", "conversation_id": conv_id},
                                 headers={"x-pms-user": "ann@hotel.example"})
         assert again.status_code == 200 and parse_sse(again.text)[0][1]["id"] == conv_id
+
+
+async def test_saved_conversations_api():
+    client = FakeClient(text_reply("First."), text_reply("Second."))
+    app = create_app(Settings(mcp_url="unused", conversations_db=":memory:"), client, toy_server())
+    transport = httpx2.ASGITransport(app=app)
+    ann = {"x-pms-user": "ann@hotel.example"}
+    async with httpx2.AsyncClient(transport=transport, base_url="http://test") as http:
+        r = await http.post("/api/chat", json={"message": "Hello there"}, headers=ann)
+        conv_id = parse_sse(r.text)[0][1]["id"]
+        await http.post("/api/chat", json={"message": "More", "conversation_id": conv_id}, headers=ann)
+
+        listed = (await http.get("/api/conversations", headers=ann)).json()["conversations"]
+        assert [(c["id"], c["title"]) for c in listed] == [(conv_id, "Hello there")]
+        assert (await http.get("/api/conversations")).json() == {"conversations": []}
+
+        saved = (await http.get(f"/api/conversations/{conv_id}", headers=ann)).json()
+        assert [t["user"] for t in saved["turns"]] == ["Hello there", "More"]
+        kinds = [e["event"] for e in saved["turns"][1]["events"]]
+        assert kinds[-1] == "done" and "conversation" not in kinds
+        assert "".join(e["data"]["text"] for e in saved["turns"][1]["events"] if e["event"] == "text") == "Second."
+
+        assert (await http.get(f"/api/conversations/{conv_id}", headers={"x-pms-user": "bob@x.example"})).status_code == 404
+        assert (await http.delete(f"/api/conversations/{conv_id}", headers={"x-pms-user": "bob@x.example"})).status_code == 404
+        assert (await http.delete(f"/api/conversations/{conv_id}", headers=ann)).status_code == 204
+        assert (await http.get(f"/api/conversations/{conv_id}", headers=ann)).status_code == 404

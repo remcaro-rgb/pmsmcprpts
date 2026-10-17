@@ -102,7 +102,7 @@ returns a `dataset_id` plus a preview; doc tools accept `dataset_id`.
   date range and hotels you assumed", "prefer views for KPIs".
 - Prompt caching (top-level `cache_control`) over system prompt, tools and the append-only
   history; max 15 tool steps per turn.
-- Conversations kept in memory (demo); easy to move to Postgres later.
+- Conversations saved per user in SQLite on the agent (history to continue them, plus each answer's events to show them again).
 
 ## Web UI (Next.js)
 
@@ -156,10 +156,11 @@ docker-compose.yml, .env.example, README.md
 5. ✅ Doc tools: charts → xlsx → pptx → pdf/docx, with artifact cards.
 6. ✅ Remote connector: users connect their own Claude accounts (OAuth 2.1 + OIDC sign-in,
    allowlist, per-user data, signed download links).
-7. Golden-question evals, polish, README.
+7. ✅ CI (GitHub Actions), rate limits, website sign-in (OIDC, same allowlist), saved
+   conversations with a sidebar.
+8. Golden-question evals, polish, README.
 
 ## Open questions
 
 - Hotel names/locations: defaulted to Lisbon, Barcelona and Porto (EUR); see README.
 - Should decks follow a brand template (.potx) later?
-- Persist conversation history across restarts?

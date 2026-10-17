@@ -22,5 +22,8 @@ class Settings:
     # Shared with the MCP server, which writes generated files here.
     artifacts_dir: str = field(default_factory=lambda: os.environ.get(
         "PMS_ARTIFACTS_DIR", os.path.join(tempfile.gettempdir(), "pms-artifacts")))
+    # Saved conversations (SQLite file, or ":memory:").
+    conversations_db: str = field(default_factory=lambda: os.environ.get(
+        "PMS_CONVERSATIONS_DB", os.path.join(tempfile.gettempdir(), "pms-conversations.sqlite")))
     cors_origins: list[str] = field(
         default_factory=lambda: _env_list("PMS_CORS_ORIGINS", "http://localhost:5050"))

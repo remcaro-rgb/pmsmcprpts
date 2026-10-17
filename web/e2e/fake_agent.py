@@ -188,7 +188,7 @@ def main():
     args = p.parse_args()
     client = SimpleNamespace(beta=SimpleNamespace(messages=ScriptedMessages()))
     artifacts = os.environ.get("PMS_ARTIFACTS_DIR", "/tmp/pms-artifacts-e2e")
-    app = create_app(Settings(mcp_url="unused", cors_origins=[], artifacts_dir=artifacts), client,
+    app = create_app(Settings(mcp_url="unused", cors_origins=[], artifacts_dir=artifacts, conversations_db=":memory:"), client,
                      build_server(os.environ["PMS_DATABASE_URL"], artifacts_dir=artifacts))
     uvicorn.run(app, host="127.0.0.1", port=args.port, log_level="warning")
 

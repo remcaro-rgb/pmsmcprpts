@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applyEvent, httpErrorMessage, isTableResult, type AssistantMessage } from "./chat";
+import { applyEvent, httpErrorMessage, isTableResult, messagesFromSaved, shortDate, type AssistantMessage } from "./chat";
 
 const empty = (): AssistantMessage => ({ role: "assistant", id: "a1", parts: [], status: "streaming" });
 
@@ -55,5 +55,41 @@ describe("helpers", () => {
     expect(httpErrorMessage(409, '{"detail": "Busy."}')).toBe("Busy.");
     expect(httpErrorMessage(422, '{"detail": [{"msg": "too short"}]}')).toBe("too short");
     expect(httpErrorMessage(502, "<html>")).toBe("Request failed (502).");
+  });
+});
+
+describe("saved conversations", () => {
+  it("replays each answer's events", () => {
+    const messages = messagesFromSaved({
+      id: "conv_1",
+      title: "Occupancy",
+      updated: 0,
+      turns: [
+        {
+          user: "Occupancy?",
+          events: [
+            { event: "tool_start", data: { id: "t1", name: "get_kpis" } },
+            { event: "tool_result", data: { id: "t1", name: "get_kpis", is_error: false, result: { rows: [] } } },
+            { event: "text", data: { text: "It was 81%." } },
+            { event: "done", data: { usage: { input_tokens: 1, output_tokens: 2 } } },
+          ],
+        },
+        { user: "Thanks", events: [{ event: "text", data: { text: "You're welcome." } }] },
+      ],
+    });
+    expect(messages.map((m) => m.role)).toEqual(["user", "assistant", "user", "assistant"]);
+    const first = messages[1] as AssistantMessage;
+    expect(first.status).toBe("done");
+    expect(first.parts.map((p) => p.kind)).toEqual(["tool", "text"]);
+    expect(first.usage?.output_tokens).toBe(2);
+    expect((messages[3] as AssistantMessage).status).toBe("done");
+    expect(new Set(messages.map((m) => m.id)).size).toBe(4);
+  });
+
+  it("formats dates for the list", () => {
+    const now = new Date(2026, 9, 17, 18, 0);
+    expect(shortDate(new Date(2026, 9, 17, 9, 5).getTime() / 1000, now)).toBe("09:05");
+    expect(shortDate(new Date(2026, 9, 15, 9, 5).getTime() / 1000, now)).toBe("Thu");
+    expect(shortDate(new Date(2026, 8, 2).getTime() / 1000, now)).toBe("2 Sept");
   });
 });

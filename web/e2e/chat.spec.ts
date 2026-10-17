@@ -116,11 +116,53 @@ for (const [prompt, ext, magic] of [
   });
 }
 
+test("saves conversations to reopen, reload and delete from the sidebar", async ({ page }) => {
+  await page.goto("/");
+  const box = page.getByLabel("Message");
+  await box.fill("How is occupancy for the sidebar test?");
+  await box.press("Enter");
+  await expect(page.getByTestId("assistant-message")).toContainText("tokens in");
+  await expect(page).toHaveURL(/\?c=conv_[0-9a-f]{16}$/);
+
+  const sidebar = page.getByRole("complementary", { name: "Conversations" });
+  const item = sidebar.getByRole("button", { name: /^How is occupancy for the sidebar test\?/ });
+  await expect(item).toHaveAttribute("aria-current", "true");
+  await page.getByRole("button", { name: "New chat" }).click();
+  await expect(page.getByText("What would you like to know?")).toBeVisible();
+  await expect(page).toHaveURL(/\/$/);
+
+  // Reopening replays the saved answer: tool step, results and the answer text.
+  await item.click();
+  const answer = page.getByTestId("assistant-message");
+  await expect(answer.locator("details", { hasText: "Fetched KPIs" })).toContainText("3 rows");
+  await expect(answer).toContainText("tokens in");
+  await expect(page.getByText("How is occupancy for the sidebar test?", { exact: true }).last()).toBeVisible();
+
+  await page.reload();
+  await expect(page.getByTestId("assistant-message")).toContainText("tokens in");
+
+  page.once("dialog", (d) => d.accept());
+  await sidebar.getByRole("button", { name: /Delete “How is occupancy for the sidebar test\?”/ }).click();
+  await expect(item).toHaveCount(0);
+  await expect(page.getByText("What would you like to know?")).toBeVisible();
+});
+
+test("on phones the conversation list opens as a drawer", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 800 });
+  await page.goto("/");
+  const sidebar = page.getByRole("complementary", { name: "Conversations" });
+  await expect(sidebar).toBeHidden();
+  await page.getByRole("button", { name: "Show conversations" }).click();
+  await expect(sidebar).toBeVisible();
+  await sidebar.getByRole("button", { name: "Close" }).click();
+  await expect(sidebar).toBeHidden();
+});
+
 test("rate-limits chat messages and says when to retry", async ({ request }) => {
-  // The test server allows 12 messages per 10 minutes per client; earlier tests used some.
+  // The test server allows 16 messages per 10 minutes per client; earlier tests used some.
   let status = 200;
   let body: { detail?: string } = {};
-  for (let i = 0; i < 13 && status !== 429; i++) {
+  for (let i = 0; i < 17 && status !== 429; i++) {
     const r = await request.post("/api/chat", { data: { message: "" } }); // rejected by the agent, still counted
     status = r.status();
     if (status === 429) body = await r.json();

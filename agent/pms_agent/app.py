@@ -28,14 +28,20 @@ def _sse(event: str, data: Any) -> str:
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False, default=str)}\n\n"
 
 
+def _user(header: str | None) -> str | None:
+    """The signed-in website user. The website sets this header from its session and strips it from
+    browser requests; the agent is only reachable from the website, so it can be trusted here."""
+    return header.strip().lower() if header and header.strip() else None
+
+
 def create_app(settings: Settings | None = None, client: Any = None, mcp_target: Any = None) -> FastAPI:
     settings = settings or Settings()
     agent = ChatAgent(settings, client or anthropic.AsyncAnthropic(), mcp_target)
-    store = ConversationStore()
+    store = ConversationStore(settings.conversations_db)
 
     app = FastAPI(title="PMS Reports agent")
     app.add_middleware(CORSMiddleware, allow_origins=settings.cors_origins,
-                       allow_methods=["GET", "POST"], allow_headers=["*"])
+                       allow_methods=["GET", "POST", "DELETE"], allow_headers=["*"])
 
     @app.get("/api/health")
     async def health() -> dict[str, str]:
@@ -54,9 +60,7 @@ def create_app(settings: Settings | None = None, client: Any = None, mcp_target:
 
     @app.post("/api/chat")
     async def chat(req: ChatRequest, x_pms_user: str | None = Header(default=None)) -> StreamingResponse:
-        # Set by the website after sign-in. The agent is only reachable from the website, which
-        # strips the header from browser requests, so it can be trusted here.
-        user = x_pms_user.strip().lower() if x_pms_user and x_pms_user.strip() else None
+        user = _user(x_pms_user)
         try:
             conv = store.get_or_create(req.conversation_id, user)
         except LookupError:
@@ -67,10 +71,35 @@ def create_app(settings: Settings | None = None, client: Any = None, mcp_target:
         async def stream() -> AsyncIterator[str]:
             async with conv.lock:
                 yield _sse("conversation", {"id": conv.id})
+                events = []
                 async for ev in agent.run_turn(conv, req.message, user):
+                    events.append(ev)
                     yield _sse(ev["event"], ev["data"])
+                # Only completed turns are kept, matching the history (failed turns are rolled back).
+                if events and events[-1]["event"] == "done":
+                    store.save_turn(conv, req.message, events)
 
         return StreamingResponse(stream(), media_type="text/event-stream",
                                  headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+    @app.get("/api/conversations")
+    async def list_conversations(x_pms_user: str | None = Header(default=None)) -> dict[str, Any]:
+        return {"conversations": store.list(_user(x_pms_user))}
+
+    @app.get("/api/conversations/{conversation_id}")
+    async def get_conversation(conversation_id: str, x_pms_user: str | None = Header(default=None)) -> dict[str, Any]:
+        conv = store.load(conversation_id, _user(x_pms_user))
+        if conv is None:
+            raise HTTPException(404, "Conversation not found.")
+        return conv
+
+    @app.delete("/api/conversations/{conversation_id}", status_code=204)
+    async def delete_conversation(conversation_id: str, x_pms_user: str | None = Header(default=None)) -> None:
+        try:
+            deleted = store.delete(conversation_id, _user(x_pms_user))
+        except RuntimeError:
+            raise HTTPException(409, "This conversation is answering a message; try again when it's done.") from None
+        if not deleted:
+            raise HTTPException(404, "Conversation not found.")
 
     return app
