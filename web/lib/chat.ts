@@ -11,6 +11,40 @@ export type TableResult = {
   truncated?: boolean;
 };
 
+export type FileInfo = { file_id: string; filename: string; mime: string; size: number };
+
+/** One rendered layout of a chart: SVGs for both themes plus the geometry hover needs. */
+export type ChartLayout = {
+  svg_light: string;
+  svg_dark: string;
+  width: number;
+  height: number;
+  plot: { left: number; right: number; top: number; bottom: number };
+  x_positions: number[];
+};
+
+/** Chart payload from make_chart: a wide layout, an optional narrow (phone) layout, and the
+ * formatted values shown on hover and in the data table. */
+export type ChartPayload = ChartLayout & {
+  kind: "line" | "bar";
+  title: string;
+  narrow?: ChartLayout;
+  x_labels: string[];
+  series: { name: string; color_light: string; color_dark: string; values: string[] }[];
+};
+
+export function fileOf(result: unknown): FileInfo | null {
+  const f = (result as { file?: FileInfo } | null)?.file;
+  return f && typeof f.file_id === "string" ? f : null;
+}
+
+export function chartOf(result: unknown): ChartPayload | null {
+  const c = (result as { chart?: ChartPayload } | null)?.chart;
+  return c && typeof c.svg_light === "string" ? c : null;
+}
+
+export const fileUrl = (f: FileInfo) => `/api/files/${f.file_id}`;
+
 export type ToolPart = {
   kind: "tool";
   id: string;

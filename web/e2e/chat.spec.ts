@@ -60,3 +60,58 @@ test("shows refusals as a failed message", async ({ page }) => {
   await expect(alert).toContainText("declined");
   await expect(alert).toContainText("not added to the conversation");
 });
+
+test("charts render inline with hover values, a data table and a PNG download", async ({ page }) => {
+  await page.goto("/");
+  const box = page.getByLabel("Message");
+  await box.fill("Make a chart of monthly occupancy by hotel");
+  await box.press("Enter");
+
+  const chart = page.getByTestId("chart");
+  await expect(chart).toBeVisible();
+  await expect(chart.locator("svg").filter({ visible: true })).toContainText("Occupancy by hotel");
+  await expect(page.getByTestId("assistant-message")).toContainText("peaked in summer");
+
+  // Keyboard reaches the same values as hover.
+  const hover = chart.getByTestId("chart-hover").filter({ visible: true });
+  await hover.focus();
+  await page.keyboard.press("ArrowRight");
+  const tooltip = chart.getByRole("tooltip");
+  await expect(tooltip).toContainText("October 2025");
+  await expect(tooltip).toContainText("LIS");
+  await expect(tooltip).toContainText("%");
+  await hover.hover({ position: { x: 700, y: 200 } });
+  await expect(tooltip).not.toContainText("October 2025");
+
+  await chart.getByRole("button", { name: "Show data" }).click();
+  await expect(chart.locator("tbody tr")).toHaveCount(12);
+
+  const href = await chart.getByRole("link", { name: "Download PNG" }).getAttribute("href");
+  const png = await page.request.get(href!);
+  expect(png.status()).toBe(200);
+  expect(png.headers()["content-type"]).toBe("image/png");
+});
+
+for (const [prompt, ext, magic] of [
+  ["Export the monthly KPIs to Excel", "xlsx", "PK"],
+  ["Build a Q3 deck for the owners", "pptx", "PK"],
+  ["Write an occupancy report", "pdf", "%PDF"],
+] as const) {
+  test(`creates a downloadable ${ext}`, async ({ page }) => {
+    await page.goto("/");
+    const box = page.getByLabel("Message");
+    await box.fill(prompt);
+    await box.press("Enter");
+    const card = page.getByTestId("artifact");
+    await expect(card).toContainText(`.${ext}`);
+    await expect(page.getByTestId("assistant-message")).toContainText("tokens in");
+
+    const downloadPromise = page.waitForEvent("download");
+    await card.getByRole("link", { name: "Download" }).click();
+    const download = await downloadPromise;
+    expect(download.suggestedFilename()).toMatch(new RegExp(`\\.${ext}$`));
+    const fs = await import("node:fs/promises");
+    const bytes = await fs.readFile((await download.path())!);
+    expect(bytes.subarray(0, magic.length).toString()).toBe(magic);
+  });
+}

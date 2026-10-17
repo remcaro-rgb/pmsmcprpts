@@ -73,15 +73,19 @@ Data:
 - `get_kpis(start, end, hotels, granularity, by_hotel)` — fast path over `v_daily_kpis`.
 - `get_dataset(dataset_id, offset, limit)` — page through a stored result.
 
-Documents (each takes a `dataset` = query result or inline rows, so data flows SQL → doc
-without the LLM re-typing numbers):
-- `make_chart(dataset, spec)` — Vega-Lite spec → returns spec for inline render + PNG/SVG via `vl-convert`.
-- `make_spreadsheet(sheets[])` — openpyxl; header styles, number formats, frozen panes,
-  optional native Excel charts.
-- `make_presentation(title, slides[])` — python-pptx; slide kinds: title, kpi_tiles,
-  chart, table, bullets.
-- `make_report(title, sections[], format="pdf"|"docx")` — markdown + charts + tables →
-  PDF (WeasyPrint) or DOCX (python-docx).
+Documents (each reads values from stored datasets by `dataset_id` and column, so data flows
+SQL → doc without the LLM re-typing numbers; the model supplies structure and commentary):
+- `make_chart(dataset_id, x, y, series, chart_type, ...)` — one Python SVG renderer (validated
+  palette, one y-axis, data-viz mark specs) → PNG via `vl-convert`'s resvg for documents, and
+  light/dark × wide/narrow SVGs plus hover geometry for the interactive inline view.
+- `make_spreadsheet(title, sheets[])` — openpyxl; header styles, number formats inferred from
+  column names, frozen panes, filters, an About sheet with each sheet's source query.
+  (Native Excel charts: not yet.)
+- `make_presentation(title, slides[])` — python-pptx; a title slide, then kpis (tiles), chart
+  (`chart_id`, optional takeaways), table and bullets slides, each with a source footer.
+- `make_report(title, sections[], format="pdf"|"docx")` — headings, narrative, KPI tiles,
+  charts and tables → PDF (reportlab, no system libraries needed) or DOCX (python-docx).
+- Files go to a shared artifacts volume (24h expiry); the agent serves `GET /files/{id}`.
 
 To keep large results out of the LLM context, `run_sql` stores full results server-side and
 returns a `dataset_id` plus a preview; doc tools accept `dataset_id`.
@@ -138,7 +142,7 @@ docker-compose.yml, .env.example, README.md
 2. ✅ MCP server: `describe_schema`, `run_sql`, `get_kpis` + tests (usable from Claude Desktop immediately).
 3. ✅ Agent service with Claude tool loop + SSE.
 4. ✅ Web chat UI with streaming and SQL/table display.
-5. Doc tools: charts → xlsx → pptx → pdf/docx, with artifact cards.
+5. ✅ Doc tools: charts → xlsx → pptx → pdf/docx, with artifact cards.
 6. Golden-question evals, polish, README.
 
 ## Open questions

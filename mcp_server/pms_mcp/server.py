@@ -1,6 +1,8 @@
 """MCP server exposing the sample hotel PMS database as read-only tools."""
 
 import json
+import os
+import tempfile
 from datetime import date
 from typing import Any, Literal
 
@@ -8,8 +10,12 @@ from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp_types import CallToolResult, TextContent, ToolAnnotations
 
+from .artifacts import ArtifactStore, FileInfo
+from .charts import ChartError, build_chart_data, chart_payload, render_png, render_svg
 from .datasets import Dataset, DatasetStore
 from .db import Database, QueryError
+from .documents import DocError, Section, SheetSpec, Slide, build_docx, build_pdf, build_pptx, build_xlsx
+from .formats import KINDS
 from .sql_guard import UnsafeQueryError, check_read_only
 
 INSTRUCTIONS = """\
@@ -22,9 +28,14 @@ Read-only access to a hotel property-management-system (PMS) database (PostgreSQ
 - For ratios over a period (occupancy, ADR, RevPAR) sum numerators and denominators;
   never average daily ratios.
 - Results are stored under a dataset_id; page through them with get_dataset.
+- Documents: make_chart, make_spreadsheet, make_presentation and make_report take dataset_ids
+  (and chart_ids from make_chart) and read every number from the stored data. Query exactly the
+  rows and columns a document needs first. Charts and files are shown to the user automatically.
 - Tell the user which hotels and date range an answer covers."""
 
 READ_ONLY = ToolAnnotations(read_only_hint=True, open_world_hint=False)
+CREATES_FILE = ToolAnnotations(read_only_hint=False, destructive_hint=False, idempotent_hint=False,
+                               open_world_hint=False)
 
 SCHEMA_SQL = """
 SELECT c.relname AS name,
@@ -45,11 +56,16 @@ MAX_STORED_ROWS = 50_000
 MAX_PREVIEW_ROWS = 1000
 
 
-def _ok(payload: dict[str, Any]) -> CallToolResult:
+def _ok(payload: dict[str, Any], for_model: dict[str, Any] | None = None) -> CallToolResult:
     """Structured result plus compact JSON text (the default text rendering is indented,
-    which roughly doubles the tokens a model spends reading tables)."""
-    text = json.dumps(payload, separators=(",", ":"), ensure_ascii=False, default=str)
+    which roughly doubles the tokens a model spends reading tables). `for_model` replaces
+    the text when the structured payload carries UI-only data (e.g. chart SVGs)."""
+    text = json.dumps(for_model or payload, separators=(",", ":"), ensure_ascii=False, default=str)
     return CallToolResult(content=[TextContent(type="text", text=text)], structured_content=payload)
+
+
+def _file(info: FileInfo) -> dict[str, Any]:
+    return {"file_id": info.file_id, "filename": info.filename, "mime": info.mime, "size": info.size}
 
 
 def _result(ds: Dataset, preview_rows: int, **extra: Any) -> CallToolResult:
@@ -65,9 +81,12 @@ def _result(ds: Dataset, preview_rows: int, **extra: Any) -> CallToolResult:
     })
 
 
-def build_server(dsn: str, statement_timeout_ms: int = 15000) -> MCPServer:
+def build_server(dsn: str, statement_timeout_ms: int = 15000, artifacts_dir: str | None = None) -> MCPServer:
     db = Database(dsn, statement_timeout_ms)
     store = DatasetStore()
+    artifacts = ArtifactStore(artifacts_dir or os.environ.get("PMS_ARTIFACTS_DIR")
+                              or os.path.join(tempfile.gettempdir(), "pms-artifacts"))
+    charts: dict[str, bytes] = {}  # chart_id -> PNG, for embedding in documents
     mcp = MCPServer("pms-reports", instructions=INSTRUCTIONS)
     schema_cache: dict[str, Any] = {}
 
@@ -221,6 +240,129 @@ def build_server(dsn: str, statement_timeout_ms: int = 15000) -> MCPServer:
             "rows": ds.page(offset, max(0, min(limit, MAX_PREVIEW_ROWS))),
             "source": ds.source,
         })
+
+    def doc_error(e: Exception) -> ToolError:
+        return ToolError(str(e))
+
+    @mcp.tool(annotations=CREATES_FILE)
+    async def make_chart(
+        dataset_id: str,
+        x: str,
+        y: str,
+        title: str,
+        chart_type: Literal["line", "bar"] = "line",
+        series: str | None = None,
+        subtitle: str | None = None,
+        y_format: Literal[KINDS] | None = None,
+    ) -> CallToolResult:
+        """Chart one numeric measure from a stored dataset. The chart is shown to the user in
+        the chat (interactive) and saved as a PNG; pass the returned chart_id to
+        make_presentation or make_report to embed it.
+
+        Use line for trends over time, bar for comparing categories or a few periods. One measure
+        per chart (never two y-axes): to compare occupancy and ADR, make two charts. At most 8
+        series; bar charts at most 60 bars.
+
+        Args:
+            dataset_id: From run_sql or get_kpis. Rows should be ordered by x.
+            x: Column for the x-axis (dates or categories).
+            y: Numeric column to plot.
+            title: Chart title, e.g. "Occupancy by hotel".
+            chart_type: "line" or "bar".
+            series: Column whose values become separate lines/bar colors, e.g. "hotel_code".
+            subtitle: Period and scope, e.g. "Monthly, Oct 2025 - Sep 2026".
+            y_format: Override the value format inferred from the column name.
+        """
+        try:
+            chart = build_chart_data(_get(dataset_id), chart_type, x, y, series, title, subtitle, y_format)
+        except ChartError as e:
+            raise doc_error(e) from e
+        svg, _ = render_svg(chart, "light")
+        png = render_png(svg)
+        info = artifacts.save(png, title, "png")
+        charts[info.file_id] = png
+        summary = {
+            "chart_id": info.file_id,
+            "file": _file(info),
+            "series": [name for name, _ in chart.series],
+            "points": len(chart.categories),
+            "note": "The chart is displayed to the user.",
+        }
+        return _ok({**summary, "chart": chart_payload(chart)}, for_model=summary)
+
+    @mcp.tool(annotations=CREATES_FILE)
+    async def make_spreadsheet(title: str, sheets: list[SheetSpec], filename: str | None = None) -> CallToolResult:
+        """Create an Excel workbook with one sheet per dataset: formatted header, number formats
+        (percent, EUR, integers, dates) inferred from column names, frozen header row, filters,
+        plus an About sheet listing each sheet's source query. All rows of each dataset are
+        included. The file is offered to the user for download.
+
+        Args:
+            title: Workbook title (also the default file name).
+            sheets: One entry per sheet.
+            filename: Optional file name without extension.
+        """
+        schema = await load_schema()
+        try:
+            data = build_xlsx(store, title, sheets, schema["business_date"])
+        except DocError as e:
+            raise doc_error(e) from e
+        info = artifacts.save(data, filename or title, "xlsx")
+        return _ok({"file": _file(info), "sheets": len(sheets)})
+
+    @mcp.tool(annotations=CREATES_FILE)
+    async def make_presentation(title: str, slides: list[Slide], subtitle: str | None = None,
+                                filename: str | None = None) -> CallToolResult:
+        """Create a 16:9 PowerPoint deck: a title slide, then one slide per entry. Slide kinds:
+        kpis (1-4 headline tiles, values read from datasets), chart (a chart_id from make_chart,
+        optionally with 2-4 takeaway bullets beside it), table (up to 14 rows from a dataset),
+        bullets (2-6 short points: findings, recommendations). Every slide gets a source footer.
+        Write titles that state the takeaway ("Lisbon led occupancy in Q3"), not just the topic.
+
+        Args:
+            title: Deck title.
+            slides: Content slides in order (max 25).
+            subtitle: E.g. period and scope.
+            filename: Optional file name without extension.
+        """
+        schema = await load_schema()
+        try:
+            data = build_pptx(store, charts, title, subtitle, slides, schema["business_date"])
+        except DocError as e:
+            raise doc_error(e) from e
+        info = artifacts.save(data, filename or title, "pptx")
+        return _ok({"file": _file(info), "slides": len(slides) + 1})
+
+    @mcp.tool(annotations=CREATES_FILE)
+    async def make_report(title: str, sections: list[Section], format: Literal["pdf", "docx"] = "pdf",
+                          subtitle: str | None = None, filename: str | None = None) -> CallToolResult:
+        """Create a written report as PDF or Word (.docx). Each section can have a heading,
+        narrative text (paragraphs; lines starting with '- ' become bullets), KPI tiles, a chart
+        (chart_id from make_chart) and a table from a dataset, in that order.
+
+        Args:
+            title: Report title.
+            sections: Sections in order.
+            format: "pdf" or "docx".
+            subtitle: E.g. period and scope.
+            filename: Optional file name without extension.
+        """
+        if not sections:
+            raise ToolError("Provide at least one section.")
+        schema = await load_schema()
+        build = build_pdf if format == "pdf" else build_docx
+        try:
+            data = build(store, charts, title, subtitle, sections, schema["business_date"])
+        except DocError as e:
+            raise doc_error(e) from e
+        info = artifacts.save(data, filename or title, format)
+        return _ok({"file": _file(info), "sections": len(sections)})
+
+    def _get(dataset_id: str) -> Dataset:
+        try:
+            return store.get(dataset_id)
+        except KeyError:
+            raise ToolError(f"Unknown or expired dataset_id {dataset_id!r}; run the query again.") from None
 
     @mcp.resource("pms://schema", name="schema", mime_type="application/json",
                   description="Tables, views, hotels and business date of the PMS database.")

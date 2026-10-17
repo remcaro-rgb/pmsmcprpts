@@ -43,3 +43,18 @@ async def test_chat_streams_sse_and_keeps_history():
 
         assert (await http.get("/api/health")).json()["model"] == "claude-opus-5-5"
         assert (await http.post("/api/chat", json={"message": ""})).status_code == 422
+
+
+async def test_files_endpoint(tmp_path):
+    (tmp_path / ("a" * 32)).write_bytes(b"PK-xlsx")
+    (tmp_path / ("a" * 32 + ".json")).write_text(json.dumps({
+        "file_id": "a" * 32, "filename": "Q3 report.xlsx",
+        "mime": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "size": 7}))
+    app = create_app(Settings(mcp_url="unused", artifacts_dir=str(tmp_path)), FakeClient(), toy_server())
+    async with httpx2.AsyncClient(transport=httpx2.ASGITransport(app=app), base_url="http://test") as http:
+        r = await http.get("/files/" + "a" * 32)
+        assert r.status_code == 200 and r.content == b"PK-xlsx"
+        assert r.headers["content-type"].startswith("application/vnd.openxmlformats")
+        assert r.headers["content-disposition"] == "attachment; filename*=utf-8''Q3%20report.xlsx"
+        for bad in ("b" * 32, "..%2F" + "a" * 32, "a" * 32 + ".json"):
+            assert (await http.get("/files/" + bad)).status_code == 404

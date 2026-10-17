@@ -1,6 +1,8 @@
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import type { AssistantMessage, Usage } from "@/lib/chat";
+import { chartOf, fileOf, type AssistantMessage, type Usage } from "@/lib/chat";
+import ArtifactCard from "./ArtifactCard";
+import ChartView from "./ChartView";
 import Chevron from "./Chevron";
 import ToolCard from "./ToolCard";
 
@@ -43,7 +45,16 @@ export default function AssistantMessageView({ message }: { message: AssistantMe
             </details>
           );
         }
-        if (part.kind === "tool") return <ToolCard key={part.id} part={part} />;
+        if (part.kind === "tool") {
+          const chart = part.status === "done" ? chartOf(part.result) : null;
+          const file = part.status === "done" ? fileOf(part.result) : null;
+          return (
+            <div key={part.id} className="space-y-3">
+              <ToolCard part={part} />
+              {chart ? <ChartView chart={chart} file={file} /> : file && <ArtifactCard file={file} />}
+            </div>
+          );
+        }
         return (
           <div key={i} className="markdown">
             <ReactMarkdown remarkPlugins={[remarkGfm]}>{part.text}</ReactMarkdown>

@@ -165,5 +165,6 @@ async def test_with_real_pms_server():
     assert result["result"]["dataset_id"].startswith("ds_")
     assert result["result"]["rows"][0][:2] == ["LIS", "2025-07-01"]
     tool_names = [t["name"] for t in client.messages.requests[0]["tools"]]
-    assert tool_names == ["describe_schema", "run_sql", "get_kpis", "get_dataset"]
+    assert tool_names[:4] == ["describe_schema", "run_sql", "get_kpis", "get_dataset"]
+    assert "make_chart" in tool_names
     assert "business date" in client.messages.requests[0]["system"]

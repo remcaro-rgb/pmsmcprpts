@@ -4,8 +4,9 @@ A chatbot website that answers questions about a hotel property-management-syste
 database and generates spreadsheets, charts, PowerPoint decks and PDF/Word reports.
 See [docs/design.md](docs/design.md) for the full design.
 
-**Status:** milestones 1–4: the sample PMS database, the MCP server that exposes it, the Claude
-agent API and the chat website. Document generation (charts, Excel, PowerPoint, PDF/Word) is next.
+**Status:** milestones 1–5: the sample PMS database, the MCP server that exposes it, the Claude
+agent API, the chat website, and charts, Excel, PowerPoint and PDF/Word generation. Next: an
+evaluation set of sample questions with known answers.
 
 ## Quick start
 
@@ -86,7 +87,17 @@ access to the database. Tools:
 | `describe_schema(table?)` | Business date, data range, hotels, and every table/view with column types and meanings. Also available as the `pms://schema` resource. |
 | `run_sql(query, preview_rows=100)` | One read-only `SELECT`/`WITH` query. The full result (up to 50k rows) is stored as a dataset; returns its `dataset_id`, columns, row count and a preview. |
 | `get_kpis(start, end, hotels?, granularity, by_hotel)` | Occupancy, ADR, RevPAR and revenue by day/week/month/quarter/year, with ratios aggregated correctly. |
-| `get_dataset(dataset_id, offset, limit)` | Page through a stored result. Later milestones' chart/spreadsheet/deck tools take a `dataset_id` too, so numbers flow from SQL into documents without being retyped. |
+| `get_dataset(dataset_id, offset, limit)` | Page through a stored result. |
+| `make_chart(dataset_id, x, y, title, chart_type, series?, ...)` | Line or bar chart of one measure, shown interactively in the chat and saved as a PNG. Returns a `chart_id` for decks and reports. |
+| `make_spreadsheet(title, sheets)` | Excel workbook, one sheet per dataset, with number formats, frozen headers, filters and an About sheet listing each sheet's source query. |
+| `make_presentation(title, slides, subtitle?)` | 16:9 PowerPoint deck: title slide, then KPI tiles, charts (with optional takeaways), tables and bullet slides, each with a source footer. |
+| `make_report(title, sections, format)` | PDF or Word report: sections with headings, narrative, KPI tiles, charts and tables. |
+
+The document tools read every number from stored datasets (by `dataset_id` and column), never
+from text the model types, so the numbers in a file always match the query. Charts follow a
+validated colour-blind-safe palette, use one y-axis per chart, and come with light and dark
+variants plus a phone layout. Generated files go to `PMS_ARTIFACTS_DIR`, a volume shared with the
+agent, which serves them for download, and expire after 24 hours.
 
 Safety: queries are parsed with sqlglot and rejected unless they are a single read query (no
 data-modifying CTEs, `SELECT INTO`, `FOR UPDATE`, `pg_sleep`, file-access or SQL-executing
@@ -134,7 +145,7 @@ conversation) returns a stream of server-sent events:
 | `thinking` | `{text}`: summarized reasoning, streamed |
 | `tool_start` | `{id, name}`: a tool call began |
 | `tool_call` | `{id, name, input}`: the complete tool input (e.g. the SQL) |
-| `tool_result` | `{id, name, is_error, result}`: the tool's result, tables trimmed to 50 preview rows |
+| `tool_result` | `{id, name, is_error, result}`: the tool's result, tables trimmed to 50 preview rows; charts and files include their `file` (and `chart`) data |
 | `text` | `{text}`: answer text, streamed |
 | `done` | `{stop_reason, usage}` |
 | `refusal` / `error` | `{message, ...}`: the turn failed and is not kept in the history |
@@ -149,15 +160,19 @@ Details:
   platforms other than the Claude API).
 - **Storage:** conversations are kept in memory and lost on restart.
 
+`GET /files/{file_id}` downloads a generated chart or document.
+
 Run it locally with `pip install -r agent/requirements.txt`, then `python -m pms_agent` from
-`agent/` (set `ANTHROPIC_API_KEY` and `PMS_MCP_URL`).
+`agent/` (set `ANTHROPIC_API_KEY`, `PMS_MCP_URL` and the same `PMS_ARTIFACTS_DIR` as the MCP server).
 
 ## Website
 
 `web/` is a Next.js chat app. Answers stream in as Markdown. Each tool step is a collapsible card
-with its input (the SQL, or the KPI parameters) and the result table. There's a Stop button and
+with its input (the SQL, or the KPI parameters) and the result table. Charts appear inline with a
+hover crosshair and tooltip (also reachable with the arrow keys), a "Show data" table and a PNG
+download. Spreadsheets, decks and reports appear as download cards. There's a Stop button and
 starter questions, and it works in light and dark mode and at phone width. The browser only talks
-to the site's own `/api/chat` route, which proxies the agent's event stream (`AGENT_URL`).
+to the site's own `/api/chat` and `/api/files/{id}` routes, which proxy the agent (`AGENT_URL`).
 
 Develop locally (with the agent running on port 8001):
 
@@ -186,8 +201,9 @@ pytest
 
 - `db/tests` create a throwaway database, seed a small window and check invariants (no
   double-booked rooms, statuses consistent with the business date, closed folios fully paid, KPI sanity).
-- `mcp_server/tests` unit-test the SQL guard and call every tool through an in-process MCP
-  client against the seeded database.
+- `mcp_server/tests` unit-test the SQL guard and formats, and call every tool through an
+  in-process MCP client against the seeded database, opening the generated xlsx/pptx/docx/pdf
+  to check their contents.
 - `agent/tests` drive the tool loop and the SSE endpoint with a scripted fake Claude client
   (no API key needed) against real in-process MCP servers.
 
@@ -195,12 +211,14 @@ Website:
 
 ```bash
 cd web
-npm test                      # unit tests: SSE parser and stream-event reducer
+npm test                      # unit tests: SSE parser, stream-event reducer, chart hover
 npm run build
 PMS_DATABASE_URL=postgresql://pms_readonly:pms_readonly@localhost:5432/pms npm run e2e
 ```
 
 The browser tests start the stand-in agent and the production build, then check a starter
 question end to end (tool card, SQL, result table, Markdown answer), follow-up questions in one
-conversation, Stop, and refusals. If Playwright's own Chromium isn't installed, set
+conversation, Stop, refusals, an interactive chart (hover, keyboard, data table, PNG download) and
+downloading a generated .xlsx, .pptx and .pdf. The stand-in understands "chart", "excel", "deck"
+and "report" in a question. If Playwright's own Chromium isn't installed, set
 `PW_CHROMIUM_PATH` to a Chromium binary.

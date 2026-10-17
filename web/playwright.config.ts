@@ -22,9 +22,10 @@ export default defineConfig({
       reuseExistingServer: !process.env.CI,
     },
     {
-      command: `npx next start -p ${WEB_PORT} -H 127.0.0.1`,
+      // The same standalone server the Docker image runs (needs `npm run build`).
+      command: "node .next/standalone/server.js",
       url: `http://127.0.0.1:${WEB_PORT}`,
-      env: { AGENT_URL: `http://127.0.0.1:${AGENT_PORT}` },
+      env: { AGENT_URL: `http://127.0.0.1:${AGENT_PORT}`, PORT: String(WEB_PORT), HOSTNAME: "127.0.0.1" },
       reuseExistingServer: !process.env.CI,
     },
   ],

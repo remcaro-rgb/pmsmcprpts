@@ -3,8 +3,9 @@ without an API key. Tools run for real against the PMS MCP server and database.
 
     PMS_DATABASE_URL=postgresql://pms_readonly:...@localhost:5432/pms python web/e2e/fake_agent.py --port 8101
 
-The stand-in picks a tool from keywords in the question, then answers from the actual tool
-result. Keywords: "refuse" -> refusal, "slow" -> a slowly streamed answer (to test Stop),
+The stand-in picks a plan from keywords in the question, runs its tool steps (each step's input
+is built from earlier real results), then answers. Keywords: "refuse" -> refusal, "slow" -> a
+slowly streamed answer (to test Stop), "chart", "excel", "deck", "report" -> document flows,
 "channel" -> run_sql on v_channel_mix, anything else -> get_kpis for last quarter.
 """
 
@@ -100,15 +101,76 @@ def answer_from(result: dict) -> str:
             "result):\n\n" + "\n".join(lines) + f"\n\nSource dataset: `{result['dataset_id']}`.")
 
 
+MONTHLY = {"start": "2025-10-01", "end": "2026-09-30", "granularity": "month"}
+Q3 = {"start": "2026-07-01", "end": "2026-09-30", "granularity": "quarter"}
+
+# Each plan: tool steps (functions of earlier results -> (tool, input)), then a closing text.
+PLANS = {
+    "chart": ([
+        lambda r: ("get_kpis", MONTHLY),
+        lambda r: ("make_chart", {"dataset_id": r[0]["dataset_id"], "x": "period", "y": "occupancy",
+                                  "series": "hotel_code", "title": "Occupancy by hotel",
+                                  "subtitle": "Monthly, Oct 2025 – Sep 2026"}),
+    ], "Here is monthly occupancy by hotel for the last 12 months. All three hotels peaked in summer."),
+    "excel": ([
+        lambda r: ("get_kpis", MONTHLY),
+        lambda r: ("make_spreadsheet", {"title": "Monthly KPIs Oct 2025 - Sep 2026",
+                                        "sheets": [{"name": "Monthly by hotel", "dataset_id": r[0]["dataset_id"]}]}),
+    ], "I put the monthly KPIs by hotel into a spreadsheet."),
+    "deck": ([
+        lambda r: ("get_kpis", {**Q3, "by_hotel": False}),
+        lambda r: ("get_kpis", Q3),
+        lambda r: ("make_chart", {"dataset_id": r[1]["dataset_id"], "x": "hotel_code", "y": "revpar",
+                                  "chart_type": "bar", "title": "RevPAR by hotel", "subtitle": "Q3 2026"}),
+        lambda r: ("make_presentation", {"title": "Q3 2026 performance review", "subtitle": "All hotels", "slides": [
+            {"kind": "kpis", "title": "Q3 2026 at a glance", "kpis": [
+                {"label": "Occupancy", "dataset_id": r[0]["dataset_id"], "column": "occupancy"},
+                {"label": "ADR", "dataset_id": r[0]["dataset_id"], "column": "adr"},
+                {"label": "Total revenue", "dataset_id": r[0]["dataset_id"], "column": "total_revenue"}]},
+            {"kind": "chart", "title": "Barcelona leads RevPAR", "chart_id": r[2]["chart_id"]},
+            {"kind": "table", "title": "KPIs by hotel", "table": {"dataset_id": r[1]["dataset_id"]}}]}),
+    ], "The Q3 2026 deck is ready: headline KPIs, RevPAR by hotel and a KPI table."),
+    "report": ([
+        lambda r: ("get_kpis", MONTHLY),
+        lambda r: ("make_chart", {"dataset_id": r[0]["dataset_id"], "x": "period", "y": "occupancy",
+                                  "series": "hotel_code", "title": "Occupancy by hotel"}),
+        lambda r: ("make_report", {"title": "Occupancy report", "format": "pdf", "sections": [
+            {"heading": "Occupancy", "text": "Monthly occupancy for the last 12 months.",
+             "chart_id": r[1]["chart_id"]}]}),
+    ], "The occupancy report is ready as a PDF."),
+}
+
+
+def turn_results(messages):
+    """Model-facing JSON of every tool result since the last question."""
+    results = []
+    for m in reversed(messages):
+        if m["role"] == "user" and isinstance(m["content"], str):
+            break
+        if m["role"] == "user":
+            results[:0] = [json.loads(b["content"]) for b in m["content"] if not b.get("is_error")]
+    return results
+
+
 class ScriptedMessages:
     def stream(self, **params):
-        last = params["messages"][-1]
-        if isinstance(last["content"], list):  # tool results: answer from them
-            result = last["content"][0]
-            if result.get("is_error"):
-                return text_stream("The query failed: " + result["content"])
-            return text_stream(answer_from(json.loads(result["content"])))
-        question = last["content"].lower()
+        messages = params["messages"]
+        question = next(m["content"] for m in reversed(messages)
+                        if m["role"] == "user" and isinstance(m["content"], str)).lower()
+        last = messages[-1]
+        if isinstance(last["content"], list) and any(b.get("is_error") for b in last["content"]):
+            return text_stream("The tool failed: " + last["content"][0]["content"])
+        results = turn_results(messages)
+
+        plan = next((PLANS[k] for k in PLANS if k in question), None)
+        if plan:
+            steps, closing = plan
+            if len(results) < len(steps):
+                name, tool_input = steps[len(results)](results)
+                return tool_stream(name, tool_input, f"Step {len(results) + 1}: {name}.")
+            return text_stream(closing)
+        if results:  # one query done: answer from it
+            return text_stream(answer_from(results[-1]))
         if "refuse" in question:
             return ScriptedStream([], "refusal", [], 0)
         if "slow" in question:
@@ -117,8 +179,7 @@ class ScriptedMessages:
         if "channel" in question:
             return tool_stream("run_sql", {"query": CHANNEL_SQL},
                                "Cancellation rates by channel for 2026 year to date.")
-        return tool_stream("get_kpis", {"start": "2026-07-01", "end": "2026-09-30", "granularity": "quarter"},
-                           "Last quarter relative to the business date is Q3 2026.")
+        return tool_stream("get_kpis", Q3, "Last quarter relative to the business date is Q3 2026.")
 
 
 def main():
@@ -126,8 +187,9 @@ def main():
     p.add_argument("--port", type=int, default=8101)
     args = p.parse_args()
     client = SimpleNamespace(beta=SimpleNamespace(messages=ScriptedMessages()))
-    app = create_app(Settings(mcp_url="unused", cors_origins=[]), client,
-                     build_server(os.environ["PMS_DATABASE_URL"]))
+    artifacts = os.environ.get("PMS_ARTIFACTS_DIR", "/tmp/pms-artifacts-e2e")
+    app = create_app(Settings(mcp_url="unused", cors_origins=[], artifacts_dir=artifacts), client,
+                     build_server(os.environ["PMS_DATABASE_URL"], artifacts_dir=artifacts))
     uvicorn.run(app, host="127.0.0.1", port=args.port, log_level="warning")
 
 

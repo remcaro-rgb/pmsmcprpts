@@ -1,4 +1,5 @@
 import os
+import tempfile
 from dataclasses import dataclass, field
 
 
@@ -16,5 +17,8 @@ class Settings:
     # Server-side refusal fallbacks are available on the Claude API; disable for other platforms.
     server_fallbacks: bool = field(
         default_factory=lambda: os.environ.get("PMS_SERVER_FALLBACKS", "true").lower() == "true")
+    # Shared with the MCP server, which writes generated files here.
+    artifacts_dir: str = field(default_factory=lambda: os.environ.get(
+        "PMS_ARTIFACTS_DIR", os.path.join(tempfile.gettempdir(), "pms-artifacts")))
     cors_origins: list[str] = field(
         default_factory=lambda: _env_list("PMS_CORS_ORIGINS", "http://localhost:3000"))

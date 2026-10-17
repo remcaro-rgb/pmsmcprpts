@@ -32,6 +32,9 @@ services:
     build: ./mcp_server
     environment:
       PMS_DATABASE_URL: postgresql://pms_readonly:${PMS_READONLY_PASSWORD:-pms_readonly}@db:5432/${POSTGRES_DB:-pms}
+      PMS_ARTIFACTS_DIR: /artifacts
+    volumes:
+      - artifacts:/artifacts
     ports:
       - "127.0.0.1:${PMS_MCP_PORT:-8000}:8000"
     depends_on:
@@ -46,6 +49,9 @@ services:
       PMS_MCP_URL: http://mcp:8000/mcp
       PMS_CLAUDE_MODEL: ${PMS_CLAUDE_MODEL:-claude-opus-5-5}
       PMS_CLAUDE_EFFORT: ${PMS_CLAUDE_EFFORT:-medium}
+      PMS_ARTIFACTS_DIR: /artifacts
+    volumes:
+      - artifacts:/artifacts:ro
     ports:
       - "127.0.0.1:${PMS_AGENT_PORT:-8001}:8001"
     depends_on:
@@ -63,3 +69,5 @@ services:
 
 volumes:
   pgdata:
+  # Generated charts and documents: written by mcp, served for download by agent.
+  artifacts:

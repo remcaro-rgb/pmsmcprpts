@@ -1,4 +1,4 @@
-import { isTableResult, type ToolPart } from "@/lib/chat";
+import { chartOf, fileOf, isTableResult, type ToolPart } from "@/lib/chat";
 import Chevron from "./Chevron";
 import DataTable from "./DataTable";
 
@@ -7,6 +7,10 @@ const LABELS: Record<string, string> = {
   run_sql: "Ran a SQL query",
   get_kpis: "Fetched KPIs",
   get_dataset: "Read a stored result",
+  make_chart: "Made a chart",
+  make_spreadsheet: "Created a spreadsheet",
+  make_presentation: "Created a presentation",
+  make_report: "Created a report",
 };
 
 function Status({ status }: { status: ToolPart["status"] }) {
@@ -18,6 +22,8 @@ function Status({ status }: { status: ToolPart["status"] }) {
 }
 
 function summary(part: ToolPart): string | null {
+  const file = fileOf(part.result);
+  if (file && !chartOf(part.result)) return file.filename;
   if (isTableResult(part.result)) {
     const n = part.result.row_count;
     return `${n.toLocaleString("en-US")} ${n === 1 ? "row" : "rows"}`;
@@ -38,15 +44,27 @@ function Input({ part }: { part: ToolPart }) {
   }
   const entries = Object.entries(input);
   if (!entries.length) return null;
+  const simple = entries.filter(([, v]) => typeof v !== "object" || v === null || JSON.stringify(v).length <= 80);
+  const nested = entries.filter((e) => !simple.includes(e));
   return (
-    <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-[13px]">
-      {entries.map(([k, v]) => (
-        <div key={k} className="contents">
-          <dt className="text-stone-500">{k}</dt>
-          <dd className="font-mono">{typeof v === "string" ? v : JSON.stringify(v)}</dd>
+    <>
+      <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-[13px]">
+        {simple.map(([k, v]) => (
+          <div key={k} className="contents">
+            <dt className="text-stone-500">{k}</dt>
+            <dd className="break-all font-mono">{typeof v === "string" ? v : JSON.stringify(v)}</dd>
+          </div>
+        ))}
+      </dl>
+      {nested.map(([k, v]) => (
+        <div key={k}>
+          <p className="mb-1 text-[13px] text-stone-500">{k}</p>
+          <pre className="max-h-60 overflow-auto rounded-md bg-stone-100 p-3 font-mono text-[12px] dark:bg-stone-900">
+            {JSON.stringify(v, null, 2)}
+          </pre>
         </div>
       ))}
-    </dl>
+    </>
   );
 }
 
@@ -61,6 +79,7 @@ function Result({ part }: { part: ToolPart }) {
     );
   }
   if (isTableResult(result)) return <DataTable table={result} />;
+  if (fileOf(result)) return null; // shown as a chart or download card below the step
   const r = result as { relations?: unknown[]; business_date?: string };
   if (Array.isArray(r?.relations)) {
     return (

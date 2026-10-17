@@ -40,8 +40,12 @@ async def call_error(client, tool, **args) -> str:
 
 async def test_lists_read_only_tools(client):
     tools = {t.name: t for t in (await client.list_tools()).tools}
-    assert set(tools) == {"describe_schema", "run_sql", "get_kpis", "get_dataset"}
-    assert all(t.annotations.read_only_hint for t in tools.values())
+    read_only = {"describe_schema", "run_sql", "get_kpis", "get_dataset"}
+    creates_files = {"make_chart", "make_spreadsheet", "make_presentation", "make_report"}
+    assert set(tools) == read_only | creates_files
+    assert all(tools[n].annotations.read_only_hint for n in read_only)
+    assert not any(tools[n].annotations.read_only_hint or tools[n].annotations.destructive_hint
+                   for n in creates_files)
 
 
 async def test_describe_schema(client):

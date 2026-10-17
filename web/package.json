@@ -4,8 +4,8 @@
   "type": "module",
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
-    "start": "next start",
+    "build": "next build && cp -r .next/static .next/standalone/.next/",
+    "start": "node .next/standalone/server.js",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "e2e": "playwright test"
