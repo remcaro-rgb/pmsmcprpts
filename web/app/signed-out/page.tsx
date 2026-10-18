@@ -1,5 +1,5 @@
 import { messages } from "@/lib/i18n";
-import { serverLocale } from "@/lib/locale-server";
+import { serverLocale } from "@/lib/request-prefs";
 
 export default async function SignedOut() {
   const t = messages(await serverLocale());
