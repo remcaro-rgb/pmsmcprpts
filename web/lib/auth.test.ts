@@ -53,7 +53,10 @@ describe("seal / unseal", () => {
     expect((await unseal<{ email: string }>(secret, "session", token))?.email).toBe("ann@hotel.example");
     expect(await unseal(secret, "login", token)).toBeNull();
     expect(await unseal("t".repeat(32), "session", token)).toBeNull();
-    expect(await unseal(secret, "session", token.slice(0, -2) + "AA")).toBeNull();
+    // Change the second-to-last character of the authentication tag: all 6 of its bits count (the
+    // last character's low bits are padding, so overwriting the end could leave the tag unchanged).
+    const tampered = token.slice(0, -2) + (token.at(-2) === "A" ? "B" : "A") + token.at(-1);
+    expect(await unseal(secret, "session", tampered)).toBeNull();
     expect(await unseal(secret, "session", undefined)).toBeNull();
   });
 
