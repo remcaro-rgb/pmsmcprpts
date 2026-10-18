@@ -44,11 +44,11 @@ charts, PowerPoint decks, and PDF/Word reports — from that data.
 - `rooms` (id, hotel_id, room_type_id, number, floor, status)
 - `guests` (id, first_name, last_name, email, country, loyalty_tier, created_at)
 - `companies` / `travel_agents` (corporate & OTA accounts)
-- `rate_plans` (id, hotel_id, code, name, refundable, includes_breakfast)
+- `rate_plans` (id, hotel_id, code, name, refundable, includes_breakfast, price_factor)
 - `reservations` (id, hotel_id, guest_id, channel, source_id, rate_plan_id, booked_at,
   arrival, departure, adults, children, status [confirmed/cancelled/no_show/checked_in/checked_out],
   cancelled_at)
-- `reservation_rooms` (reservation_id, room_type_id, room_id, nightly rate per stay date)
+- `reservation_nights` (reservation_id, stay_date, rate) — one row per room night
 - `folios` / `folio_charges` (room, F&B, spa, minibar, taxes; posted_at, amount)
 - `payments` (folio_id, method, amount, paid_at)
 - `housekeeping_tasks` (room_id, date, type, status, staff_id)
@@ -67,32 +67,42 @@ channel, and realistic ancillary spend.
 
 Data:
 - `describe_schema()` — tables, columns, views, and KPI definitions (also exposed as an MCP resource).
-- `run_sql(query, limit=1000)` — single `SELECT`/`WITH` only (parsed with `sqlglot`), read-only
-  role, `statement_timeout` 15s, row cap. Returns columns + rows + truncated flag.
-- `get_kpis(hotel_ids, start, end, granularity)` — fast path over `v_daily_kpis`.
+- `run_sql(query, preview_rows=100)` — single `SELECT`/`WITH` only (parsed with `sqlglot`),
+  read-only role and transaction, `statement_timeout` 15s, 50k-row cap. Returns `dataset_id`,
+  columns, row count, truncated flag and a preview.
+- `get_kpis(start, end, hotels, granularity, by_hotel)` — fast path over `v_daily_kpis`.
+- `get_dataset(dataset_id, offset, limit)` — page through a stored result.
 
-Documents (each takes a `dataset` = query result or inline rows, so data flows SQL → doc
-without the LLM re-typing numbers):
-- `make_chart(dataset, spec)` — Vega-Lite spec → returns spec for inline render + PNG/SVG via `vl-convert`.
-- `make_spreadsheet(sheets[])` — openpyxl; header styles, number formats, frozen panes,
-  optional native Excel charts.
-- `make_presentation(title, slides[])` — python-pptx; slide kinds: title, kpi_tiles,
-  chart, table, bullets.
-- `make_report(title, sections[], format="pdf"|"docx")` — markdown + charts + tables →
-  PDF (WeasyPrint) or DOCX (python-docx).
+Documents (each reads values from stored datasets by `dataset_id` and column, so data flows
+SQL → doc without the LLM re-typing numbers; the model supplies structure and commentary):
+- `make_chart(dataset_id, x, y, series, chart_type, ...)` — one Python SVG renderer (validated
+  palette, one y-axis, data-viz mark specs) → PNG via `vl-convert`'s resvg for documents, and
+  light/dark × wide/narrow SVGs plus hover geometry for the interactive inline view.
+- `make_spreadsheet(title, sheets[])` — openpyxl; header styles, number formats inferred from
+  column names, frozen panes, filters, an About sheet with each sheet's source query.
+  (Native Excel charts: not yet.)
+- `make_presentation(title, slides[])` — python-pptx; a title slide, then kpis (tiles), chart
+  (`chart_id`, optional takeaways), table and bullets slides, each with a source footer.
+- `make_report(title, sections[], format="pdf"|"docx")` — headings, narrative, KPI tiles,
+  charts and tables → PDF (reportlab, no system libraries needed) or DOCX (python-docx).
+- Files go to a shared artifacts volume (24h expiry); the agent serves `GET /files/{id}`.
 
 To keep large results out of the LLM context, `run_sql` stores full results server-side and
 returns a `dataset_id` plus a preview; doc tools accept `dataset_id`.
 
 ## Agent service (FastAPI)
 
-- `POST /api/chat` — `{conversation_id, message}` → SSE events: `text`, `tool_start`,
-  `tool_result`, `artifact`, `done`, `error`.
-- `GET /files/{file_id}` — serves generated files.
+- `POST /api/chat` — `{conversation_id, message}` → SSE events: `conversation`, `thinking`,
+  `text`, `tool_start`, `tool_call`, `tool_result`, `done`, `refusal`, `error` (`artifact` comes
+  with the document tools).
+- `GET /files/{file_id}` — serves generated files (milestone 5).
+- Claude Sonnet 5.5 (default; Opus 5.5 optional) at `medium` effort with summarized adaptive thinking; refusal fallbacks
+  (`fallbacks: "default"`) on. A failed turn is rolled back so history stays valid.
 - System prompt: role, KPI glossary, "always inspect schema before writing SQL", "state the
   date range and hotels you assumed", "prefer views for KPIs".
-- Prompt caching on the system prompt + tool definitions; max ~15 tool iterations per turn.
-- Conversations kept in memory (demo); easy to move to Postgres later.
+- Prompt caching (top-level `cache_control`) over system prompt, tools and the append-only
+  history; max 15 tool steps per turn.
+- Conversations saved per user in SQLite on the agent (history to continue them, plus each answer's events to show them again).
 
 ## Web UI (Next.js)
 
@@ -106,11 +116,22 @@ returns a `dataset_id` plus a preview; doc tools accept `dataset_id`.
 
 ```
 db/            schema.sql, views.sql, seed.py
-mcp_server/    server.py, tools/{data,charts,xlsx,pptx,report}.py, tests/
-agent/         main.py (FastAPI), claude_loop.py, mcp_client.py, tests/
-web/           Next.js app
+mcp_server/    pms_mcp/{server,db,sql_guard,datasets}.py (+ doc tools later), tests/
+agent/         pms_agent/{app,loop,config,prompts,conversations}.py, tests/
+web/           Next.js app: app/ (page + /api/chat proxy), components/, lib/ (SSE, reducer), e2e/
 docker-compose.yml, .env.example, README.md
 ```
+
+## Remote access (Claude custom connectors)
+
+- The MCP server is an OAuth 2.1 authorization server (SDK `auth_server_provider`): dynamic client
+  registration, PKCE, `/authorize` → upstream OIDC login → `/oauth/callback` → code → `/token`.
+- Identity comes from the OIDC ID token (signature checked against the provider's JWKS, issuer,
+  audience, nonce, verified email); an email/domain allowlist decides access, checked on every
+  request. Clients, codes and tokens (hashed) live in SQLite on a volume.
+- Per-user data: datasets and charts carry their owner; tools only see the caller's.
+- Files: HMAC-signed links valid 24h served by the MCP server; charts also returned as images.
+- The website's agent authenticates with a shared service token.
 
 ## Safety & correctness
 
@@ -128,15 +149,19 @@ docker-compose.yml, .env.example, README.md
 
 ## Milestones
 
-1. DB schema, views, seeder, docker-compose with Postgres.
-2. MCP server: `describe_schema`, `run_sql`, `get_kpis` + tests (usable from Claude Desktop immediately).
-3. Agent service with Claude tool loop + SSE.
-4. Web chat UI with streaming and SQL/table display.
-5. Doc tools: charts → xlsx → pptx → pdf/docx, with artifact cards.
-6. Golden-question evals, polish, README.
+1. ✅ DB schema, views, seeder, docker-compose with Postgres.
+2. ✅ MCP server: `describe_schema`, `run_sql`, `get_kpis` + tests (usable from Claude Desktop immediately).
+3. ✅ Agent service with Claude tool loop + SSE.
+4. ✅ Web chat UI with streaming and SQL/table display.
+5. ✅ Doc tools: charts → xlsx → pptx → pdf/docx, with artifact cards.
+6. ✅ Remote connector: users connect their own Claude accounts (OAuth 2.1 + OIDC sign-in,
+   allowlist, per-user data, signed download links).
+7. ✅ CI (GitHub Actions), rate limits, website sign-in (OIDC, same allowlist), saved
+   conversations with a sidebar, per-hotel access (PostgreSQL row-level security).
+8. ✅ English and Latin American Spanish: website, agent answers, chart and document labels.
+9. Golden-question evals, polish, README.
 
 ## Open questions
 
-- Hotel names/locations and currency for the synthetic chain?
+- Hotel names/locations: defaulted to Lisbon, Barcelona and Porto (EUR); see README.
 - Should decks follow a brand template (.potx) later?
-- Persist conversation history across restarts?
