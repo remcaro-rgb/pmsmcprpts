@@ -27,6 +27,9 @@ DROP_BEFORE_FALLBACK = {"thinking", "redacted_thinking", "tool_use"}
 Event = dict[str, Any]
 
 
+USAGE_FIELDS = ("input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens")
+
+
 def _event(kind: str, /, **data: Any) -> Event:
     return {"event": kind, "data": data}
 
@@ -146,6 +149,9 @@ class ChatAgent:
                     text: dict[str, str]) -> AsyncIterator[Event]:
         json_retries = 0
         step = 0
+        # Usage summed over every API request in the turn (the done event reports the turn).
+        totals = dict.fromkeys(USAGE_FIELDS, 0)
+        requests = 0
         while step < self.settings.max_tool_steps:
             try:
                 async with self.client.beta.messages.stream(**self._request(system, tools, conv.messages)) as stream:
@@ -158,6 +164,9 @@ class ChatAgent:
                             yield _event("tool_start", id=ev.content_block.id, name=ev.content_block.name)
                     message = await stream.get_final_message()
                 json_retries = 0
+                requests += 1
+                for f in USAGE_FIELDS:
+                    totals[f] += getattr(message.usage, f, None) or 0
             except ValueError:
                 # Tool input the SDK could not parse at all (eager input streaming). There is no
                 # complete tool_use block to answer, so re-issue the request.
@@ -180,13 +189,8 @@ class ChatAgent:
 
             tool_uses = [b for b in content if b["type"] == "tool_use"]
             if not tool_uses:
-                usage = message.usage
-                yield _event("done", stop_reason=message.stop_reason, usage={
-                    "input_tokens": usage.input_tokens,
-                    "output_tokens": usage.output_tokens,
-                    "cache_read_input_tokens": getattr(usage, "cache_read_input_tokens", None),
-                    "cache_creation_input_tokens": getattr(usage, "cache_creation_input_tokens", None),
-                })
+                yield _event("done", stop_reason=message.stop_reason, usage=totals, requests=requests,
+                             model=getattr(message, "model", None) or self.settings.model)
                 return
             if message.stop_reason == "max_tokens":
                 # A truncated tool input can parse as a valid partial object; don't run it.

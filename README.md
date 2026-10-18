@@ -238,7 +238,7 @@ stream of server-sent events:
 | `tool_call` | `{id, name, input}`: the complete tool input (e.g. the SQL) |
 | `tool_result` | `{id, name, is_error, result}`: the tool's result, tables trimmed to 50 preview rows; charts and files include their `file` (and `chart`) data |
 | `text` | `{text}`: answer text, streamed |
-| `done` | `{stop_reason, usage}` |
+| `done` | `{stop_reason, usage, requests, model}`: `usage` is summed over all `requests` Claude API calls of the turn; `model` is the model that answered |
 | `refusal` / `error` | `{message, ...}`: the turn failed and is not kept in the history |
 
 Details:
@@ -365,3 +365,16 @@ conversation, Stop, refusals, an interactive chart (hover, keyboard, data table,
 downloading a generated .xlsx, .pptx and .pdf. The stand-in understands "chart", "excel", "deck"
 and "report" in a question. If Playwright's own Chromium isn't installed, set
 `PW_CHROMIUM_PATH` to a Chromium binary.
+
+### Live check against the Claude API
+
+With the stack running and `ANTHROPIC_API_KEY` set, `scripts/live_check.py` asks seven questions
+in English and Spanish (last quarter's KPIs and a follow-up in the same conversation, channel
+cancellation rates, a monthly occupancy chart, a KPI spreadsheet, a Q3 deck and a PDF report). It
+saves each answer, its tool calls and the generated files, and writes `summary.md` with each
+question's token usage and cost. It needs only the Python standard library:
+
+```bash
+python scripts/live_check.py                                 # the agent's model
+PMS_CLAUDE_MODEL=claude-sonnet-5-5 docker compose up -d agent  # then run it again to compare
+```

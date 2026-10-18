@@ -77,6 +77,11 @@ async def test_tool_round_trip():
     assert ok["is_error"] is False and ok["result"]["dataset_id"] == "ds_1"
     assert len(ok["result"]["rows"]) == 50  # trimmed for the UI
     assert err["is_error"] is True and "Unknown hotel code" in err["result"]
+    # Usage covers both requests of the turn, not just the last one.
+    done = events[-1]["data"]
+    assert done["requests"] == 2 and done["model"] == "claude-opus-5-5"
+    assert done["usage"] == {"input_tokens": 200, "output_tokens": 40, "cache_read_input_tokens": 160,
+                             "cache_creation_input_tokens": 0}
 
     roles = [m["role"] for m in conv.messages]
     assert roles == ["user", "assistant", "user", "assistant"]

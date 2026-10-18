@@ -54,7 +54,7 @@ jobs:
           sudo apt-get update && sudo apt-get install -y --no-install-recommends postgresql-client
 
       - name: Lint Python
-        run: python -m pyflakes db mcp_server agent web/e2e
+        run: python -m pyflakes db mcp_server agent web/e2e scripts
 
       - name: Create schema and seed the sample data
         run: |
