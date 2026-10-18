@@ -196,6 +196,30 @@ test.describe("in Latin American Spanish", () => {
   });
 });
 
+test.describe("light and dark colors", () => {
+  test.use({ colorScheme: "dark" }); // the system preference doesn't decide: light is the default
+
+  test("starts light, switches to dark, and remembers the choice", async ({ page }) => {
+    await page.goto("/");
+    const html = page.locator("html");
+    const background = () => page.evaluate(() => getComputedStyle(document.body).backgroundColor);
+    await expect(html).not.toHaveClass(/dark/);
+    const light = await background();
+
+    await page.getByRole("button", { name: "Switch to dark mode" }).click();
+    await expect(html).toHaveClass(/dark/);
+    expect(await background()).not.toBe(light);
+
+    await page.reload();
+    await expect(html).toHaveClass(/dark/); // rendered dark by the server, no flash of light
+    await page.getByRole("button", { name: "Switch to light mode" }).click();
+    await expect(html).not.toHaveClass(/dark/);
+    await page.reload();
+    await expect(page.getByRole("button", { name: "Switch to dark mode" })).toBeVisible();
+    expect(await background()).toBe(light);
+  });
+});
+
 test("rate-limits chat messages and says when to retry", async ({ request }) => {
   // The test server allows 20 messages per 10 minutes per client; earlier tests used some.
   let status = 200;

@@ -273,7 +273,7 @@ sign-in (`CHAT_RATE_LIMIT`, default `20/600`: 20 messages per 10 minutes). Answe
 with its input (the SQL, or the KPI parameters) and the result table. Charts appear inline with a
 hover crosshair and tooltip (also reachable with the arrow keys), a "Show data" table and a PNG
 download. Spreadsheets, decks and reports appear as download cards. There's a Stop button and
-starter questions, and it works in light and dark mode and at phone width. A sidebar (a drawer on
+starter questions, and it works at phone width. It starts in light colors; the sun/moon button in the header switches to dark (remembered in the `pms_theme` cookie). A sidebar (a drawer on
 phones) lists saved conversations to reopen or delete; the open one is kept in the address (`?c=…`). The browser only talks
 to the site's own `/api/chat` and `/api/files/{id}` routes, which proxy the agent (`AGENT_URL`).
 

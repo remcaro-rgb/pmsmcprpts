@@ -12,11 +12,13 @@ import {
 } from "@/lib/chat";
 import { isLocale } from "@/lib/i18n";
 import { readSse } from "@/lib/sse";
+import type { Theme } from "@/lib/theme";
 import AssistantMessageView from "./AssistantMessageView";
 import { useI18n } from "./I18n";
 import Sidebar from "./Sidebar";
+import ThemeToggle from "./ThemeToggle";
 
-export default function Chat({ user = null }: { user?: string | null }) {
+export default function Chat({ user = null, theme = "light" }: { user?: string | null; theme?: Theme }) {
   const { locale, t, setLocale } = useI18n();
   const [messages, setMessages] = useState<Message[]>([]);
   const [conversationId, setConversationId] = useState<string | null>(null);
@@ -156,7 +158,7 @@ export default function Chat({ user = null }: { user?: string | null }) {
         onClose={() => setSidebarOpen(false)}
       />
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex items-center gap-3 border-b border-stone-200 bg-white/80 px-4 py-3 backdrop-blur dark:border-stone-800 dark:bg-stone-950/80">
+        <header className="flex items-center gap-2 sm:gap-3 border-b border-stone-200 bg-white/80 px-4 py-3 backdrop-blur dark:border-stone-800 dark:bg-stone-950/80">
           <button
             onClick={() => setSidebarOpen(true)}
             aria-label={t.showConversations}
@@ -168,15 +170,17 @@ export default function Chat({ user = null }: { user?: string | null }) {
           </button>
           <div className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-accent text-sm font-bold text-white">P</div>
           <div className="min-w-0">
-            <h1 className="text-[15px] font-semibold leading-tight">{t.appName}</h1>
-            <p className="truncate text-xs text-stone-500">{t.tagline}</p>
+            <h1 className="truncate text-[15px] font-semibold leading-tight">{t.appName}</h1>
+            <p className="hidden truncate text-xs text-stone-500 sm:block">{t.tagline}</p>
           </div>
+          <div className="ml-auto" />
+          <ThemeToggle initial={theme} />
           <select
             value={locale}
             onChange={(e) => isLocale(e.target.value) && setLocale(e.target.value)}
             aria-label={t.language}
             title={t.language}
-            className="ml-auto shrink-0 cursor-pointer rounded-lg border border-stone-200 bg-transparent px-1.5 py-1.5 text-sm hover:bg-stone-100 dark:border-stone-700 dark:hover:bg-stone-900"
+            className="shrink-0 cursor-pointer rounded-lg border border-stone-200 bg-transparent px-1.5 py-1.5 text-sm hover:bg-stone-100 dark:border-stone-700 dark:hover:bg-stone-900"
           >
             <option value="en">EN</option>
             <option value="es">ES</option>

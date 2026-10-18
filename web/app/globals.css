@@ -1,5 +1,8 @@
 @import "tailwindcss";
 
+/* Dark colors follow the header toggle (the "dark" class on <html>), not the system setting. */
+@custom-variant dark (&:where(.dark, .dark *));
+
 @theme {
   --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
@@ -9,6 +12,14 @@
 html,
 body {
   height: 100%;
+}
+
+/* Native controls and scrollbars match the chosen theme. */
+html {
+  color-scheme: light;
+}
+html.dark {
+  color-scheme: dark;
 }
 
 body {
