@@ -23,7 +23,7 @@ from .datasets import Dataset, DatasetStore
 from .db import Database, QueryError
 from .documents import DocError, Section, SheetSpec, Slide, build_docx, build_pdf, build_pptx, build_xlsx
 from .formats import KINDS
-from .sql_guard import UnsafeQueryError, check_read_only
+from .sql_guard import UnsafeQueryError, check_read_only, strip_stray_quote
 
 INSTRUCTIONS = """\
 Read-only access to a hotel property-management-system (PMS) database (PostgreSQL, schema `pms`).
@@ -210,6 +210,7 @@ def build_server(dsn: str, statement_timeout_ms: int = 15000, artifacts_dir: str
             query: A single SELECT statement. Tables can be referenced without the `pms.` prefix.
             preview_rows: How many rows to return inline.
         """
+        query = strip_stray_quote(query)
         try:
             check_read_only(query)
         except UnsafeQueryError as e:
@@ -327,7 +328,8 @@ def build_server(dsn: str, statement_timeout_ms: int = 15000, artifacts_dir: str
             chart_type: "line" or "bar".
             series: Column whose values become separate lines/bar colors, e.g. "hotel_code".
             subtitle: Period and scope, e.g. "Monthly, Oct 2025 - Sep 2026".
-            y_format: Override the value format inferred from the column name.
+            y_format: Override the value format inferred from the column name; percent and points
+                take fractions (0.034 shows as 3.4%).
             language: Language of the text the tool adds (dates, column headers, source line):
                 "en", or "es" for Latin American Spanish. Write titles and text in the same language.
         """

@@ -126,6 +126,8 @@ async def test_step_limit():
     conv = Conversation("c1")
     events = await run(agent, conv, "Loop forever")
     assert events[-1]["event"] == "error" and "2 tool steps" in events[-1]["data"]["message"]
+    # The failed turn's requests were billed, so the error reports their usage too.
+    assert events[-1]["data"]["requests"] == 2 and events[-1]["data"]["usage"]["output_tokens"] == 40
     assert conv.messages == []
 
 

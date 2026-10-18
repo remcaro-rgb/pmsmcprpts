@@ -8,6 +8,10 @@ import { useI18n } from "./I18n";
 import Chevron from "./Chevron";
 import ToolCard from "./ToolCard";
 
+// Charts and files arrive through tool results; images written into the answer text are invented
+// paths (or outside URLs), so they are dropped.
+const NO_IMAGES = ["img"];
+
 function formatUsage(u: Usage, t: Messages): string {
   const cached = u.cache_read_input_tokens ?? 0;
   const input = u.input_tokens + cached + (u.cache_creation_input_tokens ?? 0);
@@ -61,7 +65,9 @@ export default function AssistantMessageView({ message }: { message: AssistantMe
         }
         return (
           <div key={i} className="markdown">
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>{part.text}</ReactMarkdown>
+            <ReactMarkdown remarkPlugins={[remarkGfm]} disallowedElements={NO_IMAGES}>
+              {part.text}
+            </ReactMarkdown>
           </div>
         );
       })}

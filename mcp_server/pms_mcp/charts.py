@@ -12,7 +12,7 @@ from xml.sax.saxutils import escape
 import vl_convert
 
 from .datasets import Dataset
-from .formats import Kind, date_labels, format_tick, format_value, infer_kind, nice_ticks
+from .formats import Kind, check_scale, date_labels, format_tick, format_value, infer_kind, nice_ticks
 from .i18n import Lang
 
 MAX_SERIES = 8
@@ -93,6 +93,10 @@ def build_chart_data(ds: Dataset, kind: str, x: str, y: str, series: str | None,
     else:
         ticks = full = [str(c) for c in categories]
     y_values = [r[yi] for r in ds.rows]
+    try:
+        check_scale(y, y_format, y_values)
+    except ValueError as e:
+        raise ChartError(str(e)) from None
     return ChartData(
         kind=kind, title=title, subtitle=subtitle, x_name=x, y_name=y,
         y_kind=y_format or infer_kind(y, ds.columns[yi]["type"], y_values),
