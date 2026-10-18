@@ -96,7 +96,7 @@ returns a `dataset_id` plus a preview; doc tools accept `dataset_id`.
   `text`, `tool_start`, `tool_call`, `tool_result`, `done`, `refusal`, `error` (`artifact` comes
   with the document tools).
 - `GET /files/{file_id}` — serves generated files (milestone 5).
-- Claude Opus 5.5 at `medium` effort with summarized adaptive thinking; refusal fallbacks
+- Claude Sonnet 5.5 (default; Opus 5.5 optional) at `medium` effort with summarized adaptive thinking; refusal fallbacks
   (`fallbacks: "default"`) on. A failed turn is rolled back so history stays valid.
 - System prompt: role, KPI glossary, "always inspect schema before writing SQL", "state the
   date range and hotels you assumed", "prefer views for KPIs".

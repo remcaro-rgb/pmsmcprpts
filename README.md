@@ -242,8 +242,10 @@ stream of server-sent events:
 | `refusal` / `error` | `{message, ...}`: the turn failed and is not kept in the history |
 
 Details:
-- **Model:** `claude-opus-5-5` at `medium` effort (`PMS_CLAUDE_MODEL`, `PMS_CLAUDE_EFFORT`), with
-  adaptive thinking and up to 15 tool steps per message (`PMS_MAX_TOOL_STEPS`).
+- **Model:** `claude-sonnet-5-5` at `medium` effort (`PMS_CLAUDE_MODEL`, `PMS_CLAUDE_EFFORT`), with
+  adaptive thinking and up to 15 tool steps per message (`PMS_MAX_TOOL_STEPS`). Set
+  `PMS_CLAUDE_MODEL=claude-opus-5-5` for deeper analysis at about 2.4x the cost (see the live check
+  measurements under Tests).
 - **Prompt caching:** the system prompt, tools and conversation history are cached between steps.
   Histories are append-only so the cache stays warm.
 - **Refusal fallbacks:** if Claude's safety filters decline a request, the API retries it on a
@@ -383,8 +385,8 @@ Measured on the sample data (14 questions; costs at list prices):
 
 | Model | Total | Simple question | Chart / spreadsheet | Deck / report |
 |---|---|---|---|---|
-| `claude-opus-5-5` (default) | $1.57 | $0.02–0.10, 7–17 s | $0.07–0.15, 11–33 s | $0.16–0.22, 34–52 s |
-| `claude-sonnet-5-5` | $0.65–0.66 | $0.02–0.04, 6–11 s | $0.05, 8–12 s | $0.05–0.09, 13–27 s |
+| `claude-opus-5-5` | $1.57 | $0.02–0.10, 7–17 s | $0.07–0.15, 11–33 s | $0.16–0.22, 34–52 s |
+| `claude-sonnet-5-5` (default) | $0.65–0.66 | $0.02–0.04, 6–11 s | $0.05, 8–12 s | $0.05–0.09, 13–27 s |
 
 Both answered every question with correct tables. Opus wrote more analysis (year-on-year
 comparisons and channel mix in decks without being asked); Sonnet's answers were shorter and,

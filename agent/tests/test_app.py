@@ -41,7 +41,7 @@ async def test_chat_streams_sse_and_keeps_history():
         # user, assistant(tool_use), user(tool_result), assistant, user
         assert len(client.messages.requests[-1]["messages"]) == 5
 
-        assert (await http.get("/api/health")).json()["model"] == "claude-opus-5-5"
+        assert (await http.get("/api/health")).json()["model"] == "claude-sonnet-5-5"
         assert (await http.post("/api/chat", json={"message": ""})).status_code == 422
 
 
