@@ -293,6 +293,26 @@ remembered in the `pms_lang` cookie. In Spanish:
 Website text lives in `web/lib/i18n.ts`. The agent's language instructions and messages are in
 `agent/pms_agent/prompts.py`, and the document labels are in `mcp_server/pms_mcp/i18n.py`.
 
+### Share it with ngrok
+
+To open your local copy from other devices, publish it on your free ngrok domain, behind a sign-in:
+
+1. Sign up at [ngrok.com](https://ngrok.com), install ngrok, and run `ngrok config add-authtoken <token>`.
+2. Copy your free domain from dashboard.ngrok.com → **Domains** (for example `something.ngrok-free.app`).
+3. With the stack running, from the repository folder:
+
+```bash
+scripts/share_ngrok.sh --domain something.ngrok-free.app --google you@gmail.com        # Google sign-in
+scripts/share_ngrok.sh --domain something.ngrok-free.app --password admin:a-long-password
+```
+
+On Windows: `.\scripts\share_ngrok.ps1 -Domain something.ngrok-free.app -Google you@gmail.com`.
+
+The script refuses to share without a sign-in, because anyone with the link could spend your Claude
+credits. Use `--google` with emails (comma-separated), `--google-domain yourcompany.com`, or
+`--password`. It checks the site is up and sets `WEB_TRUST_PROXY=true` so rate limits count each
+visitor. Press Ctrl+C to stop sharing.
+
 ### Sign-in
 
 Set `WEB_AUTH=oidc` to require sign-in. The website signs people in with OpenID Connect (Google,
