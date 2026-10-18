@@ -7,10 +7,13 @@ from typing import Any, Literal
 
 from .i18n import Lang, fmt_date
 
-Kind = Literal["percent", "currency", "integer", "decimal", "date", "text"]
-KINDS = ("percent", "currency", "integer", "decimal", "date", "text")
+# "points": a difference between two ratios stored as fractions, shown in percentage points
+# (occupancy 0.921 - 0.928 = -0.007 -> "-0.7 pts").
+Kind = Literal["percent", "points", "currency", "integer", "decimal", "date", "text"]
+KINDS = ("percent", "points", "currency", "integer", "decimal", "date", "text")
 
 ISO_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+POINTS_NAMES = re.compile(r"(_pts$|_pp$|_points$)")
 PERCENT_NAMES = re.compile(r"(occupancy|_rate$|^rate_pct$|_pct$|share|ratio)")
 CURRENCY_NAMES = re.compile(r"(^rate$|adr|revpar|revenue|spend|amount|price|charges?$|^total$)")
 INTEGER_TYPES = {"int2", "int4", "int8"}
@@ -28,6 +31,8 @@ def infer_kind(name: str, pg_type: str, values: list[Any]) -> Kind:
         return "text"
     if pg_type in NUMERIC_TYPES or (sample and all(isinstance(v, (int, float)) for v in sample)):
         lname = name.lower()
+        if POINTS_NAMES.search(lname) and all(-1.5 <= v <= 1.5 for v in sample):
+            return "points"
         if PERCENT_NAMES.search(lname) and all(-1.5 <= v <= 1.5 for v in sample):
             return "percent"
         if CURRENCY_NAMES.search(lname):
@@ -52,6 +57,8 @@ def format_value(value: Any, kind: Kind, lang: Lang = "en") -> str:
         return ("Sí" if value else "No") if lang == "es" else ("Yes" if value else "No")
     if kind == "percent":
         return f"{value * 100:.1f}%"
+    if kind == "points":
+        return f"{value * 100:+.1f} {points_unit(lang)}"
     if kind == "currency":
         return f"{CURRENCY_SYMBOL}{value:,.0f}" if abs(value) >= 10_000 else f"{CURRENCY_SYMBOL}{value:,.2f}"
     if kind == "integer":
@@ -62,6 +69,10 @@ def format_value(value: Any, kind: Kind, lang: Lang = "en") -> str:
         d = to_date(value)
         return fmt_date(d, "day", lang) if d else str(value)
     return str(value)
+
+
+def points_unit(lang: Lang) -> str:
+    return "pp" if lang == "es" else "pts"
 
 
 def format_headline(value: Any, kind: Kind, lang: Lang = "en") -> str:
@@ -82,9 +93,9 @@ def compact(value: float) -> str:
 
 
 def format_tick(value: float, kind: Kind, step: float) -> str:
-    if kind == "percent":
+    if kind in ("percent", "points"):
         decimals = 0 if step >= 0.01 else 1
-        return f"{value * 100:.{decimals}f}%"
+        return f"{value * 100:.{decimals}f}" + ("%" if kind == "percent" else "")
     if kind == "currency":
         return CURRENCY_SYMBOL + compact(value)
     return compact(value)

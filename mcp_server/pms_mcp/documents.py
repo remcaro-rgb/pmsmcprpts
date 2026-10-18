@@ -13,7 +13,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 from .datasets import Dataset, DatasetStore
-from .formats import KINDS, Kind, format_headline, format_value, infer_kind, to_date
+from .formats import KINDS, Kind, format_headline, format_value, infer_kind, points_unit, to_date
 from .i18n import COLUMNS_ES, Lang, fmt_date
 from .i18n import text as i18n_text
 
@@ -100,7 +100,7 @@ class Table:
 
     @property
     def numeric(self) -> list[bool]:
-        return [k in ("percent", "currency", "integer", "decimal") for k in self.kinds]
+        return [k in ("percent", "points", "currency", "integer", "decimal") for k in self.kinds]
 
 
 def get_dataset(store: DatasetStore, dataset_id: str) -> Dataset:
@@ -162,6 +162,19 @@ EXCEL_FORMATS = {"percent": "0.0%", "currency": "€#,##0.00", "integer": "#,##0
                  "date": "yyyy-mm-dd"}
 
 
+def excel_value(value: Any, kind: Kind) -> Any:
+    if kind == "date" and to_date(value):
+        return to_date(value)
+    if kind == "points" and isinstance(value, (int, float)):
+        return value * 100  # Excel has no points format; store points with a unit suffix
+    return value
+
+
+def excel_points_format(lang: Lang) -> str:
+    unit = points_unit(lang)
+    return f'+0.0" {unit}";-0.0" {unit}";0.0" {unit}"'
+
+
 def build_xlsx(store: DatasetStore, title: str, sheets: list[SheetSpec], business_date: str,
                lang: Lang = "en") -> bytes:
     from openpyxl import Workbook
@@ -192,12 +205,13 @@ def build_xlsx(store: DatasetStore, title: str, sheets: list[SheetSpec], busines
             cell.font, cell.fill, cell.border = header_font, header_fill, header_border
             cell.alignment = Alignment(vertical="center")
         for row in table.rows:
-            ws.append([to_date(v) if k == "date" and to_date(v) else v for v, k in zip(row, table.kinds)])
+            ws.append([excel_value(v, k) for v, k in zip(row, table.kinds)])
         for ci, (header, kind) in enumerate(zip(table.headers, table.kinds), start=1):
             letter = get_column_letter(ci)
-            if kind in EXCEL_FORMATS:
+            number_format = (excel_points_format(lang) if kind == "points" else EXCEL_FORMATS.get(kind))
+            if number_format:
                 for (cell,) in ws.iter_rows(min_row=2, min_col=ci, max_col=ci):
-                    cell.number_format = EXCEL_FORMATS[kind]
+                    cell.number_format = number_format
             if table.numeric[ci - 1]:
                 ws.cell(1, ci).alignment = Alignment(horizontal="right")
             sample = [format_value(r[ci - 1], kind, lang) for r in table.rows[:200]]
@@ -428,6 +442,39 @@ def build_docx(store: DatasetStore, charts: dict[str, bytes], title: str, subtit
     return buf.getvalue()
 
 
+PDF_CELL_PADDING = 12  # reportlab's default 6pt left and right
+
+
+def pdf_column_widths(headers: list[str], rows: list[list[str]], width: float,
+                      size: float = 8.5, min_size: float = 6.5) -> tuple[list[float], float]:
+    """Column widths that keep every value and every header word on one line, at the largest
+    font size (down to min_size) where the table fits the page width. Spare width goes first to
+    headers that would otherwise wrap, then evenly."""
+    from reportlab.pdfbase.pdfmetrics import stringWidth
+
+    def measure(s: float) -> tuple[list[float], list[float]]:
+        need, want = [], []
+        for c, h in enumerate(headers):
+            values = max((stringWidth(r[c], "Helvetica", s) for r in rows), default=0)
+            word = max((stringWidth(w, "Helvetica-Bold", s) for w in h.split()), default=0)
+            need.append(max(values, word) + PDF_CELL_PADDING)
+            want.append(max(need[-1], stringWidth(h, "Helvetica-Bold", s) + PDF_CELL_PADDING))
+        return need, want
+
+    need, want = measure(size)
+    while sum(need) > width and size > min_size:
+        size = max(min_size, size - 0.5)
+        need, want = measure(size)
+    if sum(need) >= width:  # still too wide at the smallest size: share the width by need
+        return [width * n / sum(need) for n in need], size
+    spare = width - sum(need)
+    extra = [w - n for w, n in zip(want, need)]
+    if sum(extra) >= spare:
+        return [n + spare * e / sum(extra) for n, e in zip(need, extra)], size
+    left = (spare - sum(extra)) / len(headers)
+    return [w + left for w in want], size
+
+
 def build_pdf(store: DatasetStore, charts: dict[str, bytes], title: str, subtitle: str | None,
               sections: list[Section], business_date: str, lang: Lang = "en") -> bytes:
     from reportlab.lib import colors
@@ -493,11 +540,13 @@ def build_pdf(store: DatasetStore, charts: dict[str, bytes], title: str, subtitl
             story += [Spacer(1, 6), Image(io.BytesIO(png), width=width, height=width * 450 / 800), Spacer(1, 6)]
         if sec.table:
             t = select_table(store, sec.table.dataset_id, sec.table.columns, sec.table.formats, sec.table.max_rows, lang)
-            data = [[Paragraph(f"<b>{escape(h)}</b>", styles["cell_r" if n else "cell"])
-                     for h, n in zip(t.headers, t.numeric)]]
-            data += [[Paragraph(escape(v), styles["cell_r" if n else "cell"]) for v, n in zip(row, t.numeric)]
-                     for row in t.formatted()]
-            table = RLTable(data, repeatRows=1, colWidths=[width / len(t.headers)] * len(t.headers))
+            rows = t.formatted()
+            widths, size = pdf_column_widths(t.headers, rows, width)
+            cell = ParagraphStyle("c", parent=styles["cell"], fontSize=size, leading=size * 1.3)
+            cell_r = ParagraphStyle("cr", parent=cell, alignment=TA_RIGHT)
+            data = [[Paragraph(f"<b>{escape(h)}</b>", cell_r if n else cell) for h, n in zip(t.headers, t.numeric)]]
+            data += [[Paragraph(escape(v), cell_r if n else cell) for v, n in zip(row, t.numeric)] for row in rows]
+            table = RLTable(data, repeatRows=1, colWidths=widths)
             table.setStyle(TableStyle([
                 ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#" + HEADER_FILL)),
                 ("LINEBELOW", (0, 0), (-1, -1), 0.5, hair),

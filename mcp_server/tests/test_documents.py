@@ -63,6 +63,9 @@ def test_formats():
     assert format_value(True, infer_kind("fully_actual", "", [True])) == "Yes"
     assert format_value(False, "text", "es") == "No"
     assert format_value(True, "text", "es") == "Sí"
+    assert infer_kind("occupancy_change_pp", "numeric", [-0.0154, 0.007]) == "points"
+    assert format_value(-0.0154, "points") == "-1.5 pts"
+    assert format_value(0.007, "points", "es") == "+0.7 pp"
     assert nice_ticks(0.55, 0.93) == [0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
     assert date_labels(["2026-07-01", "2026-10-01"])[0] == ["Q3 2026", "Q4 2026"]
     assert date_labels(["2025-12-01", "2026-01-01"])[0] == ["Dec '25", "Jan '26"]
@@ -248,3 +251,19 @@ async def test_documents_in_spanish(ctx):
     assert any(t.startswith("Fuente: base de datos del PMS") for t in texts)
     assert "Mostrando 6 de 18 filas." in texts
     assert doc.tables[0].cell(0, 2).text == "Ocupación"
+
+
+def test_pdf_columns_fit_values_and_header_words():
+    from reportlab.pdfbase.pdfmetrics import stringWidth
+
+    from pms_mcp.documents import PDF_CELL_PADDING, pdf_column_widths
+
+    headers = ["Hotel", "Habitaciones vendidas", "Ingresos por habitaciones", "Ingresos totales",
+               "Var. ocupación pp", "Var. RevPAR %", "Var. ingresos totales %", "ADR", "RevPAR", "Ocupación"]
+    rows = [["BCN", "14,833", "€4,083,709", "€11,127,338", "-1.5 pp", "1.7%", "1.0%", "€275.31", "€246.60", "89.6%"]]
+    width = 482
+    widths, size = pdf_column_widths(headers, rows, width)
+    assert abs(sum(widths) - width) < 0.01 and size >= 6.5
+    for c, w in enumerate(widths):  # no value and no header word is split across lines
+        assert w >= stringWidth(rows[0][c], "Helvetica", size) + PDF_CELL_PADDING - 0.01
+        assert all(w >= stringWidth(x, "Helvetica-Bold", size) + PDF_CELL_PADDING - 0.01 for x in headers[c].split())

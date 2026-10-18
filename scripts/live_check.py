@@ -75,6 +75,7 @@ def ask(base: str, message: str, lang: str, conversation_id: str | None) -> dict
                                  headers={"content-type": "application/json"})
     out = {"text": "", "tools": [], "files": [], "events": []}
     started = time.monotonic()
+    new_block = False
     with urllib.request.urlopen(req, timeout=900) as resp:
         event = None
         for raw in resp:
@@ -83,12 +84,18 @@ def ask(base: str, message: str, lang: str, conversation_id: str | None) -> dict
                 event = line[7:]
             elif line.startswith("data: ") and event:
                 data = json.loads(line[6:])
+                if event == "tool_start":
+                    new_block = True
                 if event not in ("text", "thinking", "tool_start"):
                     out["events"].append({"event": event, "data": data})
                 if event == "conversation":
                     out["conversation_id"] = data["id"]
                 elif event == "text":
+                    # Text from separate steps (before and after a tool call) is separate blocks.
+                    if out["text"] and new_block:
+                        out["text"] += "\n\n"
                     out["text"] += data["text"]
+                    new_block = False
                 elif event == "tool_call":
                     out["tools"].append({"name": data["name"], "input": data["input"]})
                 elif event == "tool_result":
