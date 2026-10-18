@@ -295,6 +295,49 @@ remembered in the `pms_lang` cookie. In Spanish:
 Website text lives in `web/lib/i18n.ts`. The agent's language instructions and messages are in
 `agent/pms_agent/prompts.py`, and the document labels are in `mcp_server/pms_mcp/i18n.py`.
 
+### Share it with a Cloudflare Tunnel
+
+`cloudflared` runs as a Docker service and connects out to Cloudflare, so nothing is opened on your
+router or firewall. Your computer has to stay on while you share.
+
+**Quick tunnel (free, no Cloudflare account or domain).** You get a random
+`https://….trycloudflare.com` address, a new one each time it starts, protected by a site-wide
+password (`WEB_PASSWORD`, which the browser asks for):
+
+```bash
+scripts/share_cloudflare.sh --password admin:a-long-unique-password   # saves WEB_PASSWORD in .env
+scripts/share_cloudflare.sh --stop
+```
+
+On Windows, add `WEB_PASSWORD=admin:a-long-unique-password` and `WEB_TRUST_PROXY=true` to `.env`, then:
+
+```powershell
+docker compose up -d
+docker compose --profile quicktunnel up -d --force-recreate quicktunnel
+docker compose --profile quicktunnel logs quicktunnel | Select-String trycloudflare.com
+docker compose --profile quicktunnel stop quicktunnel                   # stop sharing
+```
+
+**Named tunnel (fixed address on a domain you have added to Cloudflare).**
+
+1. In the Cloudflare dashboard, go to **Zero Trust → Networks → Tunnels** and create a tunnel
+   (Cloudflared type).
+2. Copy its token into `.env` as `CLOUDFLARE_TUNNEL_TOKEN`.
+3. Under **Public hostnames**, add for example `reports.yourdomain.com` → service `http://web:5050`.
+4. Protect it with a free **Zero Trust → Access** application that allows your team's emails (up to 50
+   users), or with `WEB_PASSWORD` / `WEB_AUTH=oidc`. A fixed hostname also makes `WEB_AUTH=oidc` usable:
+   set `WEB_PUBLIC_URL` to it.
+
+```bash
+scripts/share_cloudflare.sh --named            # add --access when an Access policy protects it
+```
+
+Without the script: `docker compose --profile tunnel up -d tunnel`.
+
+`WEB_PASSWORD` (`user:password`, password of 12+ characters) works for any way of sharing the
+site. Leave out `$ ' " \ #` and spaces, which `.env` treats specially. Behind a tunnel, set
+`WEB_TRUST_PROXY=true` (the script does) so the message limit counts each visitor.
+
 ### Share it with ngrok
 
 To open your local copy from other devices, publish it on your free ngrok domain, behind a sign-in:

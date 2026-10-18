@@ -82,6 +82,8 @@ services:
       CHAT_RATE_LIMIT: ${CHAT_RATE_LIMIT:-20/600}
       # Website sign-in (off unless WEB_AUTH=oidc); see .env.example.
       WEB_AUTH: ${WEB_AUTH:-}
+      # Optional site-wide password ("user:password"), e.g. for a Cloudflare quick tunnel.
+      WEB_PASSWORD: ${WEB_PASSWORD:-}
       WEB_PUBLIC_URL: ${WEB_PUBLIC_URL:-}
       WEB_SESSION_SECRET: ${WEB_SESSION_SECRET:-}
       WEB_OIDC_CLIENT_ID: ${WEB_OIDC_CLIENT_ID:-}
@@ -112,6 +114,29 @@ services:
       - caddy_data:/data
     depends_on:
       - mcp
+
+  # Share the website through a Cloudflare Tunnel: outbound connections only, no open ports.
+  # Named tunnel on your own domain (token from the Cloudflare Zero Trust dashboard):
+  #   docker compose --profile tunnel up -d
+  tunnel:
+    image: cloudflare/cloudflared:2026.9.3
+    profiles: ["tunnel"]
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:-}
+    depends_on:
+      - web
+    restart: unless-stopped
+
+  # Quick tunnel: no account or domain; a random https://….trycloudflare.com address each start.
+  # Set WEB_PASSWORD (or WEB_AUTH) first. See scripts/share_cloudflare.sh.
+  quicktunnel:
+    image: cloudflare/cloudflared:2026.9.3
+    profiles: ["quicktunnel"]
+    command: tunnel --no-autoupdate --url http://web:5050
+    depends_on:
+      - web
+    restart: unless-stopped
 
 volumes:
   pgdata:
