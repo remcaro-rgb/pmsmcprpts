@@ -445,6 +445,7 @@ def build_docx(store: DatasetStore, charts: dict[str, bytes], title: str, subtit
 
 
 PDF_CELL_PADDING = 12  # reportlab's default 6pt left and right
+PDF_CELL_SLACK = 1  # a paragraph exactly as wide as its cell still wraps
 
 
 def pdf_column_widths(headers: list[str], rows: list[list[str]], width: float,
@@ -459,8 +460,8 @@ def pdf_column_widths(headers: list[str], rows: list[list[str]], width: float,
         for c, h in enumerate(headers):
             values = max((stringWidth(r[c], "Helvetica", s) for r in rows), default=0)
             word = max((stringWidth(w, "Helvetica-Bold", s) for w in h.split()), default=0)
-            need.append(max(values, word) + PDF_CELL_PADDING)
-            want.append(max(need[-1], stringWidth(h, "Helvetica-Bold", s) + PDF_CELL_PADDING))
+            need.append(max(values, word) + PDF_CELL_PADDING + PDF_CELL_SLACK)
+            want.append(max(need[-1], stringWidth(h, "Helvetica-Bold", s) + PDF_CELL_PADDING + PDF_CELL_SLACK))
         return need, want
 
     need, want = measure(size)
