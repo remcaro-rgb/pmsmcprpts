@@ -126,6 +126,40 @@ async def sign_in(http, oidc, email: str) -> dict:
     return {**r.json(), "client_id": reg["client_id"]}
 
 
+async def test_confidential_client_without_scope(server):
+    """The way ChatGPT connects: a confidential client (client_secret_post) that registers and
+    authorizes without a scope and names the resource; tokens still carry the pms scope."""
+    http, oidc, base = server
+    redirect = "https://chatgpt.example/connector/oauth_redirect"
+    reg = (await http.post("/register", json={
+        "redirect_uris": [redirect], "token_endpoint_auth_method": "client_secret_post",
+        "client_name": "ChatGPT-like", "grant_types": ["authorization_code", "refresh_token"],
+        "response_types": ["code"]})).json()
+    assert reg.get("client_secret")
+    verifier = secrets.token_urlsafe(48)
+    challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
+    r = await http.get("/authorize", params={
+        "response_type": "code", "client_id": reg["client_id"], "redirect_uri": redirect, "state": "s1",
+        "code_challenge": challenge, "code_challenge_method": "S256", "resource": f"{base}/mcp"})
+    assert r.status_code == 302, r.text
+    q = parse_qs(urlparse(r.headers["location"]).query)
+    r = await http.get("/oauth/callback", params={"code": oidc.sign_in("alice@gmail.com", q["nonce"][0]),
+                                                  "state": q["state"][0]})
+    code = parse_qs(urlparse(r.headers["location"]).query)["code"][0]
+    token = {"grant_type": "authorization_code", "code": code, "redirect_uri": redirect,
+             "client_id": reg["client_id"], "code_verifier": verifier, "resource": f"{base}/mcp"}
+    assert (await http.post("/token", data=token)).status_code == 401  # the secret is required
+    r = await http.post("/token", data={**token, "client_secret": reg["client_secret"]})
+    assert r.status_code == 200, r.text
+    tokens = r.json()
+    assert tokens["scope"] == "pms" and tokens["refresh_token"]
+    async with mcp_client(base, tokens["access_token"]) as c:
+        assert not (await c.call_tool("describe_schema", {"table": "hotels"})).is_error
+    r = await http.post("/token", data={"grant_type": "refresh_token", "refresh_token": tokens["refresh_token"],
+                                        "client_id": reg["client_id"], "client_secret": reg["client_secret"]})
+    assert r.status_code == 200, r.text
+
+
 def mcp_client(base: str, token: str) -> Client:
     http = create_mcp_http_client(headers={"Authorization": f"Bearer {token}"})
     return Client(streamable_http_client(f"{base}/mcp", http_client=http))

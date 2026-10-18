@@ -33,19 +33,23 @@ services:
     environment:
       PMS_DATABASE_URL: postgresql://pms_readonly:${PMS_READONLY_PASSWORD:-pms_readonly}@db:5432/${POSTGRES_DB:-pms}
       PMS_ARTIFACTS_DIR: /artifacts
-      # Remote sign-in for Claude custom connectors: on when PMS_PUBLIC_URL is set (see README).
+      # Remote sign-in for ChatGPT, Claude and other MCP apps: on when PMS_PUBLIC_URL is set (see README).
       PMS_PUBLIC_URL: ${PMS_PUBLIC_URL:-}
       PMS_OIDC_ISSUER: ${PMS_OIDC_ISSUER:-}
       PMS_OIDC_CLIENT_ID: ${PMS_OIDC_CLIENT_ID:-}
       PMS_OIDC_CLIENT_SECRET: ${PMS_OIDC_CLIENT_SECRET:-}
       PMS_ALLOWED_EMAILS: ${PMS_ALLOWED_EMAILS:-}
       PMS_ALLOWED_DOMAINS: ${PMS_ALLOWED_DOMAINS:-}
+      PMS_ALLOW_ANY_USER: ${PMS_ALLOW_ANY_USER:-}
       PMS_MCP_SERVICE_TOKEN: ${PMS_MCP_SERVICE_TOKEN:-}
       # Which hotels each user sees (row-level security); see .env.example.
       PMS_HOTEL_ACCESS: ${PMS_HOTEL_ACCESS:-}
       PMS_AUTH_DB: /data/auth.sqlite
-      # Public traffic arrives through Caddy, which sets X-Forwarded-For (used for rate limits).
+      # Public traffic arrives through Caddy or the Cloudflare tunnel, which set X-Forwarded-For
+      # (used for rate limits).
       PMS_TRUST_PROXY: "true"
+      # "off" turns the per-IP rate limits off (see README).
+      PMS_RATE_LIMIT: ${PMS_RATE_LIMIT:-on}
     volumes:
       - artifacts:/artifacts
       - mcpdata:/data

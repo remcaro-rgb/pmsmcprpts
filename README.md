@@ -4,10 +4,11 @@ A chatbot website that answers questions about a hotel property-management-syste
 database and generates spreadsheets, charts, PowerPoint decks and PDF/Word reports.
 See [docs/design.md](docs/design.md) for the full design.
 
-**Status:** milestones 1–6: the sample PMS database, the MCP server that exposes it, the Claude
-agent API, the chat website, charts, Excel, PowerPoint and PDF/Word generation, and sign-in so
-people can connect the MCP server to their own Claude accounts. Next: an evaluation set of sample
-questions with known answers.
+**Status:** the sample PMS database, the MCP server that exposes it, the Claude agent API, the
+chat website (English and Spanish, light and dark), charts, Excel, PowerPoint and PDF/Word
+generation, website sign-in, per-hotel access, and sign-in so people can connect the MCP server
+from ChatGPT, Claude and other AI apps. Next: an evaluation set of sample questions with known
+answers.
 
 ## Quick start
 
@@ -166,42 +167,85 @@ Claude Desktop (stdio), in `claude_desktop_config.json`:
 Run it locally with `pip install -r mcp_server/requirements.txt`, then
 `python -m pms_mcp --help` from `mcp_server/`.
 
-### Let people connect from their own Claude accounts
+### Connect from ChatGPT, Claude and other apps
 
-Anyone you allow can add the server as a **custom connector** in their own Claude app (web,
-desktop or mobile). They ask questions in their own Claude chats, and their Claude plan covers
-the model usage; no Anthropic API key is needed on your side for them.
+Anyone you allow can add the MCP server as a **custom connector** in their own AI app: ChatGPT,
+Claude (web, desktop, mobile), Cursor, VS Code / GitHub Copilot, Gemini CLI, or any client that
+speaks remote MCP with OAuth. They ask in their own chats, and their own plan pays for the model;
+your Anthropic API key isn't used. Your machine only runs the queries and builds the files.
 
-How it works: the MCP server acts as an OAuth authorization server, the flow Claude's connectors
-use, with dynamic client registration and PKCE. It hands the actual sign-in to your OpenID
-Connect provider (Google, Microsoft Entra ID, Auth0, Okta, Keycloak, ...), then checks the
-allowlist.
+How it works: with `PMS_PUBLIC_URL` set, the MCP server is an OAuth 2.1 authorization server with
+dynamic client registration and PKCE (what these apps expect). It hands the actual sign-in to an
+OpenID Connect provider (here Google), then checks your allowlist.
 
-Setup:
+The address must be public HTTPS and **must not change** (apps register against it), so use a
+Cloudflare **named** tunnel on your domain, or the bundled Caddy proxy on a server with ports 80/443
+open. A quick tunnel won't do.
 
-1. **A public HTTPS address.** Point a domain (e.g. `pms.example.com`) at the server, with ports
-   80 and 443 open. The bundled Caddy proxy gets the TLS certificate automatically.
-2. **An OIDC app at your sign-in provider**, with redirect URI
-   `https://pms.example.com/oauth/callback`. Note its client ID and secret, and the issuer:
-   - Google: `https://accounts.google.com`
-   - Microsoft Entra ID: `https://login.microsoftonline.com/<tenant-id>/v2.0`
-   - Auth0: `https://<tenant>.auth0.com`
-3. **Settings in `.env`:**
-   ```bash
-   PMS_PUBLIC_URL=https://pms.example.com
-   PMS_DOMAIN=pms.example.com
-   PMS_OIDC_ISSUER=https://accounts.google.com
-   PMS_OIDC_CLIENT_ID=...
-   PMS_OIDC_CLIENT_SECRET=...
-   PMS_ALLOWED_DOMAINS=yourhotelgroup.com   # and/or PMS_ALLOWED_EMAILS=a@x.com,b@y.com
-   PMS_MCP_SERVICE_TOKEN=$(openssl rand -hex 32)   # keeps the website working; paste the value
-   ```
-4. **Start it:** `docker compose --profile public up -d`.
-5. **Each user, in Claude:** Settings → Connectors → *Add custom connector*, URL
-   `https://pms.example.com/mcp`, then *Connect* and sign in.
+#### 1. Google sign-in (free)
+
+1. In [Google Cloud Console](https://console.cloud.google.com/), create or pick a project.
+2. **APIs & Services → OAuth consent screen**: choose *External*, fill in the app name and your email.
+   The default scopes (`openid`, `email`, `profile`) need no review. While the app is in *Testing*,
+   add each person as a **test user** (up to 100), or click *Publish app* to let any Google account
+   reach the sign-in page; your allowlist still decides who gets in.
+3. **APIs & Services → Credentials → Create credentials → OAuth client ID**, type *Web application*.
+   Under *Authorized redirect URIs* add `https://mcp.yourdomain.com/oauth/callback`. To also use
+   Google for the website's own sign-in, add `https://reports.yourdomain.com/auth/callback` too.
+4. Copy the **client ID** and **client secret**.
+
+#### 2. Cloudflare named tunnel
+
+1. Add your domain to Cloudflare (free plan), then go to **Zero Trust → Networks → Tunnels → Create
+   a tunnel** (Cloudflared) and copy its token.
+2. Under the tunnel's **Public hostnames**, add:
+   - `mcp.yourdomain.com` → `http://mcp:7070` (the MCP server; it signs people in itself)
+   - optionally `reports.yourdomain.com` → `http://web:5050` (the website, see "Share it with a
+     Cloudflare Tunnel" for protecting it)
+
+#### 3. Settings in `.env`
+
+```bash
+CLOUDFLARE_TUNNEL_TOKEN=...
+PMS_PUBLIC_URL=https://mcp.yourdomain.com
+PMS_OIDC_ISSUER=https://accounts.google.com
+PMS_OIDC_CLIENT_ID=....apps.googleusercontent.com
+PMS_OIDC_CLIENT_SECRET=...
+PMS_ALLOWED_EMAILS=you@gmail.com,colleague@gmail.com   # and/or PMS_ALLOWED_DOMAINS=yourcompany.com
+PMS_MCP_SERVICE_TOKEN=...      # openssl rand -hex 32; keeps the website's agent working
+PMS_HOTEL_ACCESS=              # optional: which hotels each person sees (see Per-hotel access)
+```
+
+#### 4. Start it
+
+```bash
+scripts/share_cloudflare.sh --named              # website and MCP server
+scripts/share_cloudflare.sh --named --mcp-only   # only the MCP server is published
+```
+
+The script checks these settings, starts the tunnel, waits until
+`https://mcp.yourdomain.com/.well-known/oauth-authorization-server` answers, and prints the connector
+address, `https://mcp.yourdomain.com/mcp`. On Windows, run `docker compose up -d` and
+`docker compose --profile tunnel up -d tunnel`, then open that address in a browser to check it.
+
+Without Cloudflare, point `mcp.yourdomain.com` at a server with ports 80 and 443 open, set
+`PMS_DOMAIN=mcp.yourdomain.com` too, and run `docker compose --profile public up -d`; the bundled
+Caddy gets the TLS certificate automatically.
+
+#### 5. Each person connects
+
+- **ChatGPT** (plans with custom connectors: Plus, Pro, Business, Enterprise, Edu): turn on
+  **Developer Mode** in settings (an admin may need to allow it on a workspace), then add a custom
+  connector with the URL `https://mcp.yourdomain.com/mcp` and **OAuth** authentication. ChatGPT
+  registers itself and opens the Google sign-in.
+- **Claude**: Settings → Connectors → *Add custom connector*, same URL, then *Connect*.
+- **Cursor, VS Code, Gemini CLI and others**: add it as a remote (HTTP) MCP server with that URL; the
+  browser sign-in opens on first use.
+
+Then ask, for example: "Using PMS Reports, compare occupancy and ADR by hotel last quarter."
 
 What users get:
-- **Tools:** all eight, in their own Claude chats.
+- **Tools:** all eight, in their own chats.
 - **Charts:** shown as images.
 - **Files:** spreadsheets, decks and reports come with a download link that works for 24 hours.
 
@@ -219,8 +263,10 @@ Security notes:
   without sign-in.
 - **Rate limits** per client IP over 5 minutes: 30 sign-in requests, 120 downloads and 600 MCP
   requests. Over the limit, clients get HTTP 429 with `Retry-After`. The website's service token
-  is exempt. Behind the bundled Caddy, the client IP comes from `X-Forwarded-For`
-  (`PMS_TRUST_PROXY=true`, set in Compose). Set `PMS_RATE_LIMIT=off` to disable.
+  is exempt. Behind Caddy or the Cloudflare tunnel, the client IP comes from `X-Forwarded-For`
+  (`PMS_TRUST_PROXY=true`, set in Compose). Hosted apps such as ChatGPT call from their own
+  servers, so many users can share one IP; if they hit the limit, set `PMS_RATE_LIMIT=off` and rely
+  on the sign-in and allowlist.
 
 ## Agent API
 
