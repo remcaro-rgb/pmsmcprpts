@@ -250,7 +250,7 @@ Details:
   Histories are append-only so the cache stays warm.
 - **Refusal fallbacks:** if Claude's safety filters decline a request, the API retries it on a
   recommended fallback model (`fallbacks: "default"`; set `PMS_SERVER_FALLBACKS=false` on
-  platforms other than the Claude API).
+  platforms other than the Claude API). Haiku models have no fallback, so it is off for them.
 - **Saved conversations:** completed turns are saved in SQLite (`PMS_CONVERSATIONS_DB`; the
   `agentdata` volume in compose): the Messages API history that continues the conversation, and
   each answer's events so the website can show it again as it was streamed. Conversations belong
@@ -442,6 +442,13 @@ question's token usage and cost. It needs only the Python standard library:
 ```bash
 python scripts/live_check.py                                 # the agent's model
 PMS_CLAUDE_MODEL=claude-sonnet-5-5 docker compose up -d agent  # then run it again to compare
+```
+
+Or let `scripts/run_live_check.sh <model>` do it: it restarts the stack on that model, runs the
+check, zips the results to `live-check-<model>.zip` and switches the agent back:
+
+```bash
+scripts/run_live_check.sh claude-haiku-5-5
 ```
 
 Measured on the sample data (14 questions; costs at list prices):

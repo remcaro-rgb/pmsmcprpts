@@ -108,7 +108,8 @@ class ChatAgent:
             "output_config": {"effort": self.settings.effort},
             "cache_control": {"type": "ephemeral"},
         }
-        if self.settings.server_fallbacks:
+        # Haiku models have no server-side refusal fallback; the parameter would be rejected.
+        if self.settings.server_fallbacks and not self.settings.model.startswith("claude-haiku"):
             params["betas"] = ["server-side-fallback-2026-07-01"]
             params["fallbacks"] = "default"
         return params
