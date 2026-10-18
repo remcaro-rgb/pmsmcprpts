@@ -59,6 +59,10 @@ def test_formats():
     assert format_value(0.9211, "percent") == "92.1%"
     assert format_value(4083708.89, "currency") == "€4,083,709"
     assert format_value(275.314, "currency") == "€275.31"
+    assert infer_kind("fully_actual", "bool", [True, False]) == "text"
+    assert format_value(True, infer_kind("fully_actual", "", [True])) == "Yes"
+    assert format_value(False, "text", "es") == "No"
+    assert format_value(True, "text", "es") == "Sí"
     assert nice_ticks(0.55, 0.93) == [0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
     assert date_labels(["2026-07-01", "2026-10-01"])[0] == ["Q3 2026", "Q4 2026"]
     assert date_labels(["2025-12-01", "2026-01-01"])[0] == ["Dec '25", "Jan '26"]

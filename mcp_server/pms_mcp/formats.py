@@ -23,6 +23,9 @@ def infer_kind(name: str, pg_type: str, values: list[Any]) -> Kind:
     if pg_type in ("date", "timestamp", "timestamptz") or (sample and all(
             isinstance(v, str) and ISO_DATE.match(v) for v in sample)):
         return "date"
+    # bool is an int subclass: show flags such as fully_actual as Yes/No, not 1/0.
+    if pg_type == "bool" or (sample and all(isinstance(v, bool) for v in sample)):
+        return "text"
     if pg_type in NUMERIC_TYPES or (sample and all(isinstance(v, (int, float)) for v in sample)):
         lname = name.lower()
         if PERCENT_NAMES.search(lname) and all(-1.5 <= v <= 1.5 for v in sample):
@@ -45,6 +48,8 @@ def format_value(value: Any, kind: Kind, lang: Lang = "en") -> str:
     """Full-precision display value (tables, tooltips, KPI tiles)."""
     if value is None:
         return "—"
+    if isinstance(value, bool):
+        return ("Sí" if value else "No") if lang == "es" else ("Yes" if value else "No")
     if kind == "percent":
         return f"{value * 100:.1f}%"
     if kind == "currency":
