@@ -7,6 +7,7 @@ import pytest
 from mcp.client import Client
 
 from pms_mcp.artifacts import ArtifactStore, safe_filename
+from pms_mcp.documents import pretty
 from pms_mcp.formats import date_labels, format_value, infer_kind, nice_ticks
 from pms_mcp.server import build_server
 
@@ -66,6 +67,12 @@ def test_formats():
     assert infer_kind("occupancy_change_pp", "numeric", [-0.0154, 0.007]) == "points"
     assert format_value(-0.0154, "points") == "-1.5 pts"
     assert format_value(0.007, "points", "es") == "+0.7 pp"
+    # Spanish column names (Spanish answers name query columns in Spanish).
+    assert infer_kind("ocupacion", "numeric", [0.904]) == "percent"
+    assert infer_kind("tasa_cancelacion", "numeric", [0.2186]) == "percent"
+    assert infer_kind("ingresos_totales", "numeric", [11127338]) == "currency"
+    assert infer_kind("var_ocupacion_pp", "numeric", [-0.0047]) == "points"
+    assert pretty("ocupacion", "es") == "Ocupación" and pretty("var_ocupacion_pp", "es") == "Var ocupación pp"
     assert nice_ticks(0.55, 0.93) == [0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
     assert date_labels(["2026-07-01", "2026-10-01"])[0] == ["Q3 2026", "Q4 2026"]
     assert date_labels(["2025-12-01", "2026-01-01"])[0] == ["Dec '25", "Jan '26"]

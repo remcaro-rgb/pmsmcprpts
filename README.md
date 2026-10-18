@@ -378,3 +378,14 @@ question's token usage and cost. It needs only the Python standard library:
 python scripts/live_check.py                                 # the agent's model
 PMS_CLAUDE_MODEL=claude-sonnet-5-5 docker compose up -d agent  # then run it again to compare
 ```
+
+Measured on the sample data (14 questions; costs at list prices):
+
+| Model | Total | Simple question | Chart / spreadsheet | Deck / report |
+|---|---|---|---|---|
+| `claude-opus-5-5` (default) | $1.57 | $0.02–0.10, 7–17 s | $0.07–0.15, 11–33 s | $0.16–0.22, 34–52 s |
+| `claude-sonnet-5-5` | $0.65 | $0.02–0.04, 6–11 s | $0.05, 8–12 s | $0.05–0.08, 13–24 s |
+
+Both answered every question with correct tables. Opus wrote more analysis (year-on-year
+comparisons and channel mix in decks without being asked); Sonnet's answers were shorter and,
+in this run, had no slips in their commentary.

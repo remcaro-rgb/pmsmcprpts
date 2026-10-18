@@ -14,8 +14,10 @@ KINDS = ("percent", "points", "currency", "integer", "decimal", "date", "text")
 
 ISO_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 POINTS_NAMES = re.compile(r"(_pts$|_pp$|_points$)")
-PERCENT_NAMES = re.compile(r"(occupancy|_rate$|^rate_pct$|_pct$|share|ratio)")
-CURRENCY_NAMES = re.compile(r"(^rate$|adr|revpar|revenue|spend|amount|price|charges?$|^total$)")
+# English and Spanish column names (Spanish answers often name query columns in Spanish).
+PERCENT_NAMES = re.compile(r"(occupancy|_rate$|^rate_pct$|_pct$|share|ratio|ocupaci|tasa|participaci|porcentaje)")
+CURRENCY_NAMES = re.compile(r"(^rate$|adr|revpar|revenue|spend|amount|price|charges?$|^total$"
+                            r"|ingreso|tarifa|gasto|monto|importe|precio)")
 INTEGER_TYPES = {"int2", "int4", "int8"}
 NUMERIC_TYPES = INTEGER_TYPES | {"numeric", "float4", "float8"}
 CURRENCY_SYMBOL = "€"

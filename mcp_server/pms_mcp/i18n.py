@@ -37,6 +37,17 @@ def fmt_date(d: date, style: str, lang: Lang = "en") -> str:
     }[style]
 
 
+# Accents restored in Spanish column names spelled out from SQL identifiers (ocupacion -> Ocupación).
+ACCENTS_ES = {
+    "ocupacion": "ocupación", "cancelacion": "cancelación",
+    "participacion": "participación", "habitacion": "habitación", "variacion": "variación",
+    "telefono": "teléfono", "anticipacion": "anticipación", "periodo": "período", "estadia": "estadía",
+    "estadias": "estadías", "dias": "días", "ultima": "última", "ultimo": "último", "categoria": "categoría",
+    "puntuacion": "puntuación", "resena": "reseña", "resenas": "reseñas", "pais": "país", "huesped": "huésped",
+    "huespedes": "huéspedes", "comision": "comisión", "promocion": "promoción",
+    "anio": "año", "trafico": "tráfico", "numero": "número",
+}
+
 # Column headers in Spanish for the database's usual result columns; others are spelled out from
 # the column name.
 COLUMNS_ES = {

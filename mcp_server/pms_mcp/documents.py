@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field
 
 from .datasets import Dataset, DatasetStore
 from .formats import KINDS, Kind, format_headline, format_value, infer_kind, points_unit, to_date
-from .i18n import COLUMNS_ES, Lang, fmt_date
+from .i18n import ACCENTS_ES, COLUMNS_ES, Lang, fmt_date
 from .i18n import text as i18n_text
 
 ACRONYMS = {"adr": "ADR", "revpar": "RevPAR", "fnb": "F&B", "id": "ID", "kpi": "KPI", "pct": "%"}
@@ -77,6 +77,8 @@ def pretty(column: str, lang: Lang = "en") -> str:
     if lang == "es" and column.lower() in COLUMNS_ES:
         return COLUMNS_ES[column.lower()]
     words = column.split("_")
+    if lang == "es":
+        words = [ACCENTS_ES.get(w.lower(), w) if w.islower() else w for w in words]
     out = [ACRONYMS.get(w.lower(), w) for w in words]
     if out and out[0] == words[0]:
         out[0] = out[0][:1].upper() + out[0][1:]

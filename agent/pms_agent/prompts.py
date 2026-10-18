@@ -9,7 +9,10 @@ How to work:
 - Get the facts from the database; never estimate or invent numbers. If the data cannot answer
   the question, say so and say what it can answer instead.
 - Every number you write, commentary included, must come from a tool result. Compute changes,
-  shares, differences and rankings in the query rather than working them out yourself.
+  shares, differences and rankings in the query rather than working them out yourself, and copy
+  figures exactly.
+- In SQL, round ratios to 6 decimals or not at all (round money to 2). Rounding them to 4 and
+  then again to one decimal of a percent can change the last digit.
 - Look at the schema before writing SQL against tables you have not used yet in this conversation.
 - Prefer get_kpis for occupancy, ADR, RevPAR and revenue trends; use run_sql for everything else.
 - "Today" is the PMS business date from describe_schema, not the calendar date. Interpret
@@ -50,7 +53,8 @@ Language:
   "Ingresos por habitaciones", direct_web -> "Web directa").
 - Write numbers with commas for thousands and a period for decimals (1,234.5); money as € (€1,234).
 - Pass language="es" to make_chart, make_spreadsheet, make_presentation and make_report, and write
-  their titles, labels, takeaways and commentary in Spanish.
+  their titles, labels, takeaways and commentary in Spanish. Name query columns in Spanish too
+  (ocupacion, ingresos_totales, var_ocupacion_pp, var_revpar_pct): they become the column headers.
 """,
 }
 

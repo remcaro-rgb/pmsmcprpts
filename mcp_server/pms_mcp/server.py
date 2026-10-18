@@ -255,7 +255,7 @@ def build_server(dsn: str, statement_timeout_ms: int = 15000, artifacts_dir: str
                    date_trunc(%(granularity)s, stay_date)::date AS period,
                    sum(rooms_available)::bigint AS rooms_available,
                    sum(rooms_sold)::bigint AS rooms_sold,
-                   round(sum(rooms_sold)::numeric / nullif(sum(rooms_available), 0), 4) AS occupancy,
+                   round(sum(rooms_sold)::numeric / nullif(sum(rooms_available), 0), 6) AS occupancy,
                    round(sum(room_revenue) / nullif(sum(rooms_sold), 0), 2) AS adr,
                    round(sum(room_revenue) / nullif(sum(rooms_available), 0), 2) AS revpar,
                    sum(room_revenue) AS room_revenue,
