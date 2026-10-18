@@ -261,16 +261,31 @@ async def test_documents_in_spanish(ctx):
 
 
 def test_pdf_columns_fit_values_and_header_words():
-    from reportlab.pdfbase.pdfmetrics import stringWidth
+    from reportlab.lib.styles import ParagraphStyle
+    from reportlab.platypus import Paragraph
 
     from pms_mcp.documents import PDF_CELL_PADDING, pdf_column_widths
 
-    headers = ["Hotel", "Habitaciones vendidas", "Ingresos por habitaciones", "Ingresos totales",
-               "Var. ocupación pp", "Var. RevPAR %", "Var. ingresos totales %", "ADR", "RevPAR", "Ocupación"]
-    rows = [["BCN", "14,833", "€4,083,709", "€11,127,338", "-1.5 pp", "1.7%", "1.0%", "€275.31", "€246.60", "89.6%"]]
+    def lines(text, width, size, bold=False):
+        style = ParagraphStyle("c", fontName="Helvetica-Bold" if bold else "Helvetica", fontSize=size)
+        p = Paragraph(text, style)
+        p.wrap(width - PDF_CELL_PADDING, 1000)
+        return len(p.blPara.lines)
+
     width = 482
-    widths, size = pdf_column_widths(headers, rows, width)
-    assert abs(sum(widths) - width) < 0.01 and size >= 6.5
-    for c, w in enumerate(widths):  # no value and no header word is split across lines
-        assert w >= stringWidth(rows[0][c], "Helvetica", size) + PDF_CELL_PADDING - 0.01
-        assert all(w >= stringWidth(x, "Helvetica-Bold", size) + PDF_CELL_PADDING - 0.01 for x in headers[c].split())
+    cases = [
+        # 10 columns: the font shrinks.
+        (["Hotel", "Habitaciones vendidas", "Ingresos por habitaciones", "Ingresos totales",
+          "Var. ocupación pp", "Var. RevPAR %", "Var. ingresos totales %", "ADR", "RevPAR", "Ocupación"],
+         ["BCN", "14,833", "€4,083,709", "€11,127,338", "-1.5 pp", "1.7%", "1.0%", "€275.31", "€246.60", "89.6%"]),
+        # 9 columns at full size, where wrapping headers take the spare width (ADR wrapped here).
+        (["Hotel", "Occupancy", "ADR", "RevPAR", "Room revenue", "F&B revenue", "Spa revenue", "Other revenue",
+          "Total revenue"],
+         ["BCN", "89.6%", "€275.31", "€246.60", "€4,083,709", "€428,281", "€244,942", "€52,981", "€4,809,913"]),
+    ]
+    for headers, row in cases:
+        widths, size = pdf_column_widths(headers, [row], width)
+        assert abs(sum(widths) - width) < 0.01 and size >= 6.5
+        for c, w in enumerate(widths):  # no value and no header word is split across lines
+            assert lines(row[c], w, size) == 1, (row[c], w)
+            assert all(lines(word, w, size, bold=True) == 1 for word in headers[c].split()), (headers[c], w)

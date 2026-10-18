@@ -55,7 +55,7 @@ async def test_text_answer():
     assert names(events) == ["text", "done"]
     assert [m["role"] for m in conv.messages] == ["user", "assistant"]
     req = client.messages.requests[0]
-    assert req["model"] == "claude-opus-5-5"
+    assert req["model"] == "claude-sonnet-5-5"
     assert req["thinking"] == {"type": "adaptive", "display": "summarized"}
     assert req["output_config"] == {"effort": "medium"}
     assert req["fallbacks"] == "default" and req["betas"] == ["server-side-fallback-2026-07-01"]
@@ -79,7 +79,7 @@ async def test_tool_round_trip():
     assert err["is_error"] is True and "Unknown hotel code" in err["result"]
     # Usage covers both requests of the turn, not just the last one.
     done = events[-1]["data"]
-    assert done["requests"] == 2 and done["model"] == "claude-opus-5-5"
+    assert done["requests"] == 2 and done["model"] == "claude-sonnet-5-5"
     assert done["usage"] == {"input_tokens": 200, "output_tokens": 40, "cache_read_input_tokens": 160,
                              "cache_creation_input_tokens": 0}
 

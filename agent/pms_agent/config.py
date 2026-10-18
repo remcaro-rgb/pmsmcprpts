@@ -12,7 +12,7 @@ class Settings:
     mcp_url: str = field(default_factory=lambda: os.environ.get("PMS_MCP_URL", "http://localhost:7070/mcp"))
     # Service token for an MCP server that requires sign-in (its PMS_MCP_SERVICE_TOKEN).
     mcp_token: str | None = field(default_factory=lambda: os.environ.get("PMS_MCP_TOKEN") or None)
-    model: str = field(default_factory=lambda: os.environ.get("PMS_CLAUDE_MODEL", "claude-opus-5-5"))
+    model: str = field(default_factory=lambda: os.environ.get("PMS_CLAUDE_MODEL", "claude-sonnet-5-5"))
     effort: str = field(default_factory=lambda: os.environ.get("PMS_CLAUDE_EFFORT", "medium"))
     max_tokens: int = field(default_factory=lambda: int(os.environ.get("PMS_CLAUDE_MAX_TOKENS", "64000")))
     max_tool_steps: int = field(default_factory=lambda: int(os.environ.get("PMS_MAX_TOOL_STEPS", "15")))
