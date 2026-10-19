@@ -6,14 +6,16 @@
 Remote sign-in (for Claude custom connectors) turns on when PMS_PUBLIC_URL is set; see the
 README for PMS_OIDC_ISSUER, PMS_OIDC_CLIENT_ID, PMS_OIDC_CLIENT_SECRET and the allowlist.
 Without it, setting PMS_MCP_SERVICE_TOKEN makes the HTTP server private to the website's agent.
-PMS_HOTEL_ACCESS limits which hotels each user sees (see pms_mcp/access.py).
+PMS_HOTEL_ACCESS limits which hotels each user sees (see pms_mcp/access.py); with
+PMS_USER_DIRECTORY=true the website's user directory decides instead, and PMS_LOCAL_USER sets
+the account stdio use acts as.
 """
 
 import argparse
 import os
 
 from .access import HotelAccess
-from .auth import AuthConfig, ServiceTokenMiddleware
+from .auth import AuthConfig, ServiceTokenMiddleware, set_local_identity
 from .ratelimit import RateLimitMiddleware
 from .server import build_server
 
@@ -40,9 +42,15 @@ def main() -> None:
     service_token = auth.service_token if auth else os.environ.get("PMS_MCP_SERVICE_TOKEN") or None
     if service_token and len(service_token) < 32:
         p.error("PMS_MCP_SERVICE_TOKEN must be at least 32 characters (openssl rand -hex 32).")
+    if access.directory and args.transport == "streamable-http" and not (auth or service_token):
+        # Without either, no request says who is asking, so every answer would be empty.
+        p.error("PMS_USER_DIRECTORY over HTTP needs PMS_MCP_SERVICE_TOKEN (the website) or PMS_PUBLIC_URL (sign-in).")
 
     server = build_server(args.dsn, args.statement_timeout_ms, auth=auth, access=access)
     if args.transport == "stdio":
+        # Local use (e.g. Claude Desktop on this machine) can act as a user-directory account.
+        if os.environ.get("PMS_LOCAL_USER"):
+            set_local_identity(os.environ["PMS_LOCAL_USER"])
         server.run("stdio")
         return
     import uvicorn

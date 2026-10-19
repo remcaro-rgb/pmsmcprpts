@@ -18,7 +18,15 @@ import { useI18n } from "./I18n";
 import Sidebar from "./Sidebar";
 import ThemeToggle from "./ThemeToggle";
 
-export default function Chat({ user = null, theme = "light" }: { user?: string | null; theme?: Theme }) {
+export default function Chat({
+  user = null,
+  isAdmin = false,
+  theme = "light",
+}: {
+  user?: string | null;
+  isAdmin?: boolean;
+  theme?: Theme;
+}) {
   const { locale, t, setLocale } = useI18n();
   const [messages, setMessages] = useState<Message[]>([]);
   const [conversationId, setConversationId] = useState<string | null>(null);
@@ -192,6 +200,14 @@ export default function Chat({ user = null, theme = "light" }: { user?: string |
           >
             {t.newChat}
           </button>
+          {isAdmin && (
+            <a
+              href="/admin"
+              className="shrink-0 whitespace-nowrap rounded-lg px-2 py-1.5 text-sm text-stone-600 hover:bg-stone-100 dark:text-stone-300 dark:hover:bg-stone-900"
+            >
+              {t.admin}
+            </a>
+          )}
           {user && (
             <form action="/auth/logout" method="post" className="flex shrink-0 items-center gap-2">
               <span className="hidden max-w-48 truncate text-xs text-stone-500 sm:inline" title={user}>{user}</span>

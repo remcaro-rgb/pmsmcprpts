@@ -65,7 +65,8 @@ python db/seed.py --reset --business-date 2026-10-17 --history-days 730 --future
 
 ## Schema
 
-Tables in schema `pms`: `hotels`, `room_types`, `rooms`, `rate_plans`, `guests`,
+Tables in schema `pms`: `hotels` (with `alojamiento_id` and `pms_id`, the hotel's IDs in other
+systems: unique whole numbers above 0), `room_types`, `rooms`, `rate_plans`, `guests`,
 `companies`, `travel_agents`, `reservations`, `reservation_nights`, `folios`,
 `folio_charges`, `payments`, `staff`, `housekeeping_tasks`, `reviews`, `system_settings`.
 
@@ -138,6 +139,10 @@ docker compose exec -T db psql -U pms -d pms < db/init/04_hotel_access.sql
 For website users to get their own hotels, the MCP server must know who they are: set
 `PMS_MCP_SERVICE_TOKEN`. With `PMS_PUBLIC_URL` unset, that makes the MCP server private to the
 website's agent (other HTTP clients get 401), and the agent passes on the signed-in user.
+
+With website user accounts (below), set `PMS_USER_DIRECTORY=true` instead of `PMS_HOTEL_ACCESS`:
+the hotels each account is assigned in the Admin page decide, administrators see every hotel, and
+anyone else (unknown, deactivated, or no signed-in user) sees no hotel data.
 
 ### Use it from Claude
 
@@ -423,6 +428,59 @@ MCP server who is asking (the service token followed by the user's email), so st
 are kept per person. The agent trusts the user the website sends it, so keep the agent port private
 (compose binds it to 127.0.0.1).
 
+### User accounts
+
+Administrators create the people who may use the site, and choose which hotels each one sees. The
+assistant never returns data from other hotels: the MCP server passes the signed-in user to
+PostgreSQL with every query, and `pms.allowed_hotel_ids()` (`db/init/05_users.sh`) looks up that
+user's hotels in the directory for the row-level security policies. Administrators see all hotels.
+The model's queries run as `pms_readonly`, which can't read the accounts (schema `app`) or change
+who it is acting for.
+
+Each account has a name, email, phone, notes, unique ID (optional, your organisation's ID; it can be
+used to sign in instead of the email) and password (10+ characters, stored as a scrypt hash), plus
+whether it is an administrator and active. Hotels have an Alojamiento ID and a PMS ID, also edited
+in the Admin page.
+
+1. In `.env` (each secret from `openssl rand -hex 32`):
+
+   ```bash
+   WEB_AUTH=password
+   WEB_SESSION_SECRET=<secret>
+   PMS_MCP_SERVICE_TOKEN=<another secret>
+   PMS_USER_DIRECTORY=true
+   PMS_APP_DATABASE_URL=postgresql://pms_app:<PMS_APP_PASSWORD>@db:5432/pms
+   ```
+
+2. `docker compose up -d --build`. A database created before accounts existed needs the script
+   once (it adds the tables, the hotel IDs and the `pms_app` login, and is safe to re-run):
+
+   ```bash
+   docker compose exec -T db bash < db/init/05_users.sh
+   ```
+
+   It sets the `pms_app` password from `PMS_APP_PASSWORD` in `.env` (default `pms_app`), which must
+   match the one in `PMS_APP_DATABASE_URL`.
+
+3. Create the first administrator (asks for the password; run again to reset it):
+
+   ```bash
+   docker compose exec agent python -m pms_agent.admin create-admin --email you@example.com --name "Your Name"
+   docker compose exec agent python -m pms_agent.admin list
+   ```
+
+4. Sign in at http://localhost:5050 and open **Admin** in the header to add users, tick their
+   hotels, deactivate or delete them, and set the hotels' IDs.
+
+Sign-in failures are limited (10 per login and 20 per browser address per 15 minutes). Admin
+rights and the active flag are checked against the database on every request, so changes apply at
+once, even to people already signed in. Administrators can't remove their own admin access or
+delete themselves, and there is always at least one active administrator. Accounts also work with
+`WEB_AUTH=oidc` (Google sign-in): the email decides the account, so no password is needed. Reseeding with `db/seed.py --reset` removes every user's hotel
+assignments (the hotels are recreated), but keeps the accounts. For
+Claude Desktop on the same machine (stdio), `PMS_LOCAL_USER=you@example.com` makes the MCP server
+act as that account.
+
 ### Develop
 
 Develop locally (with the agent running on port 7001):
@@ -447,6 +505,7 @@ PMS_DATABASE_URL=postgresql://pms_readonly:pms_readonly@localhost:5432/pms \
 pip install -r db/requirements-dev.txt -r mcp_server/requirements-dev.txt -r agent/requirements-dev.txt
 PMS_TEST_ADMIN_URL=postgresql://pms:pms@localhost:5432/postgres \
 PMS_TEST_DATABASE_URL=postgresql://pms_readonly:pms_readonly@localhost:5432/pms \
+PMS_TEST_APP_DATABASE_URL=postgresql://pms_app:pms_app@localhost:5432/pms \
 pytest
 ```
 
@@ -468,7 +527,9 @@ PMS_DATABASE_URL=postgresql://pms_readonly:pms_readonly@localhost:5432/pms npm r
 ```
 
 The browser tests start a second copy of the site with sign-in on, against a test identity
-provider (`web/e2e/fake_oidc.py`) that signs in as whatever email is typed.
+provider (`web/e2e/fake_oidc.py`) that signs in as whatever email is typed. With
+`PMS_TEST_APP_DATABASE_URL` set, a third copy runs with user accounts: an administrator creates a
+user for one hotel, and that user's answers include only that hotel.
 
 The browser tests start the stand-in agent and the production build, then check a starter
 question end to end (tool card, SQL, result table, Markdown answer), follow-up questions in one

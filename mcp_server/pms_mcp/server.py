@@ -15,7 +15,7 @@ from mcp_types import CallToolResult, ContentBlock, ImageContent, TextContent, T
 from starlette.requests import Request
 from starlette.responses import Response
 
-from .access import HotelAccess
+from .access import HotelAccess, Scope
 from .artifacts import ArtifactStore, FileInfo
 from .auth import SCOPE, AuthConfig, OIDCAuthProvider, current_user
 from .charts import ChartError, build_chart_data, chart_payload, render_png, render_svg
@@ -120,12 +120,12 @@ def build_server(dsn: str, statement_timeout_ms: int = 15000, artifacts_dir: str
     access = access or HotelAccess.from_env(os.environ)
     schema_cache: dict[str, Any] = {}  # the same for everyone: dates and relations, not hotels
 
-    def my_hotels() -> str:
-        hotels = access.hotels_for(current_user())
-        if not hotels:
+    def my_scope() -> Scope:
+        scope = access.scope(current_user())
+        if not access.directory and not scope.hotels:
             raise ToolError("Your account has no hotels assigned. Ask the administrator to add you "
                             "to PMS_HOTEL_ACCESS.")
-        return hotels
+        return scope
 
     def my_store():
         return store.scoped(current_user())
@@ -142,26 +142,30 @@ def build_server(dsn: str, statement_timeout_ms: int = 15000, artifacts_dir: str
 
     async def load_schema(with_hotels: bool = True) -> dict[str, Any]:
         """Business date, data range, the caller's hotels, and the tables and views."""
-        hotels = my_hotels()
+        scope = my_scope()
         try:
             if not schema_cache:
                 schema_cache.update(await _read_schema())
             if not with_hotels:
                 return schema_cache
             rows = await db.query(
-                "SELECT code, name, city, country, star_rating, total_rooms, currency "
-                "FROM pms.hotels ORDER BY id", hotels=hotels)
+                "SELECT code, name, city, country, star_rating, total_rooms, currency, alojamiento_id, "
+                "pms_id FROM pms.hotels ORDER BY id", hotels=scope.hotels, user=scope.user)
         except QueryError as e:
             raise ToolError(str(e)) from e
         visible = [dict(zip([c["name"] for c in rows.columns], r)) for r in rows.rows]
+        if not visible:
+            raise ToolError("Your account has no hotels assigned, or isn't active. Ask an administrator "
+                            "to assign you hotels.")
         shared = {k: v for k, v in schema_cache.items() if k != "relations"}
         return {**shared, "hotels": visible, "relations": schema_cache["relations"]}
 
     async def _read_schema() -> dict[str, Any]:
+        # Shared by every caller: dates and catalog only, read across all hotels.
         settings = await db.query(
             "SELECT business_date, data_start, (SELECT max(stay_date) FROM pms.reservation_nights) "
-            "FROM pms.system_settings")
-        relations = await db.query(SCHEMA_SQL)
+            "FROM pms.system_settings", hotels="*")
+        relations = await db.query(SCHEMA_SQL, hotels="*")
         business_date, data_start, data_end = settings.rows[0]
         return {
             "business_date": business_date,
@@ -175,7 +179,9 @@ def build_server(dsn: str, statement_timeout_ms: int = 15000, artifacts_dir: str
 
     async def run(query, params, source) -> Dataset:
         try:
-            res = await db.query(query, params, max_rows=MAX_STORED_ROWS, hotels=my_hotels())
+            scope = my_scope()
+            res = await db.query(query, params, max_rows=MAX_STORED_ROWS,
+                                 hotels=scope.hotels, user=scope.user)
         except QueryError as e:
             raise ToolError(str(e)) from e
         return my_store().put(res.columns, res.rows, res.truncated, source)

@@ -25,5 +25,8 @@ class Settings:
     # Saved conversations (SQLite file, or ":memory:").
     conversations_db: str = field(default_factory=lambda: os.environ.get(
         "PMS_CONVERSATIONS_DB", os.path.join(tempfile.gettempdir(), "pms-conversations.sqlite")))
+    # The user directory (db/init/05_users.sh), as the pms_app role. When set, the website's users
+    # sign in with these accounts, administrators manage them, and chat requires an active user.
+    app_database_url: str | None = field(default_factory=lambda: os.environ.get("PMS_APP_DATABASE_URL") or None)
     cors_origins: list[str] = field(
         default_factory=lambda: _env_list("PMS_CORS_ORIGINS", "http://localhost:5050"))

@@ -10,6 +10,8 @@ PMS_HOTEL_ACCESS lists rules separated by ";" or new lines, each `who = hotels`:
 `who` is an email address, an @domain, or * for everyone else; `hotels` is hotel codes or * for
 all. The first matching rule wins in that order: email, then domain, then *. Unset, everyone
 sees every hotel; set, anyone matching no rule sees none.
+
+With PMS_USER_DIRECTORY=true these rules are replaced by the user directory (db/init/05_users.sh).
 """
 
 import re
@@ -21,13 +23,33 @@ CODE = re.compile(r"^[A-Za-z0-9_-]{1,16}$")
 
 
 @dataclass(frozen=True)
+class Scope:
+    """What the database is told about a query's caller (see Database.query)."""
+    user: str  # user-directory email ("" outside directory mode)
+    hotels: str  # "*", "LIS,OPO" or "" for none
+
+
+@dataclass(frozen=True)
 class HotelAccess:
     rules: dict[str, str] = field(default_factory=dict)  # who -> "*" or "LIS,OPO"
     configured: bool = False
+    # PMS_USER_DIRECTORY=true: the user directory (app.users / app.user_hotels, managed in the
+    # website's admin page) decides, in the database; callers who aren't active users see nothing.
+    directory: bool = False
 
     @classmethod
     def from_env(cls, env: Mapping[str, str]) -> "HotelAccess":
-        return cls.parse(env.get("PMS_HOTEL_ACCESS", ""))
+        access = cls.parse(env.get("PMS_HOTEL_ACCESS", ""))
+        if env.get("PMS_USER_DIRECTORY", "").lower() in ("1", "true", "on", "yes"):
+            if access.configured:
+                raise ValueError("Use either PMS_USER_DIRECTORY or PMS_HOTEL_ACCESS, not both.")
+            return cls(directory=True)
+        return access
+
+    def scope(self, user: str) -> Scope:
+        if self.directory:
+            return Scope(user.strip().lower(), "")
+        return Scope("", self.hotels_for(user))
 
     @classmethod
     def parse(cls, spec: str) -> "HotelAccess":

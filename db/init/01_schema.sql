@@ -22,7 +22,9 @@ CREATE TABLE hotels (
     total_rooms  integer NOT NULL,
     currency     char(3) NOT NULL,
     timezone     text NOT NULL,
-    opened_on    date NOT NULL
+    opened_on    date NOT NULL,
+    alojamiento_id integer NOT NULL UNIQUE CHECK (alojamiento_id > 0),  -- lodging ID in external systems
+    pms_id       integer NOT NULL UNIQUE CHECK (pms_id > 0)               -- property ID in the PMS
 );
 
 CREATE TABLE room_types (

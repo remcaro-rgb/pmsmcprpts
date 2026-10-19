@@ -3,6 +3,9 @@ without an API key. Tools run for real against the PMS MCP server and database.
 
     PMS_DATABASE_URL=postgresql://pms_readonly:...@localhost:5432/pms python web/e2e/fake_agent.py --port 8101
 
+With PMS_MCP_URL (and PMS_MCP_TOKEN) set it uses that MCP server instead of one in-process;
+PMS_APP_DATABASE_URL turns on user accounts, as in the real agent.
+
 The stand-in picks a plan from keywords in the question, runs its tool steps (each step's input
 is built from earlier real results), then answers. Keywords: "refuse" -> refusal, "slow" -> a
 slowly streamed answer (to test Stop), "chart", "excel", "deck", "report" -> document flows,
@@ -221,8 +224,12 @@ def main():
     args = p.parse_args()
     client = SimpleNamespace(beta=SimpleNamespace(messages=ScriptedMessages()))
     artifacts = os.environ.get("PMS_ARTIFACTS_DIR", "/tmp/pms-artifacts-e2e")
-    app = create_app(Settings(mcp_url="unused", cors_origins=[], artifacts_dir=artifacts, conversations_db=":memory:"), client,
-                     build_server(os.environ["PMS_DATABASE_URL"], artifacts_dir=artifacts))
+    settings = Settings(cors_origins=[], artifacts_dir=artifacts, conversations_db=":memory:")
+    if os.environ.get("PMS_MCP_URL"):
+        # A separate MCP server (PMS_MCP_URL, PMS_MCP_TOKEN), e.g. with the user directory on.
+        app = create_app(settings, client)
+    else:
+        app = create_app(settings, client, build_server(os.environ["PMS_DATABASE_URL"], artifacts_dir=artifacts))
     uvicorn.run(app, host="127.0.0.1", port=args.port, log_level="warning")
 
 
