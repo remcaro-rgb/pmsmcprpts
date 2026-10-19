@@ -352,10 +352,13 @@ Website text lives in `web/lib/i18n.ts`. The agent's language instructions and m
 router or firewall. Your computer has to stay on while you share.
 
 **Quick tunnel (free, no Cloudflare account or domain).** You get a random
-`https://….trycloudflare.com` address, a new one each time it starts, protected by a site-wide
-password (`WEB_PASSWORD`, which the browser asks for):
+`https://….trycloudflare.com` address, a new one each time it starts. With user accounts on
+(`WEB_AUTH=password`, see "User accounts"), visitors sign in with their accounts and no other
+password is needed. Otherwise protect it with a site-wide password (`WEB_PASSWORD`, which the
+browser asks for):
 
 ```bash
+scripts/share_cloudflare.sh                                            # with user accounts
 scripts/share_cloudflare.sh --password admin:a-long-unique-password   # saves WEB_PASSWORD in .env
 scripts/share_cloudflare.sh --stop
 ```
@@ -376,7 +379,7 @@ docker compose --profile quicktunnel stop quicktunnel                   # stop s
 2. Copy its token into `.env` as `CLOUDFLARE_TUNNEL_TOKEN`.
 3. Under **Public hostnames**, add for example `reports.yourdomain.com` → service `http://web:5050`.
 4. Protect it with a free **Zero Trust → Access** application that allows your team's emails (up to 50
-   users), or with `WEB_PASSWORD` / `WEB_AUTH=oidc`. A fixed hostname also makes `WEB_AUTH=oidc` usable:
+   users), or with user accounts (`WEB_AUTH=password`), `WEB_AUTH=oidc` or `WEB_PASSWORD`. A fixed hostname also makes `WEB_AUTH=oidc` usable:
    set `WEB_PUBLIC_URL` to it.
 
 ```bash
@@ -386,7 +389,8 @@ scripts/share_cloudflare.sh --named            # add --access when an Access pol
 Without the script: `docker compose --profile tunnel up -d tunnel`.
 
 `WEB_PASSWORD` (`user:password`, password of 12+ characters) works for any way of sharing the
-site. Leave out `$ ' " \ #` and spaces, which `.env` treats specially. Behind a tunnel, set
+site; with user accounts on it is an extra password in front of the sign-in page, so leave it
+empty unless you want both. Leave out `$ ' " \ #` and spaces, which `.env` treats specially. Behind a tunnel, set
 `WEB_TRUST_PROXY=true` (the script does) so the message limit counts each visitor.
 
 ### Share it with ngrok
