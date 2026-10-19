@@ -34,6 +34,7 @@ DOW_RATE = [0.95, 0.97, 0.98, 1.0, 1.08, 1.12, 0.94]
 HOTELS = [
     dict(
         code="LIS", name="Tagus Riverside Hotel", city="Lisbon", country="PT", stars=4,
+        alojamiento_id=1001, pms_id=501,
         tz="Europe/Lisbon", opened_on=date(2009, 5, 1), floors=8, rooms=220, base_occ=0.80,
         room_mix=[("STD", "Standard Double", 2, 0.45, 115), ("SUP", "Superior River View", 2, 0.30, 145),
                   ("DLX", "Deluxe King", 3, 0.18, 185), ("STE", "Junior Suite", 4, 0.07, 290)],
@@ -42,6 +43,7 @@ HOTELS = [
     ),
     dict(
         code="BCN", name="Eixample Grand Hotel", city="Barcelona", country="ES", stars=5,
+        alojamiento_id=1002, pms_id=502,
         tz="Europe/Madrid", opened_on=date(2014, 3, 15), floors=9, rooms=180, base_occ=0.78,
         room_mix=[("STD", "Classic Room", 2, 0.40, 175), ("SUP", "Superior Balcony", 2, 0.30, 215),
                   ("DLX", "Deluxe Terrace", 3, 0.20, 275), ("STE", "Grand Suite", 4, 0.10, 460)],
@@ -50,6 +52,7 @@ HOTELS = [
     ),
     dict(
         code="OPO", name="Douro Plaza Hotel", city="Porto", country="PT", stars=4,
+        alojamiento_id=1003, pms_id=503,
         tz="Europe/Lisbon", opened_on=date(2017, 6, 1), floors=7, rooms=200, base_occ=0.74,
         room_mix=[("STD", "Standard Twin/Double", 2, 0.50, 95), ("SUP", "Superior City View", 2, 0.28, 120),
                   ("DLX", "Deluxe Douro View", 3, 0.16, 160), ("STE", "Wine Suite", 4, 0.06, 240)],
@@ -183,7 +186,8 @@ class Seeder:
             h["id"] = hid
             h["zone"] = ZoneInfo(h["tz"])
             self.rows["hotels"].append((hid, h["code"], h["name"], h["city"], h["country"], h["stars"],
-                                        h["rooms"], "EUR", h["tz"], h["opened_on"]))
+                                        h["rooms"], "EUR", h["tz"], h["opened_on"], h["alojamiento_id"],
+                                        h["pms_id"]))
             counts = [round(h["rooms"] * share) for _, _, _, share, _ in h["room_mix"]]
             counts[0] += h["rooms"] - sum(counts)
             h["room_types"], h["type_weights"] = [], []
@@ -488,7 +492,8 @@ class Seeder:
 
 
 COLUMNS = {
-    "hotels": "id, code, name, city, country, star_rating, total_rooms, currency, timezone, opened_on",
+    "hotels": "id, code, name, city, country, star_rating, total_rooms, currency, timezone, opened_on, "
+              "alojamiento_id, pms_id",
     "room_types": "id, hotel_id, code, name, max_occupancy, base_rate",
     "rooms": "id, hotel_id, room_type_id, number, floor, status",
     "rate_plans": "id, hotel_id, code, name, refundable, includes_breakfast, price_factor",

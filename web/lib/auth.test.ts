@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { authConfig, cookieOptions, isAllowed, safeReturnTo, seal, unseal } from "./auth";
+import { authConfig, cookieOptions, isAllowed, safeReturnTo, seal, siteOrigin, unseal } from "./auth";
 
 const ENV = {
   WEB_AUTH: "oidc",
@@ -31,6 +31,35 @@ describe("authConfig", () => {
     expect(() => authConfig({ ...ENV, WEB_SESSION_SECRET: "short" })).toThrow("at least 32");
     expect(() => authConfig({ ...ENV, PMS_ALLOWED_DOMAINS: "" })).toThrow("PMS_ALLOWED_EMAILS");
     expect(authConfig({ ...ENV, PMS_ALLOWED_DOMAINS: "", PMS_ALLOW_ANY_USER: "true" })).not.toBeNull();
+  });
+});
+
+describe("password sign-in (WEB_AUTH=password)", () => {
+  const PASSWORD = { WEB_AUTH: "password", WEB_SESSION_SECRET: "x".repeat(32) };
+
+  it("needs only a session secret; the user directory decides who may sign in", () => {
+    const c = authConfig(PASSWORD)!;
+    expect(c.mode).toBe("password");
+    expect(c.publicUrl).toBe("");
+    expect(isAllowed(c, "anyone@anywhere.example")).toBe(true);
+  });
+
+  it("rejects a short secret and unknown modes", () => {
+    expect(() => authConfig({ ...PASSWORD, WEB_SESSION_SECRET: "short" })).toThrow("at least 32");
+    expect(() => authConfig({ WEB_AUTH: "magic" })).toThrow('"oidc", "password" or empty');
+  });
+
+  it("redirects to where the site is reached, behind a tunnel or proxy too", () => {
+    const c = authConfig(PASSWORD)!;
+    const direct = new Request("http://localhost:5050/admin");
+    expect(siteOrigin(c, direct)).toBe("http://localhost:5050");
+    const tunneled = new Request("http://web:3000/admin", {
+      headers: { "x-forwarded-host": "pms.example.com", "x-forwarded-proto": "https" },
+    });
+    expect(siteOrigin(c, tunneled)).toBe("https://pms.example.com");
+    expect(cookieOptions(c, 60, siteOrigin(c, tunneled)).secure).toBe(true);
+    const fixed = authConfig({ ...PASSWORD, WEB_PUBLIC_URL: "https://reports.example.com/" })!;
+    expect(siteOrigin(fixed, tunneled)).toBe("https://reports.example.com");
   });
 });
 

@@ -2,20 +2,22 @@
 
 import json
 import re
+import time
 from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any, Literal
 
 import anthropic
-from fastapi import FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from .config import Settings
 from .conversations import ConversationStore
 from .prompts import MESSAGES
 from .loop import ChatAgent
+from .users import MIN_PASSWORD, User, UserDirectory, UserError
 
 FILE_ID = re.compile(r"^[0-9a-f]{32}$")
 
@@ -25,6 +27,60 @@ class ChatRequest(BaseModel):
     conversation_id: str | None = Field(default=None, max_length=64)
     # Website language: "es" answers in Latin American Spanish.
     language: Literal["en", "es"] = "en"
+
+
+EMAIL = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+PHONE = re.compile(r"^[0-9+()\-.\s]{3,40}$")
+
+
+class UserFields(BaseModel):
+    """Fields an administrator sets on an account; on update, only the ones sent change."""
+    name: str | None = Field(default=None, max_length=200)
+    email: str | None = Field(default=None, max_length=254)
+    phone: str | None = Field(default=None, max_length=40)
+    notes: str | None = Field(default=None, max_length=2000)
+    uniqueid: str | None = Field(default=None, max_length=100)
+    password: str | None = Field(default=None, max_length=200)
+    is_admin: bool | None = None
+    active: bool | None = None
+    hotel_ids: list[int] | None = None
+
+    @field_validator("email")
+    @classmethod
+    def _email(cls, v):
+        if v is not None and v.strip() and not EMAIL.match(v.strip()):
+            raise ValueError("Enter a valid email address.")
+        return v
+
+    @field_validator("phone")
+    @classmethod
+    def _phone(cls, v):
+        if v is not None and v.strip() and not PHONE.match(v.strip()):
+            raise ValueError("Use digits, spaces and + ( ) - . only.")
+        return v
+
+    @field_validator("password")
+    @classmethod
+    def _password(cls, v):
+        if v and len(v) < MIN_PASSWORD:
+            raise ValueError(f"Use at least {MIN_PASSWORD} characters.")
+        return v
+
+
+class NewUser(UserFields):
+    name: str = Field(min_length=1, max_length=200)
+    email: str = Field(min_length=3, max_length=254)
+    password: str = Field(min_length=MIN_PASSWORD, max_length=200)
+
+
+class HotelIds(BaseModel):
+    alojamiento_id: int | None = Field(default=None, gt=0, le=2_147_483_647)
+    pms_id: int | None = Field(default=None, gt=0, le=2_147_483_647)
+
+
+class SignIn(BaseModel):
+    login: str = Field(min_length=1, max_length=254)  # email or unique ID
+    password: str = Field(min_length=1, max_length=200)
 
 
 def _sse(event: str, data: Any) -> str:
@@ -41,10 +97,29 @@ def create_app(settings: Settings | None = None, client: Any = None, mcp_target:
     settings = settings or Settings()
     agent = ChatAgent(settings, client or anthropic.AsyncAnthropic(), mcp_target)
     store = ConversationStore(settings.conversations_db)
+    directory = UserDirectory(settings.app_database_url) if settings.app_database_url else None
+    failures: dict[str, list[float]] = {}  # sign-in failures per login, for a simple lockout
+
+    def need_directory() -> UserDirectory:
+        if directory is None:
+            raise HTTPException(404, "User accounts are not enabled (set PMS_APP_DATABASE_URL).")
+        return directory
+
+    async def admin(x_pms_user: str | None = Header(default=None)) -> User:
+        """The signed-in administrator, checked against the directory on every request."""
+        directory = need_directory()
+        email = _user(x_pms_user)
+        account = await directory.get_by_email(email) if email else None
+        if account is None or not account.active or not account.is_admin:
+            raise HTTPException(403, "Only administrators can do this.")
+        return account
+
+    def user_error(e: UserError) -> HTTPException:
+        return HTTPException(e.status, str(e))
 
     app = FastAPI(title="PMS Reports agent")
     app.add_middleware(CORSMiddleware, allow_origins=settings.cors_origins,
-                       allow_methods=["GET", "POST", "DELETE"], allow_headers=["*"])
+                       allow_methods=["GET", "POST", "PATCH", "DELETE"], allow_headers=["*"])
 
     @app.get("/api/health")
     async def health() -> dict[str, str]:
@@ -61,9 +136,76 @@ def create_app(settings: Settings | None = None, client: Any = None, mcp_target:
         return FileResponse(root / file_id, media_type=meta["mime"], filename=meta["filename"],
                             content_disposition_type="inline" if inline else "attachment")
 
+    @app.post("/api/auth/verify")
+    async def verify(body: SignIn) -> dict[str, Any]:
+        """Password sign-in for the website. At most 10 failures per login in 15 minutes."""
+        directory = need_directory()
+        key, now = body.login.strip().lower(), time.monotonic()
+        recent = [t for t in failures.get(key, []) if now - t < 900]
+        if len(recent) >= 10:
+            raise HTTPException(429, "Too many failed sign-ins. Try again in 15 minutes.")
+        account = await directory.verify(body.login, body.password)
+        if account is None:
+            failures[key] = [*recent, now]
+            raise HTTPException(401, "Wrong email or password.")
+        failures.pop(key, None)
+        return account.public()
+
+    @app.get("/api/me")
+    async def me(x_pms_user: str | None = Header(default=None)) -> dict[str, Any]:
+        """The signed-in user's account, when the user directory is on."""
+        email = _user(x_pms_user)
+        if directory is None or not email:
+            return {"directory": directory is not None, "user": None}
+        account = await directory.get_by_email(email)
+        return {"directory": True, "user": account.public() if account and account.active else None}
+
+    @app.get("/api/admin/users")
+    async def list_users(_: User = Depends(admin)) -> dict[str, Any]:
+        return {"users": [u.public() for u in await need_directory().list_users()]}
+
+    @app.post("/api/admin/users", status_code=201)
+    async def create_user(body: NewUser, _: User = Depends(admin)) -> dict[str, Any]:
+        try:
+            return (await need_directory().create(body.model_dump(exclude_none=True))).public()
+        except UserError as e:
+            raise user_error(e) from None
+
+    @app.patch("/api/admin/users/{user_id}")
+    async def update_user(user_id: int, body: UserFields, acting: User = Depends(admin)) -> dict[str, Any]:
+        try:
+            return (await need_directory().update(user_id, body.model_dump(exclude_unset=True), acting.email)).public()
+        except UserError as e:
+            raise user_error(e) from None
+
+    @app.delete("/api/admin/users/{user_id}", status_code=204)
+    async def delete_user(user_id: int, acting: User = Depends(admin)) -> None:
+        try:
+            await need_directory().delete(user_id, acting.email)
+        except UserError as e:
+            raise user_error(e) from None
+
+    @app.get("/api/admin/hotels")
+    async def list_hotels(_: User = Depends(admin)) -> dict[str, Any]:
+        return {"hotels": await need_directory().list_hotels()}
+
+    @app.patch("/api/admin/hotels/{hotel_id}")
+    async def update_hotel(hotel_id: int, body: HotelIds, _: User = Depends(admin)) -> dict[str, Any]:
+        try:
+            return await need_directory().update_hotel(hotel_id, body.model_dump(exclude_none=True))
+        except UserError as e:
+            raise user_error(e) from None
+
     @app.post("/api/chat")
     async def chat(req: ChatRequest, x_pms_user: str | None = Header(default=None)) -> StreamingResponse:
         user = _user(x_pms_user)
+        if directory is not None:
+            # With accounts on, only active users chat; the database limits them to their hotels.
+            if user is None:
+                raise HTTPException(401, MESSAGES[req.language]["sign_in"])
+            account = await directory.get_by_email(user)
+            if account is None or not account.active:
+                raise HTTPException(403, MESSAGES[req.language]["no_account"])
         try:
             conv = store.get_or_create(req.conversation_id, user)
         except LookupError:

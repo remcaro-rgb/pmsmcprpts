@@ -67,6 +67,8 @@ MESSAGES = {
         "max_steps": "Stopped after {steps} tool steps without an answer.",
         "not_found": "Conversation not found.",
         "busy": "This conversation is already answering a message.",
+        "sign_in": "Sign in to continue.",
+        "no_account": "Your account isn't active. Ask an administrator.",
     },
     "es": {
         "unreachable": "No se pudo conectar con el servicio de datos: {error}",
@@ -75,5 +77,7 @@ MESSAGES = {
         "max_steps": "Se detuvo después de {steps} pasos con herramientas sin llegar a una respuesta.",
         "not_found": "No se encontró la conversación.",
         "busy": "Esta conversación todavía está respondiendo un mensaje.",
+        "sign_in": "Inicia sesión para continuar.",
+        "no_account": "Tu cuenta no está activa. Consulta a un administrador.",
     },
 }

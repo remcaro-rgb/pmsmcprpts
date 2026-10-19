@@ -20,7 +20,7 @@ export const dynamic = "force-dynamic";
 /** The provider returns here: verify the code and ID token, check the allowlist, start a session. */
 export async function GET(req: NextRequest): Promise<Response> {
   const auth = authConfig();
-  if (!auth) return NextResponse.redirect(new URL("/", req.url));
+  if (!auth || auth.mode !== "oidc") return NextResponse.redirect(new URL("/", req.url));
   const locale = requestLocale(req);
   const t = messages(locale);
   const pending = await unseal<PendingLogin>(auth.secret, "login", req.cookies.get(LOGIN_COOKIE)?.value);
