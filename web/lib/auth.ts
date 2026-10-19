@@ -32,7 +32,8 @@ const csv = (v: string | undefined) =>
 
 /** Null when sign-in is off. Throws when it's on but misconfigured. */
 export function authConfig(env: Record<string, string | undefined> = process.env): AuthConfig | null {
-  const mode = (env.WEB_AUTH ?? "").toLowerCase();
+  // Tolerate spaces and quotes copied into .env.
+  const mode = (env.WEB_AUTH ?? "").trim().replace(/^(["'])(.*)\1$/, "$2").trim().toLowerCase();
   if (mode === "password") {
     const secret = env.WEB_SESSION_SECRET ?? "";
     if (secret.length < 32) throw new Error("WEB_SESSION_SECRET must be at least 32 characters.");
@@ -49,7 +50,7 @@ export function authConfig(env: Record<string, string | undefined> = process.env
       secret,
     };
   }
-  if (mode && mode !== "oidc") throw new Error('WEB_AUTH must be "oidc", "password" or empty.');
+  if (mode && mode !== "oidc") throw new Error(`WEB_AUTH must be "oidc", "password" or empty (it is ${JSON.stringify(env.WEB_AUTH)}).`);
   if (mode !== "oidc") return null;
   const config: AuthConfig = {
     mode: "oidc",

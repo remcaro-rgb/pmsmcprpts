@@ -46,7 +46,10 @@ describe("password sign-in (WEB_AUTH=password)", () => {
 
   it("rejects a short secret and unknown modes", () => {
     expect(() => authConfig({ ...PASSWORD, WEB_SESSION_SECRET: "short" })).toThrow("at least 32");
-    expect(() => authConfig({ WEB_AUTH: "magic" })).toThrow('"oidc", "password" or empty');
+    expect(() => authConfig({ WEB_AUTH: "magic" })).toThrow('"oidc", "password" or empty (it is "magic")');
+    for (const value of [" password ", '"password"', "'Password'"]) {
+      expect(authConfig({ ...PASSWORD, WEB_AUTH: value })?.mode).toBe("password");
+    }
   });
 
   it("redirects to where the site is reached, behind a tunnel or proxy too", () => {
