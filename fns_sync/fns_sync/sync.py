@@ -11,7 +11,7 @@ from typing import Any, Callable, Iterator
 import psycopg
 
 from . import parse, store
-from .client import AuthError, FNSClient, FNSError
+from .client import AuthError, FNSClient, FNSError, MissingRate
 from .config import Config
 
 log = logging.getLogger("fns_sync")
@@ -69,6 +69,11 @@ class Sync:
         except AuthError as e:
             entry.update(ok=False, error=str(e))
             raise
+        except MissingRate as e:
+            # The days without a rate yet are read again by the next nights' refresh.
+            entry.update(ok=False, error=str(e), optional=True)
+            log.warning("%s %s: %s", name, window, e)
+            return None
         except FNSError as e:
             entry.update(ok=False, error=str(e), optional=optional)
             log.warning("%s %s: %s", name, window, e)

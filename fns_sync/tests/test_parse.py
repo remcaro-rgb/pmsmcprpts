@@ -70,6 +70,8 @@ def test_accounting_and_reservations():
                                        "date": "2025-11-09", "rates": [{"rate_id": 0, "prices": [],
                                                                         "restrictions": {"closerate": 1}}]}]})
     assert avail[0]["available"] == 5 and rates[0]["occupancy"] == 0 and rates[0]["closed"] is True
+    # The real API's spelling.
+    assert parse.availability({"dayAvailibityRoomType": [{"roomType": 1, "date": "2025-11-09"}]})[0]
 
 
 def test_windows():
@@ -90,3 +92,21 @@ def test_settings():
     with pytest.raises(ValueError, match="time zone"):
         Config.from_env({**ENV, "FNS_TIMEZONE": "Mars/Base"})
     assert Config.from_env({**ENV, "FNS_SYNC_TIME": "04:30", "FNS_CURRENCY": "cop"}).currency == "COP"
+
+
+def test_answers_that_mean_no_data():
+    import httpx2
+
+    from fns_sync.client import AuthError, FNSClient, MissingRate
+    answers = {"/v1/reservas/bloqueos.php": (403, {"@attributes": {"error_code": "1"},
+                                                  "error": "No se han encontrado bloqueos"}),
+               "/v1/ventas/produccion.php": (422, {"mensaje": "No existe tipo de cambio en la fecha: 2026-10-22 "
+                                                              "para la moneda con id: 10"}),
+               "/v1/ventas/revenue.php": (403, {"mensaje": "Los datos de acceso no son válidos"})}
+    transport = httpx2.MockTransport(lambda r: httpx2.Response(answers[r.url.path][0], json=answers[r.url.path][1]))
+    client = FNSClient(Config.from_env(ENV), transport=transport, retries=0)
+    assert client.call("blocks", {}) is None
+    with pytest.raises(MissingRate):
+        client.call("production", {})
+    with pytest.raises(AuthError):
+        client.call("revenue", {})

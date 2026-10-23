@@ -3,6 +3,7 @@
 Every method is a POST with a JSON body (usually {"filter": {...}}) and HTTP Basic credentials."""
 
 import json
+import re
 import time
 from typing import Any
 
@@ -37,6 +38,15 @@ class AuthError(FNSError):
     """Wrong credentials, or the account may not read this hotel: stop the run."""
 
 
+class MissingRate(FNSError):
+    """FNS has no exchange rate for the requested currency on a date (usually the latest days)."""
+
+
+# Answers that mean "nothing to return" whatever their status (bloqueos.php says it with a 403).
+NO_DATA = re.compile(r"no se (han )?encontrad|sin (datos|resultados)|no hay (datos|resultados|registros)", re.I)
+MISSING_RATE = re.compile(r"no existe tipo de cambio", re.I)
+
+
 def _message(payload: Any, fallback: str) -> str:
     if isinstance(payload, dict):
         for key in ("mensaje", "error", "message"):
@@ -59,7 +69,8 @@ class FNSClient:
         self.http.close()
 
     def call(self, name: str, body: dict[str, Any]) -> Any:
-        """The decoded JSON response, or None when the API answers 404 (no data for the request)."""
+        """The decoded JSON response, or None when the API has no data for the request (404, or a
+        "No se han encontrado..." message)."""
         path = ENDPOINTS[name]
         for attempt in range(self.retries + 1):
             try:
@@ -77,8 +88,11 @@ class FNSClient:
             payload = r.json()
         except (json.JSONDecodeError, ValueError):
             payload = None
-        if r.status_code == 404:
+        message = _message(payload, "")
+        if r.status_code == 404 or (r.status_code >= 400 and NO_DATA.search(message)):
             return None
+        if MISSING_RATE.search(message):
+            raise MissingRate(f"{path}: {message} (HTTP {r.status_code})", r.status_code)
         if r.status_code in (401, 403):
             raise AuthError(f"{path}: {_message(payload, 'access denied')} (HTTP {r.status_code}). "
                             "Check FNS_USER, FNS_PASSWORD, FNS_CENTRAL_ID and FNS_ALOJAMIENTO_ID.",

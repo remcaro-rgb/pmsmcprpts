@@ -370,7 +370,9 @@ def blocks(payload: Any) -> list[dict]:
 # --- disponibilidad -------------------------------------------------------------------------------
 
 def availability(payload: Any) -> tuple[list[dict], list[dict]]:
-    days = payload.get("dayAvailabilityRoomType") if isinstance(payload, dict) else payload
+    # The API spells it "dayAvailibityRoomType"; the spec "dayAvailabilityRoomType".
+    days = next((v for k, v in payload.items() if k.lower().startswith("dayavail")), None) \
+        if isinstance(payload, dict) else payload
     avail: dict[tuple, dict] = {}
     rates: dict[tuple, dict] = {}
     for entry in values(days):
