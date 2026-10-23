@@ -86,9 +86,8 @@ class FakeFNS:
         if date.fromisoformat(f["start_date"]) >= self.today - timedelta(days=1):  # as the real API answers
             return httpx2.Response(422, json={"mensaje": f"No existe tipo de cambio en la fecha: {f['start_date']} "
                                                          f"para la moneda con id: {f['moneda_id']}"})
-        return {str(self.aloj): {"5": {"3": 1200.0, "4": 150.5, "total": 1350.5},
-                                 "6": {"3": "250.00", "total": 250.0}, "total": 1600.5},
-                "total": {"total": 1600.5}}
+        # The live API's layout: channels only, each amount in a one-element list.
+        return {"0": [100.0], "5": [1350.5], "6": ["250.00"]}
 
     def v1_custom_ventas1(self, f, body):
         # One reservation staying the two nights before today, with the nights inside the range.

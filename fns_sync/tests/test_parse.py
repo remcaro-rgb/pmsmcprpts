@@ -42,6 +42,10 @@ def test_production():
     # Without the alojamiento level, or with fewer levels than asked for.
     assert parse.production({"5": {"3": 1}}, date(2024, 9, 2), 22)[0]["channel_id"] == "5"
     assert parse.production({"22": {"1": 1500.75, "total": 1}}, date(2024, 9, 2), 22)[0]["segment_id"] == "1"
+    # What the live API returns: one level (channels), amounts in one-element lists.
+    live = parse.production({"0": [101851], "3": [745393.11], "10": [6209215.0]}, date(2026, 10, 1), 8399)
+    assert [(r["channel_id"], r["segment_id"], r["amount"]) for r in live] == [
+        ("0", "", Decimal(101851)), ("10", "", Decimal("6209215.0")), ("3", "", Decimal("745393.11"))]
     assert parse.production_cc({"22": {"2024-09-15": {"1": 1250.5}}, "410": {"2024-09-15": {"10": 9}}}, 22) == [
         {"prod_date": date(2024, 9, 15), "cc_id": "1", "amount": Decimal("1250.5")}]
 

@@ -110,6 +110,10 @@ def run_once(cfg: Config, backfill: bool | None, only: set[str] | None = None) -
 
 def status(cfg: Config) -> None:
     with _connect(cfg) as conn:
+        if not conn.execute("SELECT to_regclass('pms.fns_sync_runs')").fetchone()[0]:
+            print("No imports yet. Start the fns-sync service (COMPOSE_PROFILES=fns in .env, then "
+                  "docker compose up -d), or run one now: python -m fns_sync run")
+            return
         for run_id, code, started, finished, state, backfill, calls in store.last_runs(conn):
             failed = [c for c in calls if not c.get("ok")]
             rows = sum(c.get("rows", 0) for c in calls)

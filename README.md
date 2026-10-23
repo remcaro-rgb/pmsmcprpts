@@ -94,7 +94,7 @@ only when an administrator assigns it to them.
 | Exchange rates (`maestros/cambio`) | `fns_exchange_rates` | last 7 days |
 | Revenue report (`ventas/revenue`) | `fns_revenue_daily`: rooms, occupancy, ADR, RevPAR, arrivals, guests, cancellations; also in `v_daily_kpis` and `get_kpis` | last 7 days and the next 365 (on the books) |
 | Production by cost centre (`ventas/produccion_cc`) | `fns_production_cc` | last 7 days |
-| Production by channel and segment (`ventas/produccion`) | `fns_production` | last 7 days |
+| Production by channel (`ventas/produccion`) | `fns_production` | last 7 days |
 | Production by reservation (`custom/ventas1`) | `fns_sales_reservations`, `fns_sales_reservation_days`, `v_fns_reservation_revenue` | last 7 days and the next 90 |
 | Point-of-sale tickets (`ventas/pos`) | `fns_pos_sales` | last 7 days |
 | Payments, invoices, accounting production (`contabilidad/*`) | `fns_accounting_entries`, `fns_accounting_lines`, `fns_third_parties` | last 7 days |

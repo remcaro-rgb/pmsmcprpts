@@ -68,7 +68,7 @@ def test_first_import_calls_every_method_and_stores_it(owner):
     n = counts(owner)
     history = CFG.backfill_days + 1
     assert n["fns_revenue_daily"] == history + CFG.forward_days
-    assert n["fns_production_cc"] == 2 * history and n["fns_production"] == 3 * (history - 2)
+    assert n["fns_production_cc"] == 2 * history and n["fns_production"] == 3 * (history - 2)  # 3 channels
     assert n["fns_reservations"] == 2 and n["fns_reservation_rooms"] == 2  # active (modified) + cancelled
     assert n["fns_room_blocks"] == 1 and n["fns_third_parties"] == 1
     assert n["fns_availability"] == 2 * 41 and n["fns_rates"] == 2 * 41 * 3

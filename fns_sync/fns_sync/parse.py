@@ -166,7 +166,10 @@ def production_cc(payload: Any, alojamiento_id: int) -> list[dict]:
 
 
 def _leaves(node: Any, path: tuple = ()) -> Iterable[tuple[tuple, Decimal]]:
-    if isinstance(node, (dict, list)):
+    if isinstance(node, list):  # the API wraps amounts in lists ({"10": [6209215.0]}): not a level
+        for v in node:
+            yield from _leaves(v, path)
+    elif isinstance(node, dict):
         for k, v in items(node):
             if k.lower() != "total":
                 yield from _leaves(v, path + (k,))
@@ -177,8 +180,9 @@ def _leaves(node: Any, path: tuple = ()) -> Iterable[tuple[tuple, Decimal]]:
 
 
 def production(payload: Any, prod_date: date, alojamiento_id: int, levels: int = 2) -> list[dict]:
-    """Production of one day grouped by `levels` fields (channel, segment). The response nests by
-    alojamiento first and then by each group field; deeper levels are summed."""
+    """Production of one day grouped by `levels` fields (channel, segment). The spec nests by
+    alojamiento and then by each group field; the live API returns only the channel level, as
+    {"<canal_id>": [amount]}. Missing levels are "", deeper ones are summed."""
     leaves = list(_leaves(payload))
     if leaves and all(p and p[0] == str(alojamiento_id) for p, _ in leaves) and \
             any(len(p) > levels for p, _ in leaves):

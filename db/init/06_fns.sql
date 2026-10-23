@@ -89,7 +89,7 @@ CREATE TABLE IF NOT EXISTS fns_production (
     amount     numeric NOT NULL,
     PRIMARY KEY (hotel_id, prod_date, channel_id, segment_id)
 );
-COMMENT ON TABLE fns_production IS 'FNS production (revenue by service date, all sources: rooms, events, F&B), net of tax, per day, sales channel and market segment. Names: fns_master_items kind = ''canales'' (channel_id) and ''segmentos'' (segment_id).';
+COMMENT ON TABLE fns_production IS 'FNS production (revenue by service date, all sources: rooms, events, F&B), net of tax, per day and sales channel. The API currently gives no segment split, so segment_id is empty. Channel names: fns_master_items kind = ''canales'' (channel_id; 0 = no channel). For revenue by segment use v_fns_reservation_revenue.';
 
 -- Production per reservation and guest with a breakdown per stay day (custom/ventas1.php).
 CREATE TABLE IF NOT EXISTS fns_sales_reservations (
