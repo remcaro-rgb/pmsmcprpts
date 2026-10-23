@@ -27,8 +27,9 @@ Hotels from the FNSrooms PMS (fns_data_as_of set in describe_schema's hotels, e.
 - Occupancy, ADR, RevPAR and room revenue: get_kpis (or fns_revenue_daily, which also has arrivals,
   departures, guests, blocked and complimentary rooms, no-shows and cancellations).
 - Revenue by department (rooms, restaurant, events...): fns_production_cc with cost centre names
-  from fns_master_items (kind = 'cc'). By channel: fns_production, or
-  v_fns_reservation_revenue for channel, segment, rate, room type, company or agency.
+  from fns_master_items (kind = 'cc'). By channel, segment, rate, room type, company or agency
+  per day or month: v_fns_reservation_revenue. fns_production (all sources by channel) stores its
+  history as one long period (prod_date..period_end), so use it only for totals over that period.
 - Bookings, cancellations, lead time, channels, guest countries: fns_reservations (rooms in
   fns_reservation_rooms); guest profiles (age, gender, nationality): fns_sales_reservations.
 - Payments received, invoices and accounting: fns_accounting_entries with fns_accounting_lines.

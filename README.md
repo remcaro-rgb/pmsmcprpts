@@ -94,7 +94,7 @@ only when an administrator assigns it to them.
 | Exchange rates (`maestros/cambio`) | `fns_exchange_rates` | last 7 days |
 | Revenue report (`ventas/revenue`) | `fns_revenue_daily`: rooms, occupancy, ADR, RevPAR, arrivals, guests, cancellations; also in `v_daily_kpis` and `get_kpis` | last 7 days and the next 365 (on the books) |
 | Production by cost centre (`ventas/produccion_cc`) | `fns_production_cc` | last 7 days |
-| Production by channel (`ventas/produccion`) | `fns_production` | last 7 days |
+| Production by channel (`ventas/produccion`) | `fns_production`: the history as one period (the report has no dates), then one row per day | last 7 days, one call per day |
 | Production by reservation (`custom/ventas1`) | `fns_sales_reservations`, `fns_sales_reservation_days`, `v_fns_reservation_revenue` | last 7 days and the next 90 |
 | Point-of-sale tickets (`ventas/pos`) | `fns_pos_sales` | last 7 days |
 | Payments, invoices, accounting production (`contabilidad/*`) | `fns_accounting_entries`, `fns_accounting_lines`, `fns_third_parties` | last 7 days |
@@ -103,7 +103,9 @@ only when an administrator assigns it to them.
 | Availability and rates (`disponibilidad/consulta`) | `fns_availability`, `fns_rates` | the next 180 days |
 
 The first import loads `FNS_BACKFILL_DAYS` (365) of history instead of 7 days, the most asked-about
-data (revenue, reservations) first and the slow day-by-day production report last. Amounts are in
+data (revenue, reservations) first. Each method reads its whole range in one call, except
+reservations and blocks (the API allows 30 days per call): about 50 calls for a year. When the API
+rejects a long range or doesn't answer it in time, that range is read again in 30-day parts. Amounts are in
 the hotel's currency, net of tax. Every run is logged in `fns_sync_runs` with each call's dates, rows
 and errors; a failing call doesn't stop the others, and wrong credentials stop the run. When the API
 stops answering (3 calls in a row), the run stops and tries again `FNS_RETRY_MINUTES` (60) later,
@@ -131,8 +133,8 @@ resuming with the steps whose history isn't loaded yet; `fns_sync status` lists 
    docker compose run --rm fns-sync python -m fns_sync check
    ```
 
-3. Start it. The first import runs at once and takes a few minutes (one call per day of history
-   for the production report); after that it runs every night at `FNS_SYNC_TIME` (03:00):
+3. Start it. The first import runs at once (about 50 calls; their time depends on how fast the
+   API answers); after that it runs every night at `FNS_SYNC_TIME` (03:00):
 
    ```bash
    docker compose up -d --build

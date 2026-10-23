@@ -24,6 +24,8 @@ class FakeFNS:
         self.today = today
         self.calls: list[tuple[str, dict]] = []
         self.down: set[str] = set()  # paths that time out, as when the API stops answering
+        self.limits: dict[str, int] = {}  # path -> longest range (days) it accepts
+        self.slow: dict[str, int] = {}  # path -> longest range (days) it answers in time
 
     def transport(self) -> httpx2.MockTransport:
         return httpx2.MockTransport(self.handle)
@@ -38,6 +40,12 @@ class FakeFNS:
         path = request.url.path
         self.calls.append((path, body))
         f = body.get("filter", body)
+        if "start_date" in f:
+            days = len(list(_days(f)))
+            if days > self.slow.get(path, 10_000):
+                raise httpx2.ReadTimeout("The read operation timed out", request=request)
+            if days > self.limits.get(path, 10_000):
+                return httpx2.Response(422, json={"@attributes": {"error_code": "2"}, "error": "Period not valid"})
         if "alojamiento_id" in f and f["alojamiento_id"] not in ("", self.aloj, 0):
             return httpx2.Response(403, json={"@attributes": {"error_code": "1"},
                                               "error": "PMS not allowed to this property"})
@@ -86,7 +94,7 @@ class FakeFNS:
 
     def v1_ventas_produccion(self, f, body):
         assert body["group"] == ["canal_id", "segmento_id"]
-        if date.fromisoformat(f["start_date"]) >= self.today - timedelta(days=1):  # as the real API answers
+        if date.fromisoformat(f["end_date"]) >= self.today - timedelta(days=1):  # as the real API answers
             return httpx2.Response(422, json={"mensaje": f"No existe tipo de cambio en la fecha: {f['start_date']} "
                                                          f"para la moneda con id: {f['moneda_id']}"})
         # The live API's layout: channels only, each amount in a one-element list.

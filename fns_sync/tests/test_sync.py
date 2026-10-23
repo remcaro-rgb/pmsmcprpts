@@ -63,12 +63,29 @@ def test_first_import_calls_every_method_and_stores_it(owner):
     assert {p for p, _ in fake.calls} == set(ENDPOINTS.values())
     # Neither the master list the API refused nor the latest days without an exchange rate fail the run.
     failed = [c["window"] for c in result["calls"] if not c.get("ok")]
-    assert failed == ["usuariosGastro", (TODAY - timedelta(days=1)).isoformat(), TODAY.isoformat()]
+    assert failed == ["usuariosGastro"] + [f"{d}..{d}" for d in (TODAY - timedelta(days=1), TODAY)]
+    # One call per method for the whole history, except the API's 30-day searches and the recent
+    # days of the production report (one each, so they stay daily).
+    per_path = {}
+    for path, _ in fake.calls:
+        per_path[path] = per_path.get(path, 0) + 1
+    assert per_path == {
+        "/v1/maestros/alojamiento.php": 20, "/v1/maestros/cambio.php": 1, "/v1/ventas/revenue.php": 1,
+        "/v1/ventas/produccion_cc.php": 1, "/v1/ventas/produccion.php": 1 + CFG.refresh_days + 1,
+        "/v1/custom/ventas1.php": 1, "/v1/ventas/pos.php": 1, "/v1/contabilidad/cobros.php": 1,
+        "/v1/contabilidad/facturacion.php": 1, "/v1/contabilidad/produccion.php": 1,
+        "/v1/reservas/listado.php": 3 * 2, "/v1/reservas/bloqueos.php": 4, "/v1/disponibilidad/consulta.php": 1}
 
     n = counts(owner)
     history = CFG.backfill_days + 1
     assert n["fns_revenue_daily"] == history + CFG.forward_days
-    assert n["fns_production_cc"] == 2 * history and n["fns_production"] == 3 * (history - 2)  # 3 channels
+    assert n["fns_production_cc"] == 2 * history
+    # 3 channels: the history as one period, then the recent days with an exchange rate.
+    assert n["fns_production"] == 3 * (1 + CFG.refresh_days + 1 - 2)
+    periods = owner.execute("SELECT DISTINCT prod_date, period_end FROM pms.fns_production p JOIN pms.hotels h "
+                            "ON h.id = p.hotel_id WHERE h.alojamiento_id = %s ORDER BY 1", (ALOJ,)).fetchall()
+    assert periods[0] == (TODAY - timedelta(days=CFG.backfill_days), TODAY - timedelta(days=CFG.refresh_days + 1))
+    assert all(a == b for a, b in periods[1:])
     assert n["fns_reservations"] == 2 and n["fns_reservation_rooms"] == 2  # active (modified) + cancelled
     assert n["fns_room_blocks"] == 1 and n["fns_third_parties"] == 1
     assert n["fns_availability"] == 2 * 41 and n["fns_rates"] == 2 * 41 * 3
@@ -156,10 +173,10 @@ def test_an_interrupted_first_import_resumes(owner):
     # The API stops answering at the revenue report: the run stops after a few calls instead of
     # waiting on every remaining one, and keeps what it had loaded.
     fake = FakeFNS(ALOJ, TODAY)
-    fake.down = {"/v1/ventas/revenue.php"}
+    fake.down = {"/v1/ventas/revenue.php", "/v1/ventas/produccion_cc.php", "/v1/custom/ventas1.php"}
     first = sync(fake=fake)[0].run(owner, today=TODAY)
     assert first["status"] == "failed" and "could not reach the API" in first["calls"][-1]["error"]
-    assert [c["method"] for c in first["calls"]].count("revenue") == 3
+    assert [c["method"] for c in first["calls"]][-3:] == ["revenue", "production_cc", "sales_reservations"]
     assert "revenue" in first["pending"] and "production" in first["pending"]
     assert counts(owner)["fns_master_items"] > 0 and counts(owner)["fns_revenue_daily"] == 0
 
@@ -170,3 +187,17 @@ def test_an_interrupted_first_import_resumes(owner):
     assert counts(owner)["fns_revenue_daily"] == CFG.backfill_days + 1 + CFG.forward_days
     third = sync(fake=fake)[0].run(owner, today=TODAY)
     assert not third["backfill"] and third["pending"] == []
+
+
+def test_long_ranges_the_api_refuses_are_read_in_parts(owner):
+    fake = FakeFNS(ALOJ, TODAY)
+    fake.limits = {"/v1/ventas/revenue.php": 60}      # "Period not valid" above 60 days
+    fake.slow = {"/v1/contabilidad/cobros.php": 31}   # times out above 31 days
+    result = sync(fake=fake)[0].run(owner, today=TODAY)
+    assert result["status"] == "ok", [c for c in result["calls"] if not c.get("ok")]
+    assert counts(owner)["fns_revenue_daily"] == CFG.backfill_days + 1 + CFG.forward_days
+    revenue = [c for c in result["calls"] if c["method"] == "revenue"]
+    assert not revenue[0]["ok"] and revenue[0]["optional"] and all(c["ok"] for c in revenue[1:])
+    assert len(revenue) == 1 + 3  # the refused range, then 30-day parts
+    payments = [c for c in result["calls"] if c["method"] == "payments"]
+    assert "no answer within" in payments[0]["error"] and all(c["ok"] for c in payments[1:])
