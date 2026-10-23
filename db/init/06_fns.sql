@@ -342,6 +342,17 @@ CREATE TABLE IF NOT EXISTS fns_sync_runs (
 );
 COMMENT ON TABLE fns_sync_runs IS 'Daily FNS imports: when they ran, whether each API call succeeded and how many rows it stored.';
 
+-- Which import steps have loaded their full history, so an interrupted first import resumes
+-- where it stopped instead of starting over.
+CREATE TABLE IF NOT EXISTS fns_sync_steps (
+    hotel_id     integer NOT NULL REFERENCES hotels ON DELETE CASCADE,
+    step         text NOT NULL,
+    history_from date NOT NULL,
+    loaded_at    timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (hotel_id, step)
+);
+REVOKE ALL ON fns_sync_steps FROM pms_readonly;
+
 CREATE INDEX IF NOT EXISTS fns_reservations_arrival ON fns_reservations (hotel_id, arrival);
 CREATE INDEX IF NOT EXISTS fns_reservations_booked ON fns_reservations (hotel_id, booked_at);
 CREATE INDEX IF NOT EXISTS fns_sales_reservations_arrival ON fns_sales_reservations (hotel_id, arrival);

@@ -150,3 +150,23 @@ def test_currency(owner):
     owner.execute("DELETE FROM pms.fns_accounting_entries WHERE hotel_id = %s", (hotel_id,))
     assert store.hotel_currency(owner, hotel_id, replace(CFG, currency="COP")) == (1, "EUR")
     assert store.hotel_currency(owner, hotel_id, replace(CFG, currency="USD")) == (2, "USD")
+
+
+def test_an_interrupted_first_import_resumes(owner):
+    # The API stops answering at the revenue report: the run stops after a few calls instead of
+    # waiting on every remaining one, and keeps what it had loaded.
+    fake = FakeFNS(ALOJ, TODAY)
+    fake.down = {"/v1/ventas/revenue.php"}
+    first = sync(fake=fake)[0].run(owner, today=TODAY)
+    assert first["status"] == "failed" and "could not reach the API" in first["calls"][-1]["error"]
+    assert [c["method"] for c in first["calls"]].count("revenue") == 3
+    assert "revenue" in first["pending"] and "production" in first["pending"]
+    assert counts(owner)["fns_master_items"] > 0 and counts(owner)["fns_revenue_daily"] == 0
+
+    # The API answers again: steps already loaded refresh only the recent days; the rest load history.
+    fake.down = set()
+    second = sync(fake=fake)[0].run(owner, today=TODAY)
+    assert second["status"] == "ok" and second["pending"] == []
+    assert counts(owner)["fns_revenue_daily"] == CFG.backfill_days + 1 + CFG.forward_days
+    third = sync(fake=fake)[0].run(owner, today=TODAY)
+    assert not third["backfill"] and third["pending"] == []

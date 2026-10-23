@@ -23,11 +23,14 @@ class FakeFNS:
         self.aloj = alojamiento_id
         self.today = today
         self.calls: list[tuple[str, dict]] = []
+        self.down: set[str] = set()  # paths that time out, as when the API stops answering
 
     def transport(self) -> httpx2.MockTransport:
         return httpx2.MockTransport(self.handle)
 
     def handle(self, request: httpx2.Request) -> httpx2.Response:
+        if request.url.path in self.down:
+            raise httpx2.ConnectTimeout("The handshake operation timed out", request=request)
         expected = "Basic " + base64.b64encode(f"{USER}:{PASSWORD}".encode()).decode()
         if request.headers.get("authorization") != expected:
             return httpx2.Response(403, json={"mensaje": "Los datos de acceso no son válidos"})

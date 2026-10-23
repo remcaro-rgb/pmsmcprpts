@@ -11,7 +11,7 @@ from typing import Any, Callable, Iterator
 import psycopg
 
 from . import parse, store
-from .client import AuthError, FNSClient, FNSError, MissingRate
+from .client import AuthError, FNSClient, FNSError, MissingRate, Unreachable
 from .config import Config
 
 log = logging.getLogger("fns_sync")
@@ -25,9 +25,18 @@ CHUNK_DAYS = 30
 SALES_AHEAD_DAYS = 90
 BLOCKS_AHEAD_DAYS = 90
 AVAILABILITY_AHEAD_DAYS = 180
-# Steps of a run, in order (for `run --only`).
-STEPS = ("master", "accounting", "exchange", "revenue", "production_cc", "production", "sales_reservations", "pos",
-         "reservations", "blocks", "availability")
+# Steps of a run (for `run --only`): the most asked-about data first, the slow day-by-day report last.
+STEPS = ("master", "revenue", "production_cc", "sales_reservations", "reservations", "availability", "blocks",
+         "pos", "accounting", "exchange", "production")
+# Steps that load FNS_BACKFILL_DAYS of history the first time (then only the recent days).
+HISTORY_STEPS = ("revenue", "production_cc", "sales_reservations", "reservations", "pos", "accounting", "exchange",
+                 "production")
+# Calls in a row that may fail to connect before the run gives up (the API is down or blocking us).
+MAX_UNREACHABLE = 3
+
+
+class StopRun(Exception):
+    pass
 
 
 def windows(start: date, end: date, days: int = CHUNK_DAYS) -> Iterator[tuple[date, date]]:
@@ -48,6 +57,7 @@ class Sync:
         self.client = client or FNSClient(cfg)
         self.sleep = sleep
         self.calls: list[dict] = []
+        self.unreachable = 0
 
     # --- helpers ----------------------------------------------------------------------------------
 
@@ -65,10 +75,19 @@ class Sync:
         try:
             result = self.client.call(name, body)
             entry["ok"] = True
+            self.unreachable = 0
             return result
         except AuthError as e:
             entry.update(ok=False, error=str(e))
             raise
+        except Unreachable as e:
+            entry.update(ok=False, error=str(e))
+            log.warning("%s %s: %s", name, window, e)
+            self.unreachable += 1
+            if self.unreachable >= MAX_UNREACHABLE:
+                raise StopRun(f"the FNS API didn't answer {self.unreachable} calls in a row; stopping this run "
+                              f"(the import resumes where it stopped)") from e
+            return None
         except MissingRate as e:
             # The days without a rate yet are read again by the next nights' refresh.
             entry.update(ok=False, error=str(e), optional=True)
@@ -232,59 +251,79 @@ class Sync:
 
     def run(self, conn: psycopg.Connection, backfill: bool | None = None, today: date | None = None,
             only: set[str] | None = None) -> dict:
-        """Import everything; returns {"run_id", "status", "calls"}."""
+        """Import everything; returns {"run_id", "status", "calls", "rows", "backfill", "pending"}.
+        Each history step loads FNS_BACKFILL_DAYS until it has done so once (backfill=True: again),
+        so an interrupted first import resumes where it stopped."""
         cfg = self.cfg
         today = today or datetime.now(cfg.tz).date()
         store.ensure_schema(conn)
         hotel_id = store.ensure_hotel(conn, cfg)
-        backfill = not store.has_history(conn, hotel_id) if backfill is None else backfill
-        history = today - timedelta(days=cfg.backfill_days if backfill else cfg.refresh_days)
-        run_id = store.start_run(conn, hotel_id, backfill)
-        self.calls = []
-        log.info("FNS import for %s (alojamiento %s): %s from %s", cfg.hotel_code, cfg.alojamiento_id,
-                 "first import" if backfill else "daily refresh", history)
-        steps = [
-            ("master", lambda: self.master(conn, hotel_id)),
-            ("accounting", lambda: self.accounting(conn, hotel_id, history, today)),
-            ("currency", None),
-            ("exchange", lambda: self.exchange(conn, ctx["moneda_id"], history, today)),
-            ("revenue", lambda: self.revenue(conn, hotel_id, ctx["moneda_id"], history,
-                                             today + timedelta(days=cfg.forward_days))),
-            ("production_cc", lambda: self.production_cc(conn, hotel_id, ctx["moneda_id"], history, today)),
-            ("production", lambda: self.production(conn, hotel_id, ctx["moneda_id"], history, today, today)),
-            ("sales_reservations", lambda: self.sales_reservations(
-                conn, hotel_id, history, today + timedelta(days=SALES_AHEAD_DAYS))),
-            ("pos", lambda: self.pos(conn, hotel_id, history, today)),
-            ("reservations", lambda: self.reservations(conn, hotel_id, history, today)),
-            ("blocks", lambda: self.blocks(conn, hotel_id, min(history, today - timedelta(days=cfg.refresh_days)),
-                                           today + timedelta(days=BLOCKS_AHEAD_DAYS))),
-            ("availability", lambda: self.availability(
-                conn, hotel_id, today, today + timedelta(days=min(cfg.forward_days, AVAILABILITY_AHEAD_DAYS)))),
-        ]
+        loaded = set() if backfill else store.loaded_steps(conn, hotel_id)
+        refresh_from = today - timedelta(days=cfg.refresh_days)
+        history_from = today - timedelta(days=cfg.backfill_days)
+        wanted = [s for s in HISTORY_STEPS if not only or s in only]
+        backfilling = [s for s in wanted if s not in loaded]
+        run_id = store.start_run(conn, hotel_id, bool(backfilling))
+        self.calls, self.unreachable = [], 0
+        log.info("FNS import for %s (alojamiento %s): %s", cfg.hotel_code, cfg.alojamiento_id,
+                 f"loading history from {history_from} for {', '.join(backfilling)}" if backfilling
+                 else f"daily refresh from {refresh_from}")
+
+        def since(step: str) -> date:
+            return refresh_from if step in loaded else history_from
+
+        ahead = lambda days: today + timedelta(days=days)  # noqa: E731
         ctx: dict[str, Any] = {}
+        steps = {
+            "master": lambda: self.master(conn, hotel_id),
+            "revenue": lambda: self.revenue(conn, hotel_id, ctx["moneda_id"], since("revenue"), ahead(cfg.forward_days)),
+            "production_cc": lambda: self.production_cc(conn, hotel_id, ctx["moneda_id"], since("production_cc"), today),
+            "sales_reservations": lambda: self.sales_reservations(conn, hotel_id, since("sales_reservations"),
+                                                                  ahead(SALES_AHEAD_DAYS)),
+            "reservations": lambda: self.reservations(conn, hotel_id, since("reservations"), today),
+            "availability": lambda: self.availability(conn, hotel_id, today,
+                                                      ahead(min(cfg.forward_days, AVAILABILITY_AHEAD_DAYS))),
+            "blocks": lambda: self.blocks(conn, hotel_id, refresh_from, ahead(BLOCKS_AHEAD_DAYS)),
+            "pos": lambda: self.pos(conn, hotel_id, since("pos"), today),
+            "accounting": lambda: self.accounting(conn, hotel_id, since("accounting"), today),
+            "exchange": lambda: self.exchange(conn, ctx["moneda_id"], since("exchange"), today),
+            "production": lambda: self.production(conn, hotel_id, ctx["moneda_id"], since("production"), today, today),
+        }
+        order = list(STEPS)
+        if not cfg.moneda_id and not store.has_accounting(conn, hotel_id):
+            order.remove("accounting")  # the hotel's currency comes from the accounting entries
+            order.insert(1, "accounting")
         status = "ok"
         try:
-            for name, step in steps:
-                if name == "currency":
+            for name in order:
+                if name not in ("master", "accounting") and "moneda_id" not in ctx:  # amounts need the currency
                     ctx["moneda_id"], currency = store.hotel_currency(conn, hotel_id, cfg)
                     store.set_currency(conn, hotel_id, currency)
                     log.info("amounts in %s (FNS currency id %s)", currency, ctx["moneda_id"])
-                    continue
                 if only and name not in only:
                     continue
+                first = len(self.calls)
                 try:
-                    step()
+                    steps[name]()
                 except (psycopg.Error, ValueError, TypeError, KeyError) as e:
                     # Unexpected data the parsers or the database rejected: record, go on.
                     self.calls.append({"method": name, "ok": False, "error": f"{e.__class__.__name__}: {e}"})
                     log.exception("storing %s failed", name)
+                failed = any(not c.get("ok") and not c.get("optional") for c in self.calls[first:])
+                if name in backfilling and not failed:
+                    store.mark_loaded(conn, hotel_id, name, history_from)
+                    loaded.add(name)
+                    log.info("%s: history loaded", name)
             store.set_total_rooms(conn, hotel_id)
-        except AuthError as e:
+        except (AuthError, StopRun) as e:
             log.error("%s", e)
             status = "failed"
         if status == "ok" and any(not c.get("ok") and not c.get("optional") for c in self.calls):
             status = "partial"
         store.finish_run(conn, run_id, status, self.calls)
         rows = sum(c.get("rows", 0) for c in self.calls)
-        log.info("FNS import %s: %s calls, %s rows stored", status, len(self.calls), rows)
-        return {"run_id": run_id, "status": status, "calls": self.calls, "rows": rows, "backfill": backfill}
+        pending = [s for s in wanted if s not in loaded]
+        log.info("FNS import %s: %s calls, %s rows stored%s", status, len(self.calls), rows,
+                 f"; history still to load: {', '.join(pending)}" if pending else "")
+        return {"run_id": run_id, "status": status, "calls": self.calls, "rows": rows,
+                "backfill": bool(backfilling), "pending": pending}

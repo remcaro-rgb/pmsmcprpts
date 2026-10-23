@@ -102,9 +102,12 @@ only when an administrator assigns it to them.
 | Room blocks (`reservas/bloqueos`) | `fns_room_blocks` | last 7 days and the next 90 |
 | Availability and rates (`disponibilidad/consulta`) | `fns_availability`, `fns_rates` | the next 180 days |
 
-The first import loads `FNS_BACKFILL_DAYS` (365) of history instead of 7 days. Amounts are in the
-hotel's currency, net of tax. Every run is logged in `fns_sync_runs` with each call's dates, rows
-and errors; a failing call doesn't stop the others, and wrong credentials stop the run.
+The first import loads `FNS_BACKFILL_DAYS` (365) of history instead of 7 days, the most asked-about
+data (revenue, reservations) first and the slow day-by-day production report last. Amounts are in
+the hotel's currency, net of tax. Every run is logged in `fns_sync_runs` with each call's dates, rows
+and errors; a failing call doesn't stop the others, and wrong credentials stop the run. When the API
+stops answering (3 calls in a row), the run stops and tries again `FNS_RETRY_MINUTES` (60) later,
+resuming with the steps whose history isn't loaded yet; `fns_sync status` lists them.
 
 **Set it up** (on the computer that runs Docker; the credentials stay in its `.env`):
 

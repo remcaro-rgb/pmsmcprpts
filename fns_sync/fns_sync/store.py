@@ -89,9 +89,21 @@ def set_total_rooms(conn: psycopg.Connection, hotel_id: int) -> None:
             "AND current_date + 30), total_rooms) WHERE id = %s", (hotel_id, hotel_id))
 
 
-def has_history(conn: psycopg.Connection, hotel_id: int) -> bool:
-    return conn.execute("SELECT EXISTS (SELECT 1 FROM pms.fns_revenue_daily WHERE hotel_id = %s AND "
-                        "stay_date < current_date)", (hotel_id,)).fetchone()[0]
+def loaded_steps(conn: psycopg.Connection, hotel_id: int) -> set[str]:
+    """Import steps that have loaded their history for the hotel."""
+    return {r[0] for r in conn.execute("SELECT step FROM pms.fns_sync_steps WHERE hotel_id = %s", (hotel_id,))}
+
+
+def mark_loaded(conn: psycopg.Connection, hotel_id: int, step: str, history_from) -> None:
+    with conn.transaction():
+        conn.execute("INSERT INTO pms.fns_sync_steps (hotel_id, step, history_from) VALUES (%s, %s, %s) "
+                     "ON CONFLICT (hotel_id, step) DO UPDATE SET history_from = excluded.history_from, "
+                     "loaded_at = now()", (hotel_id, step, history_from))
+
+
+def has_accounting(conn: psycopg.Connection, hotel_id: int) -> bool:
+    return conn.execute("SELECT EXISTS (SELECT 1 FROM pms.fns_accounting_entries WHERE hotel_id = %s)",
+                        (hotel_id,)).fetchone()[0]
 
 
 def _adapt(v: Any) -> Any:

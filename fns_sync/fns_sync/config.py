@@ -51,7 +51,9 @@ class Config:
     forward_days: int = 365
     backfill_days: int = 365
     # Seconds between API calls, to be gentle with the API.
-    pause: float = 0.3
+    pause: float = 1.0
+    # After a run the API cut short, try again this many minutes later instead of the next night.
+    retry_minutes: int = 60
 
     @property
     def tz(self) -> ZoneInfo:
@@ -101,4 +103,5 @@ class Config:
             refresh_days=_int(env, "FNS_REFRESH_DAYS", 7),
             forward_days=_int(env, "FNS_FORWARD_DAYS", 365),
             backfill_days=_int(env, "FNS_BACKFILL_DAYS", 365),
+            retry_minutes=_int(env, "FNS_RETRY_MINUTES", 60),
         )
