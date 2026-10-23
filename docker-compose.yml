@@ -110,6 +110,34 @@ services:
     depends_on:
       - agent
 
+  # Daily import from the FNSrooms PMS API (FNS_* in .env; on with COMPOSE_PROFILES=fns).
+  # Run by hand: docker compose run --rm fns-sync python -m fns_sync check|run|status
+  fns-sync:
+    build: ./fns_sync
+    profiles: ["fns"]
+    environment:
+      FNS_DATABASE_URL: postgresql://${POSTGRES_USER:-pms}:${POSTGRES_PASSWORD:-pms}@db:5432/${POSTGRES_DB:-pms}
+      FNS_USER: ${FNS_USER:-}
+      FNS_PASSWORD: ${FNS_PASSWORD:-}
+      FNS_CENTRAL_ID: ${FNS_CENTRAL_ID:-}
+      FNS_ALOJAMIENTO_ID: ${FNS_ALOJAMIENTO_ID:-}
+      FNS_PMS_ID: ${FNS_PMS_ID:-}
+      FNS_HOTEL_NAME: ${FNS_HOTEL_NAME:-Fragata}
+      FNS_HOTEL_CODE: ${FNS_HOTEL_CODE:-FRA}
+      FNS_HOTEL_CITY: ${FNS_HOTEL_CITY:-}
+      FNS_HOTEL_COUNTRY: ${FNS_HOTEL_COUNTRY:-}
+      FNS_TIMEZONE: ${FNS_TIMEZONE:-Europe/Madrid}
+      FNS_MONEDA_ID: ${FNS_MONEDA_ID:-}
+      FNS_CURRENCY: ${FNS_CURRENCY:-}
+      FNS_SYNC_TIME: ${FNS_SYNC_TIME:-03:00}
+      FNS_BACKFILL_DAYS: ${FNS_BACKFILL_DAYS:-365}
+    volumes:
+      - ./db/init/06_fns.sql:/app/schema.sql:ro
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
   # Public HTTPS for the MCP server: docker compose --profile public up -d
   caddy:
     image: caddy:2.10

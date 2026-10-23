@@ -4,6 +4,7 @@ import base64
 import json
 import os
 import tempfile
+import time
 from datetime import date
 from typing import Any, Literal
 from urllib.parse import quote
@@ -30,8 +31,11 @@ Read-only access to a hotel property-management-system (PMS) database (PostgreSQ
 - Call describe_schema first to see tables, views, column meanings, hotels and the business date.
 - Use get_kpis for occupancy, ADR, RevPAR and revenue over time; use run_sql for anything else,
   preferring the v_* reporting views over re-deriving metrics from base tables.
-- Money is in EUR, net of tax. Stay dates before the business date are actuals; later dates are
-  on-the-books (future) bookings.
+- Money is in each hotel's currency (hotels.currency), net of tax. Stay dates before the business
+  date are actuals; later dates are on-the-books (future) bookings.
+- Hotels with `fns_data_as_of` set (e.g. Fragata) are imported daily from the FNSrooms PMS into the
+  fns_* tables; the sample tables (reservations, guests, folios...) have no rows for them. For them,
+  "today" is the calendar date in the hotel's time zone, and their KPIs are in get_kpis too.
 - For ratios over a period (occupancy, ADR, RevPAR) sum numerators and denominators;
   never average daily ratios.
 - Results are stored under a dataset_id; page through them with get_dataset.
@@ -63,6 +67,7 @@ ORDER BY c.relkind DESC, c.relname
 KPI_GRANULARITIES = ("day", "week", "month", "quarter", "year")
 MAX_STORED_ROWS = 50_000
 MAX_PREVIEW_ROWS = 1000
+SCHEMA_TTL_SECONDS = 600
 
 
 def _ok(payload: dict[str, Any], for_model: dict[str, Any] | None = None,
@@ -119,6 +124,7 @@ def build_server(dsn: str, statement_timeout_ms: int = 15000, artifacts_dir: str
         mcp = MCPServer("pms-reports", instructions=INSTRUCTIONS)
     access = access or HotelAccess.from_env(os.environ)
     schema_cache: dict[str, Any] = {}  # the same for everyone: dates and relations, not hotels
+    schema_read_at = [0.0]  # re-read now and then: the business date and the tables can change
 
     def my_scope() -> Scope:
         scope = access.scope(current_user())
@@ -144,20 +150,24 @@ def build_server(dsn: str, statement_timeout_ms: int = 15000, artifacts_dir: str
         """Business date, data range, the caller's hotels, and the tables and views."""
         scope = my_scope()
         try:
-            if not schema_cache:
+            if not schema_cache or time.monotonic() - schema_read_at[0] > SCHEMA_TTL_SECONDS:
                 schema_cache.update(await _read_schema())
+                schema_read_at[0] = time.monotonic()
             if not with_hotels:
                 return schema_cache
+            fns_as_of = ("(SELECT max(f.fetched_at) FROM pms.fns_revenue_daily f WHERE f.hotel_id = h.id)"
+                         if schema_cache["fns"] else "NULL::timestamptz")
             rows = await db.query(
-                "SELECT code, name, city, country, star_rating, total_rooms, currency, alojamiento_id, "
-                "pms_id FROM pms.hotels ORDER BY id", hotels=scope.hotels, user=scope.user)
+                "SELECT code, name, city, country, star_rating, total_rooms, currency, timezone, alojamiento_id, "
+                f"pms_id, {fns_as_of} AS fns_data_as_of FROM pms.hotels h ORDER BY id",
+                hotels=scope.hotels, user=scope.user)
         except QueryError as e:
             raise ToolError(str(e)) from e
         visible = [dict(zip([c["name"] for c in rows.columns], r)) for r in rows.rows]
         if not visible:
             raise ToolError("Your account has no hotels assigned, or isn't active. Ask an administrator "
                             "to assign you hotels.")
-        shared = {k: v for k, v in schema_cache.items() if k != "relations"}
+        shared = {k: v for k, v in schema_cache.items() if k not in ("relations", "fns")}
         return {**shared, "hotels": visible, "relations": schema_cache["relations"]}
 
     async def _read_schema() -> dict[str, Any]:
@@ -168,6 +178,8 @@ def build_server(dsn: str, statement_timeout_ms: int = 15000, artifacts_dir: str
         relations = await db.query(SCHEMA_SQL, hotels="*")
         business_date, data_start, data_end = settings.rows[0]
         return {
+            # The FNSrooms import's tables (db/init/06_fns.sql) exist.
+            "fns": any(name == "fns_revenue_daily" for name, *_ in relations.rows),
             "business_date": business_date,
             "data_start": data_start,
             "data_end": data_end,
@@ -233,9 +245,11 @@ def build_server(dsn: str, statement_timeout_ms: int = 15000, artifacts_dir: str
         preview_rows: int = 200,
     ) -> CallToolResult:
         """Hotel KPIs per period from v_daily_kpis, aggregated correctly: rooms available and
-        sold, occupancy (0-1), ADR, RevPAR, and room, F&B, spa, other and total revenue (EUR,
-        net of tax). Periods on or after the business date contain on-the-books business
-        (`fully_actual` is false).
+        sold, occupancy (0-1), ADR, RevPAR, and room, F&B, spa, other and total revenue (each
+        hotel's currency, net of tax). Periods on or after the business date contain on-the-books
+        business (`fully_actual` is false). Hotels imported from FNSrooms have room revenue only
+        (F&B, spa, other and total are null: use fns_production_cc). Don't combine hotels with
+        different currencies (by_hotel=false).
 
         Args:
             start: First stay date (inclusive), YYYY-MM-DD.
