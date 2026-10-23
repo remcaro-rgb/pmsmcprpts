@@ -12,7 +12,7 @@ from xml.sax.saxutils import escape
 import vl_convert
 
 from .datasets import Dataset
-from .formats import Kind, date_labels, format_tick, format_value, infer_kind, nice_ticks
+from .formats import DEFAULT_CURRENCY, Kind, date_labels, format_tick, format_value, infer_kind, nice_ticks
 from .i18n import Lang
 
 MAX_SERIES = 8
@@ -50,10 +50,15 @@ class ChartData:
     tick_labels: list[str]
     full_labels: list[str]
     series: list[tuple[str, list[float | None]]]  # (name, values aligned to categories)
+    currency: str = DEFAULT_CURRENCY  # ISO code of money values (y_kind "currency")
+
+    def fmt(self, value: Any) -> str:
+        return format_value(value, self.y_kind, currency=self.currency)
 
 
 def build_chart_data(ds: Dataset, kind: str, x: str, y: str, series: str | None, title: str,
-                     subtitle: str | None, y_format: Kind | None, lang: Lang = "en") -> ChartData:
+                     subtitle: str | None, y_format: Kind | None, lang: Lang = "en",
+                     currency: str = DEFAULT_CURRENCY) -> ChartData:
     names = [c["name"] for c in ds.columns]
     for col in (x, y, series):
         if col is not None and col not in names:
@@ -98,6 +103,7 @@ def build_chart_data(ds: Dataset, kind: str, x: str, y: str, series: str | None,
         y_kind=y_format or infer_kind(y, ds.columns[yi]["type"], y_values),
         categories=categories, tick_labels=ticks, full_labels=full,
         series=[(name, [vals.get(c) for c in categories]) for name, vals in groups.items()],
+        currency=currency,
     )
 
 
@@ -165,7 +171,7 @@ def render_svg(chart: ChartData, theme: str = "light", width: int = 800, height:
     ticks = nice_ticks(lo, hi)
     y0, y1 = ticks[0], ticks[-1]
     step = ticks[1] - ticks[0] if len(ticks) > 1 else 1
-    tick_text = [format_tick(v, chart.y_kind, step) for v in ticks]
+    tick_text = [format_tick(v, chart.y_kind, step, chart.currency) for v in ticks]
 
     # direct end labels for <= 4 line series, dropped if they would collide
     end_labels: list[tuple[float, str]] = []
@@ -181,7 +187,7 @@ def render_svg(chart: ChartData, theme: str = "light", width: int = 800, height:
         for name, vals in chart.series:
             last = next((v for v in reversed(vals) if v is not None), None)
             if last is not None:
-                label = (f"{name} " if multi else "") + format_value(last, chart.y_kind)
+                label = (f"{name} " if multi else "") + chart.fmt(last)
                 candidates.append((ys(last), label))
         ordered = sorted(y for y, _ in candidates)
         if all(b - a >= 15 for a, b in zip(ordered, ordered[1:])):
@@ -249,7 +255,7 @@ def render_svg(chart: ChartData, theme: str = "light", width: int = 800, height:
         # Value labels only where they fit over their own bar; otherwise hover/table carry them.
         room = band * 0.9 if k == 1 else bar_w + 4
         label_bars = n * k <= 16 and all(
-            _text_width(format_value(v, chart.y_kind), 10) <= room
+            _text_width(chart.fmt(v), 10) <= room
             for _, vals in chart.series for v in vals if v is not None)
         for ci, cx in enumerate(xs):
             for si, (name, vals) in enumerate(chart.series):
@@ -269,7 +275,7 @@ def render_svg(chart: ChartData, theme: str = "light", width: int = 800, height:
                 out.append(f'<path d="{d}" fill="{t["series"][si]}"/>')
                 if label_bars:
                     ty = yv - 6 if v >= 0 else yv + 14
-                    text(x + bar_w / 2, ty, format_value(v, chart.y_kind), 10, t["secondary"], "middle")
+                    text(x + bar_w / 2, ty, chart.fmt(v), 10, t["secondary"], "middle")
 
     svg = (f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {width} {height}" width="{width}" '
            f'height="{height}" font-family="{escape(FONT)}" role="img" aria-label="{escape(chart.title)}">'
@@ -299,7 +305,7 @@ def chart_payload(chart: ChartData) -> dict[str, Any]:
     hover geometry of each, and formatted values."""
     series = [
         {"name": name, "color_light": THEMES["light"]["series"][i], "color_dark": THEMES["dark"]["series"][i],
-         "values": [format_value(v, chart.y_kind) for v in vals]}
+         "values": [chart.fmt(v) for v in vals]}
         for i, (name, vals) in enumerate(chart.series)
     ]
     return {
