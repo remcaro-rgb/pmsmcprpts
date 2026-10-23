@@ -6,10 +6,13 @@
 #       Quick tunnel: no Cloudflare account or domain needed. Prints a random
 #       https://….trycloudflare.com address (a new one each time). Visitors type that user name and
 #       password. The password is saved to .env (WEB_PASSWORD), so later runs need no options.
+#       With user accounts on (WEB_AUTH=password in .env) no --password is needed: visitors sign in
+#       with their accounts.
 #
 #   scripts/share_cloudflare.sh --named
 #       Named tunnel on your own domain, with CLOUDFLARE_TUNNEL_TOKEN in .env (see README). Protect it
-#       with WEB_PASSWORD, WEB_AUTH=oidc, or a Cloudflare Access policy (then add --access).
+#       with user accounts (WEB_AUTH=password), WEB_AUTH=oidc, WEB_PASSWORD, or a Cloudflare Access
+#       policy (then add --access).
 #       With PMS_PUBLIC_URL set (e.g. https://mcp.yourdomain.com), it also checks the MCP server's
 #       sign-in settings and that the connector address answers, for ChatGPT, Claude and other
 #       apps. Add --mcp-only when the tunnel has no public hostname for the website.
@@ -76,16 +79,18 @@ if [ -n "$PASSWORD" ]; then
   env_set WEB_PASSWORD "$PASSWORD"
 fi
 web_password="$(env_get WEB_PASSWORD)"
-web_auth="$(env_get WEB_AUTH)"
+web_auth="$(env_get WEB_AUTH | tr '[:upper:]' '[:lower:]')"
 
 if [ "$MODE" = quick ]; then
   # A quick tunnel's address changes every time, so the OIDC sign-in can't be used with it.
-  [ -n "$web_password" ] || die "a quick tunnel needs a password so strangers can't spend your Claude credits:
-  scripts/share_cloudflare.sh --password admin:a-long-unique-password"
+  # User accounts (WEB_AUTH=password) work with any address.
+  [ -n "$web_password" ] || [ "$web_auth" = password ] || die "a quick tunnel needs sign-in so strangers can't spend your Claude credits:
+  turn on user accounts (WEB_AUTH=password, see README) or: scripts/share_cloudflare.sh --password admin:a-long-unique-password"
 else
   [ -n "$(env_get CLOUDFLARE_TUNNEL_TOKEN)" ] || die "set CLOUDFLARE_TUNNEL_TOKEN in .env (Zero Trust → Networks → Tunnels → your tunnel → token)"
-  if [ "$MCP_ONLY" -eq 0 ] && [ -z "$web_password" ] && [ "$web_auth" != oidc ] && [ "$ACCESS" -eq 0 ]; then
-    die "protect the site: --password user:long-password, WEB_AUTH=oidc in .env, or a Cloudflare Access policy on the hostname (then add --access)"
+  if [ "$MCP_ONLY" -eq 0 ] && [ -z "$web_password" ] && [ "$web_auth" != oidc ] && [ "$web_auth" != password ] \
+     && [ "$ACCESS" -eq 0 ]; then
+    die "protect the site: user accounts (WEB_AUTH=password) or WEB_AUTH=oidc in .env, --password user:long-password, or a Cloudflare Access policy on the hostname (then add --access)"
   fi
 fi
 
@@ -162,5 +167,8 @@ echo
 
 echo
 echo "Shared at: $url"
-echo "Visitors sign in with the user name and password in WEB_PASSWORD (user: ${web_password%%:*})."
+if [ -n "$web_password" ]; then
+  echo "Visitors first type the user name and password in WEB_PASSWORD (user: ${web_password%%:*})."
+fi
+[ "$web_auth" = password ] && echo "Visitors sign in with their user accounts."
 echo "The address changes each time the tunnel restarts. Stop sharing: scripts/share_cloudflare.sh --stop"

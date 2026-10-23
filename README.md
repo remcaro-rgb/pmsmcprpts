@@ -80,6 +80,70 @@ Reporting views (KPI definitions live in their `COMMENT`s):
 The `pms_readonly` role has `SELECT` only, read-only transactions and a 15 s statement timeout;
 the MCP server connects with it.
 
+## FNSrooms import
+
+`fns_sync/` imports a real hotel (Fragata) from the [FNSrooms PMS API](https://ms.fnsmanager.com/api-doc/pms/)
+every night, and the assistant answers questions about it next to the sample hotels. It calls all
+13 read methods of the API and stores their data in `fns_*` tables (`db/init/06_fns.sql`, every
+column documented in the database), with the same per-hotel access as the rest: users see Fragata
+only when an administrator assigns it to them.
+
+| FNS method | Stored in | Each night |
+|---|---|---|
+| Master data (`maestros/alojamiento`) | `fns_master_items`: room types, cost centres, offers, channels, segments, agencies, outlets... | all lists |
+| Exchange rates (`maestros/cambio`) | `fns_exchange_rates` | last 7 days |
+| Revenue report (`ventas/revenue`) | `fns_revenue_daily`: rooms, occupancy, ADR, RevPAR, arrivals, guests, cancellations; also in `v_daily_kpis` and `get_kpis` | last 7 days and the next 365 (on the books) |
+| Production by cost centre (`ventas/produccion_cc`) | `fns_production_cc` | last 7 days |
+| Production by channel and segment (`ventas/produccion`) | `fns_production` | last 7 days |
+| Production by reservation (`custom/ventas1`) | `fns_sales_reservations`, `fns_sales_reservation_days`, `v_fns_reservation_revenue` | last 7 days and the next 90 |
+| Point-of-sale tickets (`ventas/pos`) | `fns_pos_sales` | last 7 days |
+| Payments, invoices, accounting production (`contabilidad/*`) | `fns_accounting_entries`, `fns_accounting_lines`, `fns_third_parties` | last 7 days |
+| Reservations (`reservas/listado`) | `fns_reservations`, `fns_reservation_rooms` | created in the last 7 days (all, cancelled and modified) |
+| Room blocks (`reservas/bloqueos`) | `fns_room_blocks` | last 7 days and the next 90 |
+| Availability and rates (`disponibilidad/consulta`) | `fns_availability`, `fns_rates` | the next 180 days |
+
+The first import loads `FNS_BACKFILL_DAYS` (365) of history instead of 7 days. Amounts are in the
+hotel's currency, net of tax. Every run is logged in `fns_sync_runs` with each call's dates, rows
+and errors; a failing call doesn't stop the others, and wrong credentials stop the run.
+
+**Set it up** (on the computer that runs Docker; the credentials stay in its `.env`):
+
+1. Add the credentials FNSrooms gave you to `.env`, plus the hotel's time zone and currency if
+   you know them, and turn the service on:
+
+   ```bash
+   FNS_USER=...
+   FNS_PASSWORD=...
+   FNS_CENTRAL_ID=...
+   FNS_ALOJAMIENTO_ID=...
+   FNS_TIMEZONE=America/Bogota      # the hotel's time zone
+   FNS_CURRENCY=COP                 # optional; otherwise taken from the accounting data
+   COMPOSE_PROFILES=fns
+   ```
+
+2. Check that the API answers (it calls each method once for yesterday and today and shows only
+   the structure of the answers, no guest data):
+
+   ```bash
+   docker compose run --rm fns-sync python -m fns_sync check
+   ```
+
+3. Start it. The first import runs at once and takes a few minutes (one call per day of history
+   for the production report); after that it runs every night at `FNS_SYNC_TIME` (03:00):
+
+   ```bash
+   docker compose up -d --build
+   docker compose logs -f fns-sync                                   # follow the first import
+   docker compose run --rm fns-sync python -m fns_sync status        # the last imports
+   ```
+
+4. In the website's **Admin** page, tick Fragata (code `FRA`) for the users who should see it.
+
+To import again now: `docker compose run --rm fns-sync python -m fns_sync run` (`--backfill` reloads
+the history; `--only revenue,reservations` limits the steps). Don't reseed the sample data with
+`db/seed.py --reset` afterwards: it empties all hotels, Fragata included (the next import reloads
+it).
+
 ## MCP server
 
 `mcp_server/` is an [MCP](https://modelcontextprotocol.io) server that gives an LLM read-only
@@ -352,10 +416,13 @@ Website text lives in `web/lib/i18n.ts`. The agent's language instructions and m
 router or firewall. Your computer has to stay on while you share.
 
 **Quick tunnel (free, no Cloudflare account or domain).** You get a random
-`https://….trycloudflare.com` address, a new one each time it starts, protected by a site-wide
-password (`WEB_PASSWORD`, which the browser asks for):
+`https://….trycloudflare.com` address, a new one each time it starts. With user accounts on
+(`WEB_AUTH=password`, see "User accounts"), visitors sign in with their accounts and no other
+password is needed. Otherwise protect it with a site-wide password (`WEB_PASSWORD`, which the
+browser asks for):
 
 ```bash
+scripts/share_cloudflare.sh                                            # with user accounts
 scripts/share_cloudflare.sh --password admin:a-long-unique-password   # saves WEB_PASSWORD in .env
 scripts/share_cloudflare.sh --stop
 ```
@@ -376,7 +443,7 @@ docker compose --profile quicktunnel stop quicktunnel                   # stop s
 2. Copy its token into `.env` as `CLOUDFLARE_TUNNEL_TOKEN`.
 3. Under **Public hostnames**, add for example `reports.yourdomain.com` → service `http://web:5050`.
 4. Protect it with a free **Zero Trust → Access** application that allows your team's emails (up to 50
-   users), or with `WEB_PASSWORD` / `WEB_AUTH=oidc`. A fixed hostname also makes `WEB_AUTH=oidc` usable:
+   users), or with user accounts (`WEB_AUTH=password`), `WEB_AUTH=oidc` or `WEB_PASSWORD`. A fixed hostname also makes `WEB_AUTH=oidc` usable:
    set `WEB_PUBLIC_URL` to it.
 
 ```bash
@@ -386,7 +453,8 @@ scripts/share_cloudflare.sh --named            # add --access when an Access pol
 Without the script: `docker compose --profile tunnel up -d tunnel`.
 
 `WEB_PASSWORD` (`user:password`, password of 12+ characters) works for any way of sharing the
-site. Leave out `$ ' " \ #` and spaces, which `.env` treats specially. Behind a tunnel, set
+site; with user accounts on it is an extra password in front of the sign-in page, so leave it
+empty unless you want both. Leave out `$ ' " \ #` and spaces, which `.env` treats specially. Behind a tunnel, set
 `WEB_TRUST_PROXY=true` (the script does) so the message limit counts each visitor.
 
 ### Share it with ngrok
@@ -502,7 +570,8 @@ PMS_DATABASE_URL=postgresql://pms_readonly:pms_readonly@localhost:5432/pms \
 ## Tests
 
 ```bash
-pip install -r db/requirements-dev.txt -r mcp_server/requirements-dev.txt -r agent/requirements-dev.txt
+pip install -r db/requirements-dev.txt -r mcp_server/requirements-dev.txt -r agent/requirements-dev.txt \
+  -r fns_sync/requirements-dev.txt
 PMS_TEST_ADMIN_URL=postgresql://pms:pms@localhost:5432/postgres \
 PMS_TEST_DATABASE_URL=postgresql://pms_readonly:pms_readonly@localhost:5432/pms \
 PMS_TEST_APP_DATABASE_URL=postgresql://pms_app:pms_app@localhost:5432/pms \
@@ -516,6 +585,9 @@ pytest
   to check their contents.
 - `agent/tests` drive the tool loop and the SSE endpoint with a scripted fake Claude client
   (no API key needed) against real in-process MCP servers.
+- `fns_sync/tests` run a full FNS import against a stand-in for the API built from its OpenAPI
+  spec (`fns_sync/tests/fake_fns.py`) and check what is stored, per-hotel access and that the
+  assistant's tools see the hotel.
 
 Website:
 
