@@ -1,6 +1,8 @@
 """One import run: call every FNS method for the configured hotel and store the results.
 
-Each method's data is saved in its own transaction, so one failing call doesn't lose the others;
+Each method asks for its whole date range in one call (reservations and blocks: 30 days, the API's
+limit); when the API rejects a long range or is too slow with it, that range is read again in 30-day
+parts. Each answer is saved in its own transaction, so one failing call doesn't lose the others;
 the run is recorded in pms.fns_sync_runs with every call's window, row count and error."""
 
 import logging
@@ -11,7 +13,7 @@ from typing import Any, Callable, Iterator
 import psycopg
 
 from . import parse, store
-from .client import AuthError, FNSClient, FNSError, MissingRate
+from .client import AuthError, FNSClient, FNSError, MissingRate, TooSlow, Unreachable
 from .config import Config
 
 log = logging.getLogger("fns_sync")
@@ -20,14 +22,23 @@ MASTER_KINDS = ("th", "th_completo", "habitaciones", "cc", "ofertas", "canales",
                 "agencias", "agentes", "empresas", "paises", "usuarios", "sucursales", "salones", "pv",
                 "servicios", "usuariosGastro", "alojamientos", "clientes")
 RESERVATION_STATES = ("Todas", "canceladas", "modificadas")
-# FNS limits reservation and block searches to 30 days; other methods are chunked by month too.
+# FNS limits reservation and block searches to 30 days; other ranges fall back to this size.
 CHUNK_DAYS = 30
 SALES_AHEAD_DAYS = 90
 BLOCKS_AHEAD_DAYS = 90
 AVAILABILITY_AHEAD_DAYS = 180
-# Steps of a run, in order (for `run --only`).
-STEPS = ("master", "accounting", "exchange", "revenue", "production_cc", "production", "sales_reservations", "pos",
-         "reservations", "blocks", "availability")
+# Steps of a run (for `run --only`): the most asked-about data first, the slow day-by-day report last.
+STEPS = ("master", "revenue", "production_cc", "sales_reservations", "reservations", "availability", "blocks",
+         "pos", "accounting", "exchange", "production")
+# Steps that load FNS_BACKFILL_DAYS of history the first time (then only the recent days).
+HISTORY_STEPS = ("revenue", "production_cc", "sales_reservations", "reservations", "pos", "accounting", "exchange",
+                 "production")
+# Calls in a row that may fail to connect before the run gives up (the API is down or blocking us).
+MAX_UNREACHABLE = 3
+
+
+class StopRun(Exception):
+    pass
 
 
 def windows(start: date, end: date, days: int = CHUNK_DAYS) -> Iterator[tuple[date, date]]:
@@ -48,6 +59,7 @@ class Sync:
         self.client = client or FNSClient(cfg)
         self.sleep = sleep
         self.calls: list[dict] = []
+        self.unreachable = 0
 
     # --- helpers ----------------------------------------------------------------------------------
 
@@ -65,17 +77,26 @@ class Sync:
         try:
             result = self.client.call(name, body)
             entry["ok"] = True
+            self.unreachable = 0
             return result
         except AuthError as e:
             entry.update(ok=False, error=str(e))
             raise
+        except Unreachable as e:
+            entry.update(ok=False, error=str(e))
+            log.warning("%s %s: %s", name, window, e)
+            self.unreachable += 1
+            if self.unreachable >= MAX_UNREACHABLE:
+                raise StopRun(f"the FNS API didn't answer {self.unreachable} calls in a row; stopping this run "
+                              f"(the import resumes where it stopped)") from e
+            return None
         except MissingRate as e:
             # The days without a rate yet are read again by the next nights' refresh.
-            entry.update(ok=False, error=str(e), optional=True)
+            entry.update(ok=False, error=str(e), optional=True, split=True)
             log.warning("%s %s: %s", name, window, e)
             return None
-        except FNSError as e:
-            entry.update(ok=False, error=str(e), optional=optional)
+        except (TooSlow, FNSError) as e:
+            entry.update(ok=False, error=str(e), optional=optional, split=True)
             log.warning("%s %s: %s", name, window, e)
             return None
         finally:
@@ -85,6 +106,24 @@ class Sync:
 
     def _stored(self, rows: int) -> None:
         self.calls[-1]["rows"] = self.calls[-1].get("rows", 0) + rows
+
+    def _ranged(self, name: str, body: Callable[[date, date], dict], start: date, end: date, label: str = "",
+                optional: bool = False, max_days: int | None = None) -> Iterator[tuple[date, date, Any]]:
+        """(from, to, answer) for start..end, in one call or in `max_days` parts. A long call the API
+        rejects or is too slow with is made again in CHUNK_DAYS parts. Answers may be None (no data)."""
+        span = max_days or max((end - start).days + 1, 1)
+        for a, b in windows(start, end, span):
+            payload = self._call(name, body(a, b), f"{label}{a}..{b}", optional)
+            entry = self.calls[-1]
+            if entry.get("ok"):
+                yield a, b, payload
+            elif entry.get("split") and (b - a).days >= CHUNK_DAYS:
+                entry["optional"] = True  # replaced by the shorter calls below
+                log.info("%s: reading %s..%s in %s-day parts instead", name, a, b, CHUNK_DAYS)
+                for c, d in windows(a, b):
+                    payload = self._call(name, body(c, d), f"{label}{c}..{d}", optional)
+                    if self.calls[-1].get("ok"):
+                        yield c, d, payload
 
     # --- the methods ------------------------------------------------------------------------------
 
@@ -99,9 +138,9 @@ class Sync:
     def accounting(self, conn, hotel_id: int, start: date, end: date) -> None:
         for name, book in (("payments", "payments"), ("invoices", "invoices"),
                            ("accounting_production", "production")):
-            for a, b in windows(start, end):
-                payload = self._call(name, {"filter": self._filter(
-                    alojamiento_id=self.cfg.alojamiento_id, start_date=iso(a), end_date=iso(b))}, f"{a}..{b}")
+            body = lambda a, b: {"filter": self._filter(  # noqa: E731
+                alojamiento_id=self.cfg.alojamiento_id, start_date=iso(a), end_date=iso(b))}
+            for a, b, payload in self._ranged(name, body, start, end):
                 if payload is None:
                     continue
                 entries, lines, parties = parse.accounting(payload, book)
@@ -117,53 +156,58 @@ class Sync:
         for target in self.cfg.exchange_to:
             if target == moneda_id:
                 continue
-            for a, b in windows(start, end):
-                payload = self._call("exchange", self._filter(
-                    central_id=self.cfg.central_id, start_date=iso(a), end_date=iso(b),
-                    moneda_src_id=moneda_id, moneda_dst_id=target), f"{moneda_id}->{target} {a}..{b}", optional=True)
+            body = lambda a, b: self._filter(  # noqa: E731
+                central_id=self.cfg.central_id, start_date=iso(a), end_date=iso(b),
+                moneda_src_id=moneda_id, moneda_dst_id=target)
+            for a, b, payload in self._ranged("exchange", body, start, end, f"{moneda_id}->{target} ", optional=True):
                 if payload is not None:
                     self._stored(store.save(conn, "fns_exchange_rates", None, parse.exchange(payload, moneda_id, target),
                                             ("rate_date", "from_moneda_id", "to_moneda_id")))
 
     def revenue(self, conn, hotel_id: int, moneda_id: int, start: date, end: date) -> None:
-        for a, b in windows(start, end):
-            payload = self._call("revenue", {"filter": self._filter(
-                alojamiento_id=self.cfg.alojamiento_id, central_id="", start_date=iso(a), end_date=iso(b),
-                moneda_id=moneda_id, impuesto=0)}, f"{a}..{b}")
+        body = lambda a, b: {"filter": self._filter(  # noqa: E731
+            alojamiento_id=self.cfg.alojamiento_id, central_id="", start_date=iso(a), end_date=iso(b),
+            moneda_id=moneda_id, impuesto=0)}
+        for a, b, payload in self._ranged("revenue", body, start, end):
             if payload is not None:
                 rows = [{**r, "fetched_at": datetime.now().astimezone()} for r in parse.revenue(payload)]
                 self._stored(store.save(conn, "fns_revenue_daily", hotel_id, rows, ("hotel_id", "stay_date")))
 
     def production_cc(self, conn, hotel_id: int, moneda_id: int, start: date, end: date) -> None:
-        for a, b in windows(start, end):
-            payload = self._call("production_cc", {"filter": self._filter(
-                alojamiento_id=self.cfg.alojamiento_id, central_id=self.cfg.central_id, start_date=iso(a),
-                end_date=iso(b), moneda_id=moneda_id, impuesto=0)}, f"{a}..{b}")
-            if payload is not None or self.calls[-1].get("ok"):
-                self._stored(store.save(conn, "fns_production_cc", hotel_id,
-                                        parse.production_cc(payload, self.cfg.alojamiento_id),
-                                        ("hotel_id", "prod_date", "cc_id"),
-                                        delete=("prod_date BETWEEN %s AND %s", (a, b))))
+        body = lambda a, b: {"filter": self._filter(  # noqa: E731
+            alojamiento_id=self.cfg.alojamiento_id, central_id=self.cfg.central_id, start_date=iso(a),
+            end_date=iso(b), moneda_id=moneda_id, impuesto=0)}
+        for a, b, payload in self._ranged("production_cc", body, start, end):
+            self._stored(store.save(conn, "fns_production_cc", hotel_id,
+                                    parse.production_cc(payload, self.cfg.alojamiento_id),
+                                    ("hotel_id", "prod_date", "cc_id"),
+                                    delete=("prod_date BETWEEN %s AND %s", (a, b))))
 
     def production(self, conn, hotel_id: int, moneda_id: int, start: date, end: date, today: date) -> None:
-        # One call per day: the report groups by channel and segment but not by date.
-        d = start
-        while d <= end:
-            payload = self._call("production", {"filter": self._filter(
-                alojamiento_id=self.cfg.alojamiento_id, central_id=self.cfg.central_id, start_date=iso(d),
-                end_date=iso(d), moneda_id=moneda_id, impuesto=0, fecha_simulacion=iso(today), fuente="",
-                total=0), "group": ["canal_id", "segmento_id"]}, iso(d))
-            if payload is not None or self.calls[-1].get("ok"):
-                self._stored(store.save(conn, "fns_production", hotel_id,
-                                        parse.production(payload, d, self.cfg.alojamiento_id),
-                                        ("hotel_id", "prod_date", "channel_id", "segment_id"),
-                                        delete=("prod_date = %s", (d,))))
-            d += timedelta(days=1)
+        """The report groups by channel but has no dates, so a range gives one total per channel for
+        it. The history before the refresh window is one call (stored as one period); the recent
+        days are one call each, so they stay daily."""
+        body = lambda a, b: {"filter": self._filter(  # noqa: E731
+            alojamiento_id=self.cfg.alojamiento_id, central_id=self.cfg.central_id, start_date=iso(a),
+            end_date=iso(b), moneda_id=moneda_id, impuesto=0, fecha_simulacion=iso(today), fuente="",
+            total=0), "group": ["canal_id", "segmento_id"]}
+
+        def save(payload, a: date, b: date) -> None:
+            rows = [{**r, "period_end": b} for r in parse.production(payload, a, self.cfg.alojamiento_id)]
+            self._stored(store.save(conn, "fns_production", hotel_id, rows,
+                                    ("hotel_id", "prod_date", "channel_id", "segment_id"),
+                                    delete=("prod_date BETWEEN %s AND %s", (a, b))))
+
+        daily_from = max(start, today - timedelta(days=self.cfg.refresh_days))
+        for a, b, payload in self._ranged("production", body, start, daily_from - timedelta(days=1)):
+            save(payload, a, b)
+        for d, _, payload in self._ranged("production", body, daily_from, end, max_days=1):
+            save(payload, d, d)
 
     def sales_reservations(self, conn, hotel_id: int, start: date, end: date) -> None:
-        for a, b in windows(start, end):
-            payload = self._call("sales_reservations", {"filter": self._filter(
-                alojamiento_id=self.cfg.alojamiento_id, start_date=iso(a), end_date=iso(b))}, f"{a}..{b}")
+        body = lambda a, b: {"filter": self._filter(  # noqa: E731
+            alojamiento_id=self.cfg.alojamiento_id, start_date=iso(a), end_date=iso(b))}
+        for a, b, payload in self._ranged("sales_reservations", body, start, end):
             if payload is None:
                 continue
             reservations, days = parse.sales_reservations(payload)
@@ -176,23 +220,23 @@ class Sync:
             self._stored(n)
 
     def pos(self, conn, hotel_id: int, start: date, end: date) -> None:
-        for a, b in windows(start, end):
-            payload = self._call("pos", {"filter": self._filter(
-                central_id=self.cfg.central_id, alojamiento_id=self.cfg.alojamiento_id, start_date=iso(a),
-                end_date=iso(b), tipo=0)}, f"{a}..{b}")
-            if payload is not None or self.calls[-1].get("ok"):
-                self._stored(store.save(conn, "fns_pos_sales", hotel_id, parse.pos(payload),
-                                        ("hotel_id", "pos_id", "sale_date", "recipe_id"),
-                                        delete=("sale_date BETWEEN %s AND %s", (a, b))))
+        body = lambda a, b: {"filter": self._filter(  # noqa: E731
+            central_id=self.cfg.central_id, alojamiento_id=self.cfg.alojamiento_id, start_date=iso(a),
+            end_date=iso(b), tipo=0)}
+        for a, b, payload in self._ranged("pos", body, start, end):
+            self._stored(store.save(conn, "fns_pos_sales", hotel_id, parse.pos(payload),
+                                    ("hotel_id", "pos_id", "sale_date", "recipe_id"),
+                                    delete=("sale_date BETWEEN %s AND %s", (a, b))))
 
     def reservations(self, conn, hotel_id: int, start: date, end: date) -> None:
         for state in RESERVATION_STATES:
-            for a, b in windows(start, end):
-                payload = self._call("reservations", {"filter": {
-                    "central_id": self.cfg.central_id, "alojamiento_id": self.cfg.alojamiento_id,
-                    "start_date": iso(a), "end_date": iso(b), "estado": state,
-                    "verTitular": 1, "verHuespedes": 1, "verDetalles": 1, "verInhouse": 1}}, f"{state} {a}..{b}",
-                    optional=state != "Todas")  # the cancelled and modified searches only add updates
+            body = lambda a, b: {"filter": {  # noqa: E731
+                "central_id": self.cfg.central_id, "alojamiento_id": self.cfg.alojamiento_id,
+                "start_date": iso(a), "end_date": iso(b), "estado": state,
+                "verTitular": 1, "verHuespedes": 1, "verDetalles": 1, "verInhouse": 1}}
+            # The cancelled and modified searches only add updates.
+            for a, b, payload in self._ranged("reservations", body, start, end, f"{state} ",
+                                              optional=state != "Todas", max_days=CHUNK_DAYS):
                 if payload is None:
                     continue
                 bookings, rooms = parse.reservations(payload)
@@ -204,19 +248,19 @@ class Sync:
                 self._stored(n)
 
     def blocks(self, conn, hotel_id: int, start: date, end: date) -> None:
-        for a, b in windows(start, end):
-            payload = self._call("blocks", {"filter": {
-                "central_id": self.cfg.central_id, "alojamiento_id": self.cfg.alojamiento_id,
-                "start_date": iso(a), "end_date": iso(b)}}, f"{a}..{b}")
+        body = lambda a, b: {"filter": {  # noqa: E731
+            "central_id": self.cfg.central_id, "alojamiento_id": self.cfg.alojamiento_id,
+            "start_date": iso(a), "end_date": iso(b)}}
+        for a, b, payload in self._ranged("blocks", body, start, end, max_days=CHUNK_DAYS):
             if payload is not None:
                 self._stored(store.save(conn, "fns_room_blocks", hotel_id, parse.blocks(payload),
                                         ("hotel_id", "block_id")))
 
     def availability(self, conn, hotel_id: int, start: date, end: date) -> None:
-        for a, b in windows(start, end):
-            payload = self._call("availability", {"filter": {
-                "start_date": iso(a), "end_date": iso(b), "central_id": self.cfg.central_id,
-                "alojamiento_id": self.cfg.alojamiento_id}}, f"{a}..{b}")
+        body = lambda a, b: {"filter": {  # noqa: E731
+            "start_date": iso(a), "end_date": iso(b), "central_id": self.cfg.central_id,
+            "alojamiento_id": self.cfg.alojamiento_id}}
+        for a, b, payload in self._ranged("availability", body, start, end):
             if payload is None:
                 continue
             avail, rates = parse.availability(payload)
@@ -232,59 +276,79 @@ class Sync:
 
     def run(self, conn: psycopg.Connection, backfill: bool | None = None, today: date | None = None,
             only: set[str] | None = None) -> dict:
-        """Import everything; returns {"run_id", "status", "calls"}."""
+        """Import everything; returns {"run_id", "status", "calls", "rows", "backfill", "pending"}.
+        Each history step loads FNS_BACKFILL_DAYS until it has done so once (backfill=True: again),
+        so an interrupted first import resumes where it stopped."""
         cfg = self.cfg
         today = today or datetime.now(cfg.tz).date()
         store.ensure_schema(conn)
         hotel_id = store.ensure_hotel(conn, cfg)
-        backfill = not store.has_history(conn, hotel_id) if backfill is None else backfill
-        history = today - timedelta(days=cfg.backfill_days if backfill else cfg.refresh_days)
-        run_id = store.start_run(conn, hotel_id, backfill)
-        self.calls = []
-        log.info("FNS import for %s (alojamiento %s): %s from %s", cfg.hotel_code, cfg.alojamiento_id,
-                 "first import" if backfill else "daily refresh", history)
-        steps = [
-            ("master", lambda: self.master(conn, hotel_id)),
-            ("accounting", lambda: self.accounting(conn, hotel_id, history, today)),
-            ("currency", None),
-            ("exchange", lambda: self.exchange(conn, ctx["moneda_id"], history, today)),
-            ("revenue", lambda: self.revenue(conn, hotel_id, ctx["moneda_id"], history,
-                                             today + timedelta(days=cfg.forward_days))),
-            ("production_cc", lambda: self.production_cc(conn, hotel_id, ctx["moneda_id"], history, today)),
-            ("production", lambda: self.production(conn, hotel_id, ctx["moneda_id"], history, today, today)),
-            ("sales_reservations", lambda: self.sales_reservations(
-                conn, hotel_id, history, today + timedelta(days=SALES_AHEAD_DAYS))),
-            ("pos", lambda: self.pos(conn, hotel_id, history, today)),
-            ("reservations", lambda: self.reservations(conn, hotel_id, history, today)),
-            ("blocks", lambda: self.blocks(conn, hotel_id, min(history, today - timedelta(days=cfg.refresh_days)),
-                                           today + timedelta(days=BLOCKS_AHEAD_DAYS))),
-            ("availability", lambda: self.availability(
-                conn, hotel_id, today, today + timedelta(days=min(cfg.forward_days, AVAILABILITY_AHEAD_DAYS)))),
-        ]
+        loaded = set() if backfill else store.loaded_steps(conn, hotel_id)
+        refresh_from = today - timedelta(days=cfg.refresh_days)
+        history_from = today - timedelta(days=cfg.backfill_days)
+        wanted = [s for s in HISTORY_STEPS if not only or s in only]
+        backfilling = [s for s in wanted if s not in loaded]
+        run_id = store.start_run(conn, hotel_id, bool(backfilling))
+        self.calls, self.unreachable = [], 0
+        log.info("FNS import for %s (alojamiento %s): %s", cfg.hotel_code, cfg.alojamiento_id,
+                 f"loading history from {history_from} for {', '.join(backfilling)}" if backfilling
+                 else f"daily refresh from {refresh_from}")
+
+        def since(step: str) -> date:
+            return refresh_from if step in loaded else history_from
+
+        ahead = lambda days: today + timedelta(days=days)  # noqa: E731
         ctx: dict[str, Any] = {}
+        steps = {
+            "master": lambda: self.master(conn, hotel_id),
+            "revenue": lambda: self.revenue(conn, hotel_id, ctx["moneda_id"], since("revenue"), ahead(cfg.forward_days)),
+            "production_cc": lambda: self.production_cc(conn, hotel_id, ctx["moneda_id"], since("production_cc"), today),
+            "sales_reservations": lambda: self.sales_reservations(conn, hotel_id, since("sales_reservations"),
+                                                                  ahead(SALES_AHEAD_DAYS)),
+            "reservations": lambda: self.reservations(conn, hotel_id, since("reservations"), today),
+            "availability": lambda: self.availability(conn, hotel_id, today,
+                                                      ahead(min(cfg.forward_days, AVAILABILITY_AHEAD_DAYS))),
+            "blocks": lambda: self.blocks(conn, hotel_id, refresh_from, ahead(BLOCKS_AHEAD_DAYS)),
+            "pos": lambda: self.pos(conn, hotel_id, since("pos"), today),
+            "accounting": lambda: self.accounting(conn, hotel_id, since("accounting"), today),
+            "exchange": lambda: self.exchange(conn, ctx["moneda_id"], since("exchange"), today),
+            "production": lambda: self.production(conn, hotel_id, ctx["moneda_id"], since("production"), today, today),
+        }
+        order = list(STEPS)
+        if not cfg.moneda_id and not store.has_accounting(conn, hotel_id):
+            order.remove("accounting")  # the hotel's currency comes from the accounting entries
+            order.insert(1, "accounting")
         status = "ok"
         try:
-            for name, step in steps:
-                if name == "currency":
+            for name in order:
+                if name not in ("master", "accounting") and "moneda_id" not in ctx:  # amounts need the currency
                     ctx["moneda_id"], currency = store.hotel_currency(conn, hotel_id, cfg)
                     store.set_currency(conn, hotel_id, currency)
                     log.info("amounts in %s (FNS currency id %s)", currency, ctx["moneda_id"])
-                    continue
                 if only and name not in only:
                     continue
+                first = len(self.calls)
                 try:
-                    step()
+                    steps[name]()
                 except (psycopg.Error, ValueError, TypeError, KeyError) as e:
                     # Unexpected data the parsers or the database rejected: record, go on.
                     self.calls.append({"method": name, "ok": False, "error": f"{e.__class__.__name__}: {e}"})
                     log.exception("storing %s failed", name)
+                failed = any(not c.get("ok") and not c.get("optional") for c in self.calls[first:])
+                if name in backfilling and not failed:
+                    store.mark_loaded(conn, hotel_id, name, history_from)
+                    loaded.add(name)
+                    log.info("%s: history loaded", name)
             store.set_total_rooms(conn, hotel_id)
-        except AuthError as e:
+        except (AuthError, StopRun) as e:
             log.error("%s", e)
             status = "failed"
         if status == "ok" and any(not c.get("ok") and not c.get("optional") for c in self.calls):
             status = "partial"
         store.finish_run(conn, run_id, status, self.calls)
         rows = sum(c.get("rows", 0) for c in self.calls)
-        log.info("FNS import %s: %s calls, %s rows stored", status, len(self.calls), rows)
-        return {"run_id": run_id, "status": status, "calls": self.calls, "rows": rows, "backfill": backfill}
+        pending = [s for s in wanted if s not in loaded]
+        log.info("FNS import %s: %s calls, %s rows stored%s", status, len(self.calls), rows,
+                 f"; history still to load: {', '.join(pending)}" if pending else "")
+        return {"run_id": run_id, "status": status, "calls": self.calls, "rows": rows,
+                "backfill": bool(backfilling), "pending": pending}

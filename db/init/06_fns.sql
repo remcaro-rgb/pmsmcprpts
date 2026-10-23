@@ -83,13 +83,17 @@ COMMENT ON TABLE fns_production_cc IS 'FNS production (revenue by service date) 
 -- segmento_id).
 CREATE TABLE IF NOT EXISTS fns_production (
     hotel_id   integer NOT NULL REFERENCES hotels ON DELETE CASCADE,
-    prod_date  date NOT NULL,
+    prod_date  date NOT NULL,  -- first day of the period
+    period_end date,           -- last day of the period (= prod_date for a single day)
     channel_id text NOT NULL,  -- '' when not applicable
     segment_id text NOT NULL,  -- '' when not applicable
     amount     numeric NOT NULL,
     PRIMARY KEY (hotel_id, prod_date, channel_id, segment_id)
 );
-COMMENT ON TABLE fns_production IS 'FNS production (revenue by service date, all sources: rooms, events, F&B), net of tax, per day, sales channel and market segment. Names: fns_master_items kind = ''canales'' (channel_id) and ''segmentos'' (segment_id).';
+-- Databases created before periods: add the column; their rows are single days.
+ALTER TABLE fns_production ADD COLUMN IF NOT EXISTS period_end date;
+UPDATE fns_production SET period_end = prod_date WHERE period_end IS NULL;
+COMMENT ON TABLE fns_production IS 'FNS production (revenue by service date, all sources: rooms, events, F&B), net of tax, per sales channel and period prod_date..period_end. The first import stores its history as one long period per channel (the API report has no dates); recent days are single days (period_end = prod_date). Periods never overlap: for a date range, sum the rows whose period lies inside it, and say when a long period only partly overlaps the range. For revenue by channel or segment per day or month, use v_fns_reservation_revenue instead. Channel names: fns_master_items kind = ''canales'' (channel_id; 0 = no channel); segment_id is empty (the API gives no segment split).';
 
 -- Production per reservation and guest with a breakdown per stay day (custom/ventas1.php).
 CREATE TABLE IF NOT EXISTS fns_sales_reservations (
@@ -341,6 +345,17 @@ CREATE TABLE IF NOT EXISTS fns_sync_runs (
     calls        jsonb NOT NULL DEFAULT '[]'
 );
 COMMENT ON TABLE fns_sync_runs IS 'Daily FNS imports: when they ran, whether each API call succeeded and how many rows it stored.';
+
+-- Which import steps have loaded their full history, so an interrupted first import resumes
+-- where it stopped instead of starting over.
+CREATE TABLE IF NOT EXISTS fns_sync_steps (
+    hotel_id     integer NOT NULL REFERENCES hotels ON DELETE CASCADE,
+    step         text NOT NULL,
+    history_from date NOT NULL,
+    loaded_at    timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (hotel_id, step)
+);
+REVOKE ALL ON fns_sync_steps FROM pms_readonly;
 
 CREATE INDEX IF NOT EXISTS fns_reservations_arrival ON fns_reservations (hotel_id, arrival);
 CREATE INDEX IF NOT EXISTS fns_reservations_booked ON fns_reservations (hotel_id, booked_at);

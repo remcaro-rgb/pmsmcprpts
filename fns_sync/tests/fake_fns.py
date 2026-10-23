@@ -23,11 +23,16 @@ class FakeFNS:
         self.aloj = alojamiento_id
         self.today = today
         self.calls: list[tuple[str, dict]] = []
+        self.down: set[str] = set()  # paths that time out, as when the API stops answering
+        self.limits: dict[str, int] = {}  # path -> longest range (days) it accepts
+        self.slow: dict[str, int] = {}  # path -> longest range (days) it answers in time
 
     def transport(self) -> httpx2.MockTransport:
         return httpx2.MockTransport(self.handle)
 
     def handle(self, request: httpx2.Request) -> httpx2.Response:
+        if request.url.path in self.down:
+            raise httpx2.ConnectTimeout("The handshake operation timed out", request=request)
         expected = "Basic " + base64.b64encode(f"{USER}:{PASSWORD}".encode()).decode()
         if request.headers.get("authorization") != expected:
             return httpx2.Response(403, json={"mensaje": "Los datos de acceso no son válidos"})
@@ -35,6 +40,12 @@ class FakeFNS:
         path = request.url.path
         self.calls.append((path, body))
         f = body.get("filter", body)
+        if "start_date" in f:
+            days = len(list(_days(f)))
+            if days > self.slow.get(path, 10_000):
+                raise httpx2.ReadTimeout("The read operation timed out", request=request)
+            if days > self.limits.get(path, 10_000):
+                return httpx2.Response(422, json={"@attributes": {"error_code": "2"}, "error": "Period not valid"})
         if "alojamiento_id" in f and f["alojamiento_id"] not in ("", self.aloj, 0):
             return httpx2.Response(403, json={"@attributes": {"error_code": "1"},
                                               "error": "PMS not allowed to this property"})
@@ -83,12 +94,11 @@ class FakeFNS:
 
     def v1_ventas_produccion(self, f, body):
         assert body["group"] == ["canal_id", "segmento_id"]
-        if date.fromisoformat(f["start_date"]) >= self.today - timedelta(days=1):  # as the real API answers
+        if date.fromisoformat(f["end_date"]) >= self.today - timedelta(days=1):  # as the real API answers
             return httpx2.Response(422, json={"mensaje": f"No existe tipo de cambio en la fecha: {f['start_date']} "
                                                          f"para la moneda con id: {f['moneda_id']}"})
-        return {str(self.aloj): {"5": {"3": 1200.0, "4": 150.5, "total": 1350.5},
-                                 "6": {"3": "250.00", "total": 250.0}, "total": 1600.5},
-                "total": {"total": 1600.5}}
+        # The live API's layout: channels only, each amount in a one-element list.
+        return {"0": [100.0], "5": [1350.5], "6": ["250.00"]}
 
     def v1_custom_ventas1(self, f, body):
         # One reservation staying the two nights before today, with the nights inside the range.

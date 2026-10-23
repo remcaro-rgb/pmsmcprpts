@@ -25,7 +25,7 @@ import psycopg
 from . import store
 from .client import ENDPOINTS, AuthError, FNSClient, FNSError, MissingRate
 from .config import Config
-from .sync import STEPS, Sync
+from .sync import HISTORY_STEPS, STEPS, Sync
 
 log = logging.getLogger("fns_sync")
 FIELD_NAME = re.compile(r"[A-Za-z_@ ]{1,30}")
@@ -110,6 +110,10 @@ def run_once(cfg: Config, backfill: bool | None, only: set[str] | None = None) -
 
 def status(cfg: Config) -> None:
     with _connect(cfg) as conn:
+        if not conn.execute("SELECT to_regclass('pms.fns_sync_runs')").fetchone()[0]:
+            print("No imports yet. Start the fns-sync service (COMPOSE_PROFILES=fns in .env, then "
+                  "docker compose up -d), or run one now: python -m fns_sync run")
+            return
         for run_id, code, started, finished, state, backfill, calls in store.last_runs(conn):
             failed = [c for c in calls if not c.get("ok")]
             rows = sum(c.get("rows", 0) for c in calls)
@@ -117,6 +121,11 @@ def status(cfg: Config) -> None:
                   f"{len(calls)} calls, {rows} rows" + (f", {len(failed)} failed" if failed else ""))
             for c in failed[:5]:
                 print(f"    {c.get('method')} {c.get('window', '')}: {c.get('error')}")
+        for (hotel_id, code) in conn.execute("SELECT id, code FROM pms.hotels WHERE alojamiento_id = %s",
+                                             (cfg.alojamiento_id,)).fetchall():
+            pending = [s for s in HISTORY_STEPS if s not in store.loaded_steps(conn, hotel_id)]
+            print(f"{code}: history loaded for all steps" if not pending
+                  else f"{code}: history still to load for {', '.join(pending)} (the next run continues)")
 
 
 def next_run(cfg: Config, now: datetime) -> datetime:
@@ -125,23 +134,33 @@ def next_run(cfg: Config, now: datetime) -> datetime:
 
 
 def daemon(cfg: Config) -> None:
-    """Import now unless today's import already ran, then every day at FNS_SYNC_TIME."""
+    """Import now unless today's import already ran (and loaded all the history), then every day at
+    FNS_SYNC_TIME. A run the API cut short is retried after FNS_RETRY_MINUTES."""
     stop = {"now": False}
     signal.signal(signal.SIGTERM, lambda *_: stop.update(now=True))
     signal.signal(signal.SIGINT, lambda *_: stop.update(now=True))
     with _connect(cfg) as conn:
         store.ensure_schema(conn)
-        last = conn.execute("SELECT max(r.started_at) FROM pms.fns_sync_runs r JOIN pms.hotels h ON h.id = r.hotel_id "
-                            "WHERE h.alojamiento_id = %s AND r.status IN ('ok', 'partial')",
-                            (cfg.alojamiento_id,)).fetchone()[0]
-    due = last is None or last.astimezone(cfg.tz).date() < datetime.now(cfg.tz).date()
+        row = conn.execute(
+            "SELECT h.id, (SELECT max(r.started_at) FROM pms.fns_sync_runs r WHERE r.hotel_id = h.id "
+            "AND r.status IN ('ok', 'partial')) FROM pms.hotels h WHERE h.alojamiento_id = %s",
+            (cfg.alojamiento_id,)).fetchone()
+        pending = set(HISTORY_STEPS) - (store.loaded_steps(conn, row[0]) if row else set())
+    last = row[1] if row else None
+    due = bool(pending) or last is None or last.astimezone(cfg.tz).date() < datetime.now(cfg.tz).date()
     while not stop["now"]:
+        retry = False
         if due:
             try:
-                run_once(cfg, None)
+                result = run_once(cfg, None)
+                retry = result["status"] == "failed" or bool(result["pending"])
             except (psycopg.Error, OSError, RuntimeError) as e:
                 log.error("import failed: %s", e)
-        wake = next_run(cfg, datetime.now(cfg.tz))
+                retry = True
+        now = datetime.now(cfg.tz)
+        wake = next_run(cfg, now)
+        if retry:
+            wake = min(wake, now + timedelta(minutes=cfg.retry_minutes))
         log.info("next import at %s", wake.strftime("%Y-%m-%d %H:%M %Z"))
         while not stop["now"] and datetime.now(cfg.tz) < wake:
             time.sleep(1)  # short, so docker compose stop ends it promptly
@@ -182,8 +201,9 @@ def main(argv=None) -> int:
         return 2
     result = run_once(cfg, True if args.backfill else None, only)
     failed = [c for c in result["calls"] if not c.get("ok")]
-    print(json.dumps({"status": result["status"], "first_import": result["backfill"], "calls": len(result["calls"]),
-                      "rows": result["rows"], "failed": failed[:10]}, indent=2, default=str))
+    print(json.dumps({"status": result["status"], "loaded_history": result["backfill"], "calls": len(result["calls"]),
+                      "rows": result["rows"], "history_still_to_load": result["pending"], "failed": failed[:10]},
+                     indent=2, default=str))
     return 0 if result["status"] != "failed" else 1
 
 

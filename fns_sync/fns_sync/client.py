@@ -38,6 +38,14 @@ class AuthError(FNSError):
     """Wrong credentials, or the account may not read this hotel: stop the run."""
 
 
+class Unreachable(FNSError):
+    """The API didn't answer (timeouts, refused or dropped connections) after the retries."""
+
+
+class TooSlow(FNSError):
+    """The API accepted the request but didn't finish the answer in time (e.g. a long date range)."""
+
+
 class MissingRate(FNSError):
     """FNS has no exchange rate for the requested currency on a date (usually the latest days)."""
 
@@ -57,12 +65,12 @@ def _message(payload: Any, fallback: str) -> str:
 
 class FNSClient:
     def __init__(self, config: Config, transport: httpx2.BaseTransport | None = None,
-                 retries: int = 3, sleep=time.sleep):
+                 retries: int = 2, sleep=time.sleep):
         self.config = config
         self.retries = retries
         self.sleep = sleep
         self.http = httpx2.Client(base_url=config.base_url, auth=(config.user, config.password),
-                                  timeout=httpx2.Timeout(180, connect=20), transport=transport,
+                                  timeout=httpx2.Timeout(300, connect=20), transport=transport,
                                   headers={"Accept": "application/json"})
 
     def close(self) -> None:
@@ -75,9 +83,12 @@ class FNSClient:
         for attempt in range(self.retries + 1):
             try:
                 r = self.http.post(path, json=body)
+            except httpx2.ReadTimeout as e:
+                # Not retried: the same request would be as slow. The caller can ask for less.
+                raise TooSlow(f"{path}: no answer within {self.http.timeout.read:.0f} s") from e
             except httpx2.TransportError as e:
                 if attempt == self.retries:
-                    raise FNSError(f"{path}: could not reach the API ({e.__class__.__name__}: {e})") from e
+                    raise Unreachable(f"{path}: could not reach the API ({e.__class__.__name__}: {e})") from e
                 self.sleep(2 ** (attempt + 1))
                 continue
             if r.status_code >= 500 and attempt < self.retries:
