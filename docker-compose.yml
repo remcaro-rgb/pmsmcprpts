@@ -72,6 +72,7 @@ services:
       PMS_MCP_TOKEN: ${PMS_MCP_SERVICE_TOKEN:-}
       PMS_CLAUDE_MODEL: ${PMS_CLAUDE_MODEL:-claude-sonnet-5-5}
       PMS_CLAUDE_EFFORT: ${PMS_CLAUDE_EFFORT:-medium}
+      PMS_SERVER_FALLBACKS: ${PMS_SERVER_FALLBACKS:-true}
       PMS_ARTIFACTS_DIR: /artifacts
       PMS_CONVERSATIONS_DB: /data/conversations.sqlite
       # User accounts (sign-in, admin page); see .env.example.

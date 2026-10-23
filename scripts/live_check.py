@@ -51,6 +51,7 @@ FOLLOWS = {"followup": "kpis"}
 PRICES = {
     "claude-opus-5-5": (4.00, 20.00, 0.20, 5.00),
     "claude-sonnet-5-5": (2.00, 10.00, 0.20, 2.50),
+    "claude-haiku-5-5": (0.10, 0.50, 0.01, 0.125),  # prompts up to 100K tokens (all of these are)
 }
 
 
@@ -143,7 +144,8 @@ def main() -> None:
                 f["saved_as"] = name
             (out / f"{lang}-{key}.json").write_text(json.dumps(r, ensure_ascii=False, indent=1))
             (out / f"{lang}-{key}.md").write_text(f"# {message}\n\n{r['text']}\n")
-            done = r.get("done") or {}
+            # A turn stopped at the step limit is still billed; its error event carries the usage.
+            done = r.get("done") or r.get("error") or {}
             usage = done.get("usage") or {}
             row = {"lang": lang, "key": key, "model": done.get("model", model), "requests": done.get("requests"),
                    "seconds": r.get("seconds"), "tools": " ".join(t["name"] for t in r["tools"] if "input" in t),

@@ -34,9 +34,9 @@ def toy_server() -> MCPServer:
     return mcp
 
 
-def make_agent(*script, steps=15, server=None):
+def make_agent(*script, steps=15, server=None, **settings_overrides):
     client = FakeClient(*script)
-    settings = Settings(mcp_url="unused", max_tool_steps=steps)
+    settings = Settings(mcp_url="unused", max_tool_steps=steps, **settings_overrides)
     return ChatAgent(settings, client, server or toy_server()), client
 
 
@@ -62,6 +62,13 @@ async def test_text_answer():
     assert req["cache_control"] == {"type": "ephemeral"}
     assert req["system"].endswith("Toy instructions.")
     assert req["tools"][0]["name"] == "lookup" and req["tools"][0]["eager_input_streaming"] is True
+
+
+async def test_haiku_requests_have_no_fallbacks():
+    agent, client = make_agent(text_reply("Hello."), model="claude-haiku-5-5")
+    await run(agent, Conversation("c1"), "Hi")
+    req = client.messages.requests[0]
+    assert req["model"] == "claude-haiku-5-5" and "fallbacks" not in req and "betas" not in req
 
 
 async def test_tool_round_trip():
@@ -119,6 +126,8 @@ async def test_step_limit():
     conv = Conversation("c1")
     events = await run(agent, conv, "Loop forever")
     assert events[-1]["event"] == "error" and "2 tool steps" in events[-1]["data"]["message"]
+    # The failed turn's requests were billed, so the error reports their usage too.
+    assert events[-1]["data"]["requests"] == 2 and events[-1]["data"]["usage"]["output_tokens"] == 40
     assert conv.messages == []
 
 
