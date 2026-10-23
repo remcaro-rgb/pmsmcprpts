@@ -1,6 +1,7 @@
 """Import the FNSrooms PMS API into the reporting database.
 
     python -m fns_sync check            # call each API method once and show what it returns (no data saved)
+    python -m fns_sync check --date 2026-09-15   # the same for an earlier day
     python -m fns_sync run              # import now (the first run also loads FNS_BACKFILL_DAYS of history)
     python -m fns_sync run --backfill   # reload the full history
     python -m fns_sync status           # the last imports
@@ -17,12 +18,12 @@ import re
 import signal
 import sys
 import time
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 
 import psycopg
 
 from . import store
-from .client import ENDPOINTS, AuthError, FNSClient, FNSError
+from .client import ENDPOINTS, AuthError, FNSClient, FNSError, MissingRate
 from .config import Config
 from .sync import STEPS, Sync
 
@@ -52,10 +53,11 @@ def _shape(v, depth: int = 0) -> str:
     return type(v).__name__
 
 
-def check(cfg: Config) -> int:
-    """One small call per method (yesterday and today) to confirm the credentials and the API."""
+def check(cfg: Config, day: date | None = None) -> int:
+    """One small call per method (the day before `day` and `day`, by default yesterday and today)
+    to confirm the credentials and the API."""
     client = FNSClient(cfg, retries=0)
-    today = datetime.now(cfg.tz).date()
+    today = day or datetime.now(cfg.tz).date()
     y, t = (today - timedelta(days=1)).isoformat(), today.isoformat()
     a, c = cfg.alojamiento_id, cfg.central_id
     common = {"alojamiento_id": a, "start_date": y, "end_date": t}
@@ -82,10 +84,13 @@ def check(cfg: Config) -> int:
     for name in ENDPOINTS:
         try:
             result = client.call(name, bodies[name])
-            print(f"  OK    {ENDPOINTS[name]:34} {'no data (404)' if result is None else _shape(result)}")
+            print(f"  OK    {ENDPOINTS[name]:34} {'no data' if result is None else _shape(result)}")
         except AuthError as e:
             print(f"  DENIED {ENDPOINTS[name]:33} {e}")
             failures += 1
+        except MissingRate as e:
+            print(f"  NO RATE {ENDPOINTS[name]:32} {e} (the import retries these days on later nights; "
+                  "try --date with an older day)")
         except FNSError as e:
             print(f"  ERROR {ENDPOINTS[name]:34} {e}")
             failures += 1
@@ -147,7 +152,8 @@ def main(argv=None) -> int:
     p = argparse.ArgumentParser(prog="fns_sync", description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest="command", required=True)
-    sub.add_parser("check")
+    c = sub.add_parser("check")
+    c.add_argument("--date", type=date.fromisoformat, help="check this day (YYYY-MM-DD) instead of today")
     r = sub.add_parser("run")
     r.add_argument("--backfill", action="store_true", help="reload FNS_BACKFILL_DAYS of history")
     r.add_argument("--only", help="comma-separated steps, e.g. revenue,reservations")
@@ -163,7 +169,7 @@ def main(argv=None) -> int:
         print(f"fns_sync: {e}", file=sys.stderr)
         return 2
     if args.command == "check":
-        return check(cfg)
+        return check(cfg, args.date)
     if args.command == "status":
         status(cfg)
         return 0

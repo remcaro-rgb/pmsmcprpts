@@ -61,13 +61,14 @@ def test_first_import_calls_every_method_and_stores_it(owner):
     result = s.run(owner, today=TODAY)
     assert result["backfill"] and result["status"] == "ok", [c for c in result["calls"] if not c.get("ok")]
     assert {p for p, _ in fake.calls} == set(ENDPOINTS.values())
-    # The one optional master list the API refused doesn't fail the run.
-    assert [c["window"] for c in result["calls"] if not c.get("ok")] == ["usuariosGastro"]
+    # Neither the master list the API refused nor the latest days without an exchange rate fail the run.
+    failed = [c["window"] for c in result["calls"] if not c.get("ok")]
+    assert failed == ["usuariosGastro", (TODAY - timedelta(days=1)).isoformat(), TODAY.isoformat()]
 
     n = counts(owner)
     history = CFG.backfill_days + 1
     assert n["fns_revenue_daily"] == history + CFG.forward_days
-    assert n["fns_production_cc"] == 2 * history and n["fns_production"] == 3 * history
+    assert n["fns_production_cc"] == 2 * history and n["fns_production"] == 3 * (history - 2)
     assert n["fns_reservations"] == 2 and n["fns_reservation_rooms"] == 2  # active (modified) + cancelled
     assert n["fns_room_blocks"] == 1 and n["fns_third_parties"] == 1
     assert n["fns_availability"] == 2 * 41 and n["fns_rates"] == 2 * 41 * 3

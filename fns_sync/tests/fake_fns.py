@@ -83,6 +83,9 @@ class FakeFNS:
 
     def v1_ventas_produccion(self, f, body):
         assert body["group"] == ["canal_id", "segmento_id"]
+        if date.fromisoformat(f["start_date"]) >= self.today - timedelta(days=1):  # as the real API answers
+            return httpx2.Response(422, json={"mensaje": f"No existe tipo de cambio en la fecha: {f['start_date']} "
+                                                         f"para la moneda con id: {f['moneda_id']}"})
         return {str(self.aloj): {"5": {"3": 1200.0, "4": 150.5, "total": 1350.5},
                                  "6": {"3": "250.00", "total": 250.0}, "total": 1600.5},
                 "total": {"total": 1600.5}}
@@ -146,7 +149,7 @@ class FakeFNS:
             return []
         state = {"Todas": "Confirmada", "canceladas": "Cancelada", "modificadas": "Modificada"}[f["estado"]]
         loc = {"Todas": "4882407816", "canceladas": "4882407999", "modificadas": "4882407816"}[f["estado"]]
-        return [{
+        return {"92732": {  # the real API keys bookings by id
             "info": {"channel_id": 12, "reservation_ch_id": loc, "localizador": loc, "alojamiento_id": self.aloj,
                      "estado": state, "fecha_entrada": (self.today + timedelta(days=10)).isoformat(),
                      "fecha_salida": (self.today + timedelta(days=13)).isoformat(),
@@ -172,14 +175,17 @@ class FakeFNS:
                         "telefono": "+34 984 200 328", "pais": "ES"},
             "titular": {"nombre": "Jorge", "primerapellido": "Prieto", "email": "jorge@example.com",
                         "telefono": "+34 984 200 328", "pais": "ES"},
-        }]
+            "cuentas": [],
+        }}
 
     def v1_reservas_bloqueos(self, f, body):
         if len(list(_days(f))) > 30:
             return httpx2.Response(400, json={"@attributes": {"error_code": "2"}, "error": "Period not valid"})
         start = date.fromisoformat(f["start_date"])
         if not start <= self.today + timedelta(days=5) <= date.fromisoformat(f["end_date"]):
-            return {"bloqueos": []}
+            # The real API: "no blocks" is a 403.
+            return httpx2.Response(403, json={"@attributes": {"error_code": "1"},
+                                              "error": "No se han encontrado bloqueos"})
         return {"bloqueos": {"538": {
             "bloqueo_id": 538, "tipo_habitacion_id": 101, "nombre_propietario": "Doble", "habitacion_id": 36642,
             "nombre": "303", "alojamiento_id": self.aloj,
@@ -189,7 +195,7 @@ class FakeFNS:
 
     # disponibilidad
     def v1_disponibilidad_consulta(self, f, body):
-        return {"dayAvailabilityRoomType": [
+        return {"dayAvailibityRoomType": [  # sic, as the real API spells it
             {"roomType": rt, "availability": 5, "date": d.isoformat(),
              "rates": [{"rate_id": 900, "prices": [{"occupancy": 1, "price": 100.0}, {"occupancy": 2, "price": 120.5}],
                         "restrictions": {"minlos": 2, "closerate": 0, "closeonarrival": 0, "closeondeparture": 1,
