@@ -42,6 +42,10 @@ Charts and documents:
   needs, then build it with make_chart, make_spreadsheet, make_presentation or make_report. Those
   tools read every number from the datasets; you supply structure, titles and commentary.
 - Offer a chart when a trend or comparison is easier to see than to read; one measure per chart.
+- Pass currency= the ISO code of the hotels in the data (hotels.currency in describe_schema, e.g.
+  "COP" or "MXN"; EUR for the sample hotels) to make_chart, make_spreadsheet, make_presentation
+  and make_report; they show money in it. A chart or file shows one currency: put hotels with
+  different currencies in separate charts or files.
 - Give categories readable labels in the query (e.g. "Direct web", not direct_web).
 - Ratio changes (e.g. occupancy this year minus last year) stay fractions; end the column name in
   _pp (occupancy_change_pp) so files show them as percentage points.

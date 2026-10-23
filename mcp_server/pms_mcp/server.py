@@ -23,7 +23,7 @@ from .charts import ChartError, build_chart_data, chart_payload, render_png, ren
 from .datasets import Dataset, DatasetStore
 from .db import Database, QueryError
 from .documents import DocError, Section, SheetSpec, Slide, build_docx, build_pdf, build_pptx, build_xlsx
-from .formats import KINDS
+from .formats import DEFAULT_CURRENCY, KINDS, normalize_currency
 from .sql_guard import UnsafeQueryError, check_read_only
 
 INSTRUCTIONS = """\
@@ -42,6 +42,8 @@ Read-only access to a hotel property-management-system (PMS) database (PostgreSQ
 - Documents: make_chart, make_spreadsheet, make_presentation and make_report take dataset_ids
   (and chart_ids from make_chart) and read every number from the stored data. Query exactly the
   rows and columns a document needs first. make_chart also returns the chart as an image.
+  Pass currency= the hotels' currency (hotels.currency, e.g. COP); it defaults to EUR, and one
+  document shows one currency, so keep hotels with different currencies in separate documents.
 - When a result includes a download_url and your app doesn't show files itself, give the user that
   link (it works for 24 hours).
 - Tell the user which hotels and date range an answer covers."""
@@ -319,6 +321,12 @@ def build_server(dsn: str, statement_timeout_ms: int = 15000, artifacts_dir: str
     def doc_error(e: Exception) -> ToolError:
         return ToolError(str(e))
 
+    def check_currency(currency: str) -> str:
+        try:
+            return normalize_currency(currency)
+        except ValueError as e:
+            raise ToolError(str(e)) from e
+
     @mcp.tool(annotations=CREATES_FILE)
     async def make_chart(
         dataset_id: str,
@@ -330,6 +338,7 @@ def build_server(dsn: str, statement_timeout_ms: int = 15000, artifacts_dir: str
         subtitle: str | None = None,
         y_format: Literal[KINDS] | None = None,
         language: Literal["en", "es"] = "en",
+        currency: str = DEFAULT_CURRENCY,
     ) -> CallToolResult:
         """Chart one numeric measure from a stored dataset. The chart is shown to the user in
         the chat (interactive) and saved as a PNG; pass the returned chart_id to
@@ -350,10 +359,14 @@ def build_server(dsn: str, statement_timeout_ms: int = 15000, artifacts_dir: str
             y_format: Override the value format inferred from the column name.
             language: Language of the text the tool adds (dates, column headers, source line):
                 "en", or "es" for Latin American Spanish. Write titles and text in the same language.
+            currency: ISO 4217 code of the money values, e.g. "EUR", "USD", "COP" or "MXN": the
+                currency of the hotels in the data (hotels.currency in describe_schema). Shown as
+                € or $ for EUR and USD, otherwise as the code ("COP 1,234,000").
         """
+        currency = check_currency(currency)
         try:
             chart = build_chart_data(_get(dataset_id), chart_type, x, y, series, title, subtitle, y_format,
-                                     language)
+                                     language, currency)
         except ChartError as e:
             raise doc_error(e) from e
         svg, _ = render_svg(chart, "light")
@@ -375,9 +388,10 @@ def build_server(dsn: str, statement_timeout_ms: int = 15000, artifacts_dir: str
 
     @mcp.tool(annotations=CREATES_FILE)
     async def make_spreadsheet(title: str, sheets: list[SheetSpec], filename: str | None = None,
-                               language: Literal["en", "es"] = "en") -> CallToolResult:
+                               language: Literal["en", "es"] = "en",
+                               currency: str = DEFAULT_CURRENCY) -> CallToolResult:
         """Create an Excel workbook with one sheet per dataset: formatted header, number formats
-        (percent, EUR, integers, dates) inferred from column names, frozen header row, filters,
+        (percent, money in the given currency, integers, dates) inferred from column names, frozen header row, filters,
         plus an About sheet listing each sheet's source query. All rows of each dataset are
         included. The file is offered to the user for download.
 
@@ -387,10 +401,14 @@ def build_server(dsn: str, statement_timeout_ms: int = 15000, artifacts_dir: str
             filename: Optional file name without extension.
             language: Language of the text the tool adds (dates, column headers, source line):
                 "en", or "es" for Latin American Spanish. Write titles and text in the same language.
+            currency: ISO 4217 code of the money values, e.g. "EUR", "USD", "COP" or "MXN": the
+                currency of the hotels in the data (hotels.currency in describe_schema). Shown as
+                € or $ for EUR and USD, otherwise as the code ("COP 1,234,000").
         """
+        currency = check_currency(currency)
         schema = await load_schema(with_hotels=False)
         try:
-            data = build_xlsx(my_store(), title, sheets, schema["business_date"], language)
+            data = build_xlsx(my_store(), title, sheets, schema["business_date"], language, currency)
         except DocError as e:
             raise doc_error(e) from e
         info = artifacts.save(data, filename or title, "xlsx")
@@ -399,7 +417,8 @@ def build_server(dsn: str, statement_timeout_ms: int = 15000, artifacts_dir: str
     @mcp.tool(annotations=CREATES_FILE)
     async def make_presentation(title: str, slides: list[Slide], subtitle: str | None = None,
                                 filename: str | None = None,
-                                language: Literal["en", "es"] = "en") -> CallToolResult:
+                                language: Literal["en", "es"] = "en",
+                                currency: str = DEFAULT_CURRENCY) -> CallToolResult:
         """Create a 16:9 PowerPoint deck: a title slide, then one slide per entry. Slide kinds:
         kpis (1-4 headline tiles, values read from datasets), chart (a chart_id from make_chart,
         optionally with 2-4 takeaway bullets beside it), table (up to 14 rows from a dataset),
@@ -413,10 +432,15 @@ def build_server(dsn: str, statement_timeout_ms: int = 15000, artifacts_dir: str
             filename: Optional file name without extension.
             language: Language of the text the tool adds (dates, column headers, source line):
                 "en", or "es" for Latin American Spanish. Write titles and text in the same language.
+            currency: ISO 4217 code of the money values, e.g. "EUR", "USD", "COP" or "MXN": the
+                currency of the hotels in the data (hotels.currency in describe_schema). Shown as
+                € or $ for EUR and USD, otherwise as the code ("COP 1,234,000").
         """
+        currency = check_currency(currency)
         schema = await load_schema(with_hotels=False)
         try:
-            data = build_pptx(my_store(), my_charts(), title, subtitle, slides, schema["business_date"], language)
+            data = build_pptx(my_store(), my_charts(), title, subtitle, slides, schema["business_date"], language,
+                              currency)
         except DocError as e:
             raise doc_error(e) from e
         info = artifacts.save(data, filename or title, "pptx")
@@ -425,7 +449,8 @@ def build_server(dsn: str, statement_timeout_ms: int = 15000, artifacts_dir: str
     @mcp.tool(annotations=CREATES_FILE)
     async def make_report(title: str, sections: list[Section], format: Literal["pdf", "docx"] = "pdf",
                           subtitle: str | None = None, filename: str | None = None,
-                          language: Literal["en", "es"] = "en") -> CallToolResult:
+                          language: Literal["en", "es"] = "en",
+                          currency: str = DEFAULT_CURRENCY) -> CallToolResult:
         """Create a written report as PDF or Word (.docx). Each section can have a heading,
         narrative text (paragraphs; lines starting with '- ' become bullets), KPI tiles, a chart
         (chart_id from make_chart) and a table from a dataset, in that order.
@@ -438,13 +463,18 @@ def build_server(dsn: str, statement_timeout_ms: int = 15000, artifacts_dir: str
             filename: Optional file name without extension.
             language: Language of the text the tool adds (dates, column headers, source line):
                 "en", or "es" for Latin American Spanish. Write titles and text in the same language.
+            currency: ISO 4217 code of the money values, e.g. "EUR", "USD", "COP" or "MXN": the
+                currency of the hotels in the data (hotels.currency in describe_schema). Shown as
+                € or $ for EUR and USD, otherwise as the code ("COP 1,234,000").
         """
         if not sections:
             raise ToolError("Provide at least one section.")
+        currency = check_currency(currency)
         schema = await load_schema(with_hotels=False)
         build = build_pdf if format == "pdf" else build_docx
         try:
-            data = build(my_store(), my_charts(), title, subtitle, sections, schema["business_date"], language)
+            data = build(my_store(), my_charts(), title, subtitle, sections, schema["business_date"], language,
+                         currency)
         except DocError as e:
             raise doc_error(e) from e
         info = artifacts.save(data, filename or title, format)

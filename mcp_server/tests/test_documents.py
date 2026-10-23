@@ -80,6 +80,32 @@ def test_formats():
     assert safe_filename("../../etc/passwd", "xlsx") == "etcpasswd.xlsx"
 
 
+def test_currency_formats():
+    from pms_mcp.charts import ChartData, chart_payload
+    from pms_mcp.documents import excel_currency_format
+    from pms_mcp.formats import format_headline, format_tick, normalize_currency
+
+    assert format_value(1234000, "currency", currency="COP") == "COP 1,234,000"
+    assert format_value(275.314, "currency", "es", "MXN") == "MXN 275.31"
+    assert format_value(275.314, "currency", currency="USD") == "$275.31"
+    assert format_headline(11127338, "currency", currency="COP") == "COP 11.1M"
+    assert format_headline(11127338, "currency") == "€11.1M"
+    assert format_tick(2_500_000, "currency", 500_000, "MXN") == "MXN 2.5M"
+    assert format_value(0.9, "percent", currency="COP") == "90.0%"  # only money changes
+    assert normalize_currency(" cop ") == "COP" and normalize_currency(None) == "EUR"
+    with pytest.raises(ValueError):
+        normalize_currency("pesos")
+    assert excel_currency_format("EUR") == "€#,##0.00" and excel_currency_format("USD") == "$#,##0.00"
+    assert excel_currency_format("COP") == '"COP "#,##0.00'
+
+    chart = ChartData(kind="bar", title="Revenue", subtitle=None, x_name="hotel", y_name="room_revenue",
+                      y_kind="currency", categories=["FRA"], tick_labels=["FRA"], full_labels=["FRA"],
+                      series=[("room_revenue", [1_234_000.0])], currency="COP")
+    payload = chart_payload(chart)
+    assert payload["series"][0]["values"] == ["COP 1,234,000"]
+    assert ">COP 1M<" in payload["svg_light"] and "€" not in payload["svg_light"]
+
+
 def test_artifact_ids_are_validated(tmp_path):
     store = ArtifactStore(tmp_path)
     info = store.save(b"x", "a", "png")
@@ -211,6 +237,49 @@ async def test_make_report(ctx, fmt):
         texts = [p.text for p in doc.paragraphs]
         assert "Summary" in texts and "Lisbon led" in texts
         assert len(doc.inline_shapes) == 1 and len(doc.tables) == 2
+
+
+@needs_db
+@pytest.mark.anyio
+async def test_documents_in_other_currency(ctx):
+    from docx import Document
+    from openpyxl import load_workbook
+    from pptx import Presentation
+
+    client, files = ctx
+    ds = await monthly(client)
+    chart = await call(client, "make_chart", dataset_id=ds, x="hotel_code", y="room_revenue", chart_type="bar",
+                       title="Revenue", currency="cop")
+    payload = chart.structured_content["chart"]
+    assert all(v.startswith("COP ") for v in payload["series"][0]["values"])
+    assert "COP " in payload["svg_light"] and "€" not in payload["svg_light"]
+
+    r = await call(client, "make_spreadsheet", title="Revenue", currency="MXN",
+                   sheets=[{"name": "Monthly", "dataset_id": ds}])
+    ws = load_workbook(io.BytesIO(files.read(r.structured_content["file"]["file_id"])))["Monthly"]
+    assert ws["D2"].number_format == '"MXN "#,##0.00' and ws["C2"].number_format == "0.0%"
+
+    r = await call(client, "make_spreadsheet", title="Revenue", currency="USD",
+                   sheets=[{"name": "Monthly", "dataset_id": ds}])
+    ws = load_workbook(io.BytesIO(files.read(r.structured_content["file"]["file_id"])))["Monthly"]
+    assert ws["D2"].number_format == "$#,##0.00"
+
+    r = await call(client, "make_presentation", title="Revenue", currency="COP", slides=[
+        {"kind": "kpis", "title": "Revenue", "kpis": [{"label": "Revenue", "dataset_id": ds, "column": "room_revenue"}]},
+        {"kind": "table", "title": "Detail", "table": {"dataset_id": ds, "max_rows": 3}}])
+    prs = Presentation(io.BytesIO(files.read(r.structured_content["file"]["file_id"])))
+    tile = " ".join(sh.text_frame.text for sh in prs.slides[1].shapes if sh.has_text_frame)
+    assert "COP " in tile and "€" not in tile
+    table = next(sh for sh in prs.slides[2].shapes if sh.has_table).table
+    assert table.cell(1, 3).text.startswith("COP ")
+
+    r = await call(client, "make_report", title="Revenue", format="docx", currency="COP", sections=[
+        {"table": {"dataset_id": ds, "max_rows": 3}}])
+    doc = Document(io.BytesIO(files.read(r.structured_content["file"]["file_id"])))
+    assert doc.tables[0].cell(1, 3).text.startswith("COP ")
+
+    assert "ISO 4217" in await error(client, "make_chart", dataset_id=ds, x="month", y="room_revenue", title="t",
+                                     currency="pesos")
 
 
 # ---------- Latin American Spanish ----------

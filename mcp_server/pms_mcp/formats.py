@@ -20,7 +20,24 @@ CURRENCY_NAMES = re.compile(r"(^rate$|adr|revpar|revenue|spend|amount|price|char
                             r"|ingreso|tarifa|gasto|monto|importe|precio)")
 INTEGER_TYPES = {"int2", "int4", "int8"}
 NUMERIC_TYPES = INTEGER_TYPES | {"numeric", "float4", "float8"}
-CURRENCY_SYMBOL = "€"
+# Money is in each hotel's currency (ISO 4217 code). EUR and USD get their symbol, any other
+# currency its code and a space ("COP 1,234,000").
+DEFAULT_CURRENCY = "EUR"
+CURRENCY_SYMBOLS = {"EUR": "€", "USD": "$"}
+CURRENCY_CODE = re.compile(r"^[A-Z]{3}$")
+
+
+def normalize_currency(code: str | None) -> str:
+    """Upper-cased ISO 4217 code; ValueError for anything that isn't three letters."""
+    code = (code or DEFAULT_CURRENCY).strip().upper()
+    if not CURRENCY_CODE.match(code):
+        raise ValueError(f"Currency {code!r} is not an ISO 4217 code such as EUR, USD, COP or MXN.")
+    return code
+
+
+def currency_prefix(currency: str = DEFAULT_CURRENCY) -> str:
+    """'€' for EUR, '$' for USD, otherwise the code and a space ('COP ')."""
+    return CURRENCY_SYMBOLS.get(currency, f"{currency} ")
 
 
 def infer_kind(name: str, pg_type: str, values: list[Any]) -> Kind:
@@ -51,7 +68,7 @@ def to_date(value: Any) -> date | None:
     return None
 
 
-def format_value(value: Any, kind: Kind, lang: Lang = "en") -> str:
+def format_value(value: Any, kind: Kind, lang: Lang = "en", currency: str = DEFAULT_CURRENCY) -> str:
     """Full-precision display value (tables, tooltips, KPI tiles)."""
     if value is None:
         return "—"
@@ -62,7 +79,8 @@ def format_value(value: Any, kind: Kind, lang: Lang = "en") -> str:
     if kind == "points":
         return f"{value * 100:+.1f} {points_unit(lang)}"
     if kind == "currency":
-        return f"{CURRENCY_SYMBOL}{value:,.0f}" if abs(value) >= 10_000 else f"{CURRENCY_SYMBOL}{value:,.2f}"
+        prefix = currency_prefix(currency)
+        return f"{prefix}{value:,.0f}" if abs(value) >= 10_000 else f"{prefix}{value:,.2f}"
     if kind == "integer":
         return f"{value:,.0f}"
     if kind == "decimal":
@@ -77,11 +95,11 @@ def points_unit(lang: Lang) -> str:
     return "pp" if lang == "es" else "pts"
 
 
-def format_headline(value: Any, kind: Kind, lang: Lang = "en") -> str:
+def format_headline(value: Any, kind: Kind, lang: Lang = "en", currency: str = DEFAULT_CURRENCY) -> str:
     """Display value for KPI tiles: large money and counts compacted (€11.1M) so they fit."""
     if isinstance(value, (int, float)) and abs(value) >= 100_000 and kind in ("currency", "integer", "decimal"):
-        return (CURRENCY_SYMBOL if kind == "currency" else "") + compact(value)
-    return format_value(value, kind, lang)
+        return (currency_prefix(currency) if kind == "currency" else "") + compact(value)
+    return format_value(value, kind, lang, currency)
 
 
 def compact(value: float) -> str:
@@ -94,12 +112,12 @@ def compact(value: float) -> str:
     return f"{value:g}" if not float(value).is_integer() else f"{value:.0f}"
 
 
-def format_tick(value: float, kind: Kind, step: float) -> str:
+def format_tick(value: float, kind: Kind, step: float, currency: str = DEFAULT_CURRENCY) -> str:
     if kind in ("percent", "points"):
         decimals = 0 if step >= 0.01 else 1
         return f"{value * 100:.{decimals}f}" + ("%" if kind == "percent" else "")
     if kind == "currency":
-        return CURRENCY_SYMBOL + compact(value)
+        return currency_prefix(currency) + compact(value)
     return compact(value)
 
 
