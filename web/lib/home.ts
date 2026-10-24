@@ -8,21 +8,26 @@ export type HotelOverview = {
   currency: string;
   data_as_of: string | null; // when FNSrooms data was last imported; null for the sample hotels
   today: string;
-  month: { start: string; end: string };
+  period: { key: Period; start: string; end: string };
   occupancy_today: number | null;
   occupancy_today_change_pp: number | null;
   arrivals_today: number | null;
   departures_today: number | null;
-  adr_month: number | null;
-  adr_month_change: number | null;
-  revpar_month: number | null;
-  revpar_month_change: number | null;
-  revenue_month: number;
-  revenue_month_change: number | null;
+  adr_period: number | null;
+  adr_period_change: number | null;
+  revpar_period: number | null;
+  revpar_period_change: number | null;
+  revenue_period: number;
+  revenue_period_change: number | null;
   occupancy_next_30: number | null;
   revenue_next_30: number;
   series: Record<string, (number | null)[]>;
+  alerts: { key: AlertKey; value: number }[];
 };
+
+export const PERIODS = ["mtd", "last_month", "last_7", "last_30", "ytd"] as const;
+export type Period = (typeof PERIODS)[number];
+export type AlertKey = "occupancy_today" | "adr" | "revenue" | "next_30";
 
 export type Recommendation = {
   title: string;

@@ -121,6 +121,35 @@ test("the home screen shows the key figures, recommendations and questions", asy
   await expect(page.getByTestId("assistant-message")).toContainText("Ran a SQL query");
 });
 
+test("the period picker changes the key figures and is remembered", async ({ page }) => {
+  await open(page);
+  const kpis = page.getByTestId("kpis");
+  await expect(kpis).toContainText("ADR · this month");
+  const picker = page.getByLabel("Period", { exact: true }).filter({ visible: true });
+  await picker.selectOption("ytd");
+  await expect(kpis).toContainText("ADR · this year");
+  await expect(kpis).toContainText("Room revenue · this year");
+  await page.reload();
+  await expect(page.getByTestId("kpis")).toContainText("ADR · this year");
+  await page.getByLabel("Period", { exact: true }).filter({ visible: true }).selectOption("mtd");
+  await expect(page.getByTestId("kpis")).toContainText("ADR · this month");
+});
+
+test("the bell lists the hotel's alerts", async ({ page }) => {
+  await open(page);
+  await page.getByRole("button", { name: /^Alerts/ }).click();
+  const list = page.getByTestId("alerts");
+  await expect(list).toContainText("Alerts · Tagus Riverside Hotel");
+  await expect(page.getByTestId("alerts-badge")).toHaveCount(0); // seen once opened
+  const first = list.getByRole("button").first();
+  if (await first.count()) {
+    await first.click();
+    await expect(page.getByTestId("assistant-message")).toBeVisible();
+  } else {
+    await expect(list).toContainText("No alerts today");
+  }
+});
+
 test("a key figure asks about itself", async ({ page }) => {
   await open(page);
   await page.getByTestId("kpis").getByRole("button", { name: /Arrivals · Departures/ }).click();

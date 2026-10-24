@@ -17,10 +17,6 @@ from .scheduler import next_run
 
 log = logging.getLogger(__name__)
 
-# Alerts: a change against the same days a year earlier at or past these.
-ALERT_OCCUPANCY_PP = -0.05
-ALERT_ADR = -0.05
-ALERT_REVENUE = -0.10
 
 TEXT = {
     "en": {
@@ -37,6 +33,7 @@ TEXT = {
         "alert_occupancy": "occupancy today is {change} against the same day last year.",
         "alert_adr": "ADR this month is {change} against last year.",
         "alert_revenue": "room revenue this month is {change} against last year.",
+        "alert_next_30": "only {value} of the next 30 days is booked.",
         "recommendations": "Today's recommendations",
         "open": "Open Hotel Super Intelligence",
         "footer": "You get this email every morning at {time}. Turn it off in the website's account menu.",
@@ -59,6 +56,7 @@ TEXT = {
         "alert_occupancy": "la ocupación de hoy está {change} frente al mismo día del año pasado.",
         "alert_adr": "el ADR del mes está {change} frente al año pasado.",
         "alert_revenue": "los ingresos por habitaciones del mes están {change} frente al año pasado.",
+        "alert_next_30": "solo está reservado el {value} de los próximos 30 días.",
         "recommendations": "Recomendaciones del día",
         "open": "Abrir Hotel Super Intelligence",
         "footer": "Recibes este correo cada mañana a las {time}. Desactívalo en el menú de tu cuenta en el sitio.",
@@ -105,14 +103,14 @@ def long_date(day: str, language: str) -> str:
 
 
 def alerts(h: dict[str, Any], language: str) -> list[str]:
-    """Plain-language alerts for figures well below last year's."""
+    """The overview's alerts (figures well below last year's, low occupancy ahead) in plain words."""
     t, out = TEXT[language], []
-    if (c := h.get("occupancy_today_change_pp")) is not None and c <= ALERT_OCCUPANCY_PP:
-        out.append(t["alert_occupancy"].format(change=signed(c, " pp")))
-    if (c := h.get("adr_month_change")) is not None and c <= ALERT_ADR:
-        out.append(t["alert_adr"].format(change=signed(c, "%")))
-    if (c := h.get("revenue_month_change")) is not None and c <= ALERT_REVENUE:
-        out.append(t["alert_revenue"].format(change=signed(c, "%")))
+    for a in h.get("alerts") or []:
+        if a["key"] == "next_30":
+            out.append(t["alert_next_30"].format(value=pct(a["value"])))
+        elif a["key"] in ("occupancy_today", "adr", "revenue"):
+            unit = " pp" if a["key"] == "occupancy_today" else "%"
+            out.append(t[f"alert_{a['key'].removesuffix('_today')}"].format(change=signed(a["value"], unit)))
     return out
 
 
@@ -132,11 +130,11 @@ def tiles(h: dict[str, Any], language: str) -> list[tuple[str, str, str | None, 
         "occupancy": (pct(h.get("occupancy_today")), vs(signed(h.get("occupancy_today_change_pp"), " pp")),
                       tone(h.get("occupancy_today_change_pp"))),
         "moves": (f"{h.get('arrivals_today') or 0} · {h.get('departures_today') or 0}", t["today"], "flat"),
-        "adr": (money(h.get("adr_month"), cur), vs(signed(h.get("adr_month_change"), "%")), tone(h.get("adr_month_change"))),
-        "revpar": (money(h.get("revpar_month"), cur), vs(signed(h.get("revpar_month_change"), "%")),
-                   tone(h.get("revpar_month_change"))),
-        "revenue": (money(h.get("revenue_month"), cur), vs(signed(h.get("revenue_month_change"), "%")),
-                    tone(h.get("revenue_month_change"))),
+        "adr": (money(h.get("adr_period"), cur), vs(signed(h.get("adr_period_change"), "%")), tone(h.get("adr_period_change"))),
+        "revpar": (money(h.get("revpar_period"), cur), vs(signed(h.get("revpar_period_change"), "%")),
+                   tone(h.get("revpar_period_change"))),
+        "revenue": (money(h.get("revenue_period"), cur), vs(signed(h.get("revenue_period_change"), "%")),
+                    tone(h.get("revenue_period_change"))),
         "next30": (pct(h.get("occupancy_next_30")),
                    t["on_books"].format(money=money(h.get("revenue_next_30"), cur, 100_000)), "flat"),
     }

@@ -165,15 +165,16 @@ class Overviews:
 
     def __init__(self, agent: ChatAgent):
         self.agent = agent
-        self.cache: dict[tuple[str, str], tuple[float, dict[str, Any]]] = {}
+        self.cache: dict[tuple[str, str, str], tuple[float, dict[str, Any]]] = {}
 
-    async def get(self, user: str | None, hotel: str | None = None) -> dict[str, Any]:
-        key = (user or "", (hotel or "").upper())
+    async def get(self, user: str | None, hotel: str | None = None, period: str = "mtd") -> dict[str, Any]:
+        key = (user or "", (hotel or "").upper(), period)
         hit = self.cache.get(key)
         if hit and time.monotonic() - hit[0] < self.TTL:
             return hit[1]
+        args = {"period": period, **({"hotel": hotel} if hotel else {})}
         async with self.agent._mcp(user) as mcp:
-            result = await mcp.call_tool("get_overview", {"hotel": hotel} if hotel else {})
+            result = await mcp.call_tool("get_overview", args)
         if result.is_error or result.structured_content is None:
             text = "".join(getattr(c, "text", "") for c in result.content)
             raise RecommendationError(text or "No key figures came back.")

@@ -4,6 +4,8 @@
 export type Locale = "en" | "es";
 export type StarterCategory = "occupancy" | "rates" | "channels" | "bookings" | "forecast" | "documents";
 export type Starter = { cat: StarterCategory; kind?: string; text: string };
+type Period = "mtd" | "last_month" | "last_7" | "last_30" | "ytd";
+type AlertKey = "occupancy_today" | "adr" | "revenue" | "next_30";
 export const LOCALES: Locale[] = ["en", "es"];
 export const LOCALE_COOKIE = "pms_lang";
 /** BCP 47 tags for dates and numbers: Latin American Spanish. */
@@ -51,18 +53,39 @@ const en = {
   kpiOccupancyToday: "Occupancy today",
   kpiMoves: "Arrivals · Departures",
   kpiMovesSub: "today",
-  kpiAdr: "ADR this month",
-  kpiRevpar: "RevPAR this month",
-  kpiRevenue: "Room revenue this month",
+  kpiAdr: (p: string) => `ADR · ${p}`,
+  kpiRevpar: (p: string) => `RevPAR · ${p}`,
+  kpiRevenue: (p: string) => `Room revenue · ${p}`,
+  period: "Period",
+  periods: {
+    mtd: "This month", last_month: "Last month", last_7: "Last 7 days", last_30: "Last 30 days", ytd: "This year",
+  } as Record<Period, string>,
+  periodShort: {
+    mtd: "this month", last_month: "last month", last_7: "last 7 days", last_30: "last 30 days", ytd: "this year",
+  } as Record<Period, string>,
+  alertsTitle: "Alerts",
+  noAlerts: "No alerts today: the key figures are in line with last year.",
+  alertText: {
+    occupancy_today: (v: string) => `Occupancy today is ${v} against the same day last year.`,
+    adr: (v: string) => `ADR is ${v} against the same days last year.`,
+    revenue: (v: string) => `Room revenue is ${v} against the same days last year.`,
+    next_30: (v: string) => `Only ${v} of the next 30 days is booked.`,
+  } as Record<AlertKey, (v: string) => string>,
+  alertAsk: {
+    occupancy_today: (h: string) => `Why is ${h}'s occupancy today below the same day last year, and what can I do about it?`,
+    adr: (h: string) => `Why is ${h}'s ADR below last year? Break it down by room type and channel.`,
+    revenue: (h: string) => `Why is ${h}'s room revenue below last year? Is it occupancy or rate?`,
+    next_30: (h: string) => `Where are the gaps in ${h}'s next 30 days, and how can I fill them?`,
+  } as Record<AlertKey, (h: string) => string>,
   kpiNext30: "Booked next 30 days",
   kpiOnBooks: (money: string) => `${money} on the books`,
   vsYear: (change: string, year: number) => `${change} vs ${year}`,
   kpiAsk: {
     occupancy: (h: string) => `How is ${h}'s occupancy today compared with the same day last year, and what's coming this week?`,
     moves: (h: string) => `Who arrives and who leaves ${h} today?`,
-    adr: (h: string) => `Why is ${h}'s ADR this month different from last year? Break it down by room type and channel.`,
-    revpar: (h: string) => `Explain ${h}'s RevPAR this month against last year: how much comes from occupancy and how much from rate?`,
-    revenue: (h: string) => `Show ${h}'s room revenue this month day by day against last year.`,
+    adr: (h: string, p: string) => `Why is ${h}'s ADR (${p}) different from last year? Break it down by room type and channel.`,
+    revpar: (h: string, p: string) => `Explain ${h}'s RevPAR (${p}) against last year: how much comes from occupancy and how much from rate?`,
+    revenue: (h: string, p: string) => `Show ${h}'s room revenue (${p}) day by day against last year.`,
     next30: (h: string) => `What does ${h} have on the books for the next 30 days, day by day, and where are the gaps?`,
   },
   kpisFailed: "The key figures aren't available right now.",
@@ -292,18 +315,39 @@ const es: Messages = {
   kpiOccupancyToday: "Ocupación hoy",
   kpiMoves: "Llegadas · Salidas",
   kpiMovesSub: "hoy",
-  kpiAdr: "ADR del mes",
-  kpiRevpar: "RevPAR del mes",
-  kpiRevenue: "Ingresos del mes",
+  kpiAdr: (p) => `ADR · ${p}`,
+  kpiRevpar: (p) => `RevPAR · ${p}`,
+  kpiRevenue: (p) => `Ingresos · ${p}`,
+  period: "Periodo",
+  periods: {
+    mtd: "Este mes", last_month: "El mes pasado", last_7: "Últimos 7 días", last_30: "Últimos 30 días", ytd: "Este año",
+  },
+  periodShort: {
+    mtd: "este mes", last_month: "mes pasado", last_7: "últimos 7 días", last_30: "últimos 30 días", ytd: "este año",
+  },
+  alertsTitle: "Alertas",
+  noAlerts: "Sin alertas hoy: los indicadores van en línea con el año pasado.",
+  alertText: {
+    occupancy_today: (v) => `La ocupación de hoy está ${v} frente al mismo día del año pasado.`,
+    adr: (v) => `El ADR está ${v} frente a los mismos días del año pasado.`,
+    revenue: (v) => `Los ingresos por habitaciones están ${v} frente a los mismos días del año pasado.`,
+    next_30: (v) => `Solo está reservado el ${v} de los próximos 30 días.`,
+  },
+  alertAsk: {
+    occupancy_today: (h) => `¿Por qué la ocupación de ${h} hoy está por debajo del mismo día del año pasado y qué puedo hacer?`,
+    adr: (h) => `¿Por qué el ADR de ${h} está por debajo del año pasado? Desglósalo por tipo de habitación y canal.`,
+    revenue: (h) => `¿Por qué los ingresos por habitaciones de ${h} están por debajo del año pasado? ¿Es la ocupación o la tarifa?`,
+    next_30: (h) => `¿Dónde están los huecos de ${h} en los próximos 30 días y cómo puedo llenarlos?`,
+  },
   kpiNext30: "Reservado 30 días",
   kpiOnBooks: (money) => `${money} reservados`,
   vsYear: (change, year) => `${change} vs ${year}`,
   kpiAsk: {
     occupancy: (h) => `¿Cómo está la ocupación de ${h} hoy frente al mismo día del año pasado y qué viene esta semana?`,
     moves: (h) => `¿Quiénes llegan y quiénes salen hoy de ${h}?`,
-    adr: (h) => `¿Por qué el ADR de ${h} este mes es distinto al del año pasado? Desglósalo por tipo de habitación y canal.`,
-    revpar: (h) => `Explica el RevPAR de ${h} este mes frente al año pasado: ¿cuánto viene de la ocupación y cuánto de la tarifa?`,
-    revenue: (h) => `Muestra los ingresos por habitaciones de ${h} de este mes día por día frente al año pasado.`,
+    adr: (h, p) => `¿Por qué el ADR de ${h} (${p}) es distinto al del año pasado? Desglósalo por tipo de habitación y canal.`,
+    revpar: (h, p) => `Explica el RevPAR de ${h} (${p}) frente al año pasado: ¿cuánto viene de la ocupación y cuánto de la tarifa?`,
+    revenue: (h, p) => `Muestra los ingresos por habitaciones de ${h} (${p}) día por día frente al año pasado.`,
     next30: (h) => `¿Qué tiene ${h} reservado para los próximos 30 días, día por día, y dónde están los huecos?`,
   },
   kpisFailed: "Los indicadores no están disponibles en este momento.",

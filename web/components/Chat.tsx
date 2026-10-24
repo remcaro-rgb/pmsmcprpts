@@ -10,10 +10,11 @@ import {
   type Message,
   type SavedConversation,
 } from "@/lib/chat";
-import type { HotelOverview } from "@/lib/home";
+import { PERIODS, type HotelOverview, type Period } from "@/lib/home";
 import { INTL_LOCALE } from "@/lib/i18n";
 import { readSse } from "@/lib/sse";
 import type { Theme } from "@/lib/theme";
+import AlertsBell from "./AlertsBell";
 import AssistantMessageView from "./AssistantMessageView";
 import Home from "./Home";
 import { Icon } from "./Icons";
@@ -22,6 +23,7 @@ import Sidebar from "./Sidebar";
 import UserMenu from "./UserMenu";
 
 const HOTEL_KEY = "pms_hotel";
+const PERIOD_KEY = "pms_period";
 
 type Recognition = { lang: string; interimResults: boolean; start: () => void; stop: () => void;
   onresult: ((e: { results: ArrayLike<ArrayLike<{ transcript: string }>> }) => void) | null; onend: (() => void) | null };
@@ -48,6 +50,7 @@ export default function Chat({
   const [overview, setOverview] = useState<HotelOverview[] | null>(null);
   const [overviewFailed, setOverviewFailed] = useState(false);
   const [hotel, setHotel] = useState<string | null>(null);
+  const [period, setPeriod] = useState<Period>("mtd");
   const [listening, setListening] = useState(false);
   const [canDictate, setCanDictate] = useState(false);
   const recognitionRef = useRef<Recognition | null>(null);
@@ -107,10 +110,10 @@ export default function Chat({
     }
   }
 
-  async function loadOverview() {
+  async function loadOverview(forPeriod: Period = period) {
     setOverviewFailed(false);
     try {
-      const res = await fetch("/api/overview", { cache: "no-store" });
+      const res = await fetch(`/api/overview?period=${forPeriod}`, { cache: "no-store" });
       if (!res.ok) throw new Error(String(res.status));
       const hotels: HotelOverview[] = (await res.json()).hotels ?? [];
       let saved: string | null = null;
@@ -122,6 +125,14 @@ export default function Chat({
     } catch {
       setOverviewFailed(true);
     }
+  }
+
+  function pickPeriod(next: Period) {
+    setPeriod(next);
+    try {
+      localStorage.setItem(PERIOD_KEY, next);
+    } catch {}
+    loadOverview(next);
   }
 
   function pickHotel(code: string) {
@@ -153,7 +164,13 @@ export default function Chat({
 
   useEffect(() => {
     setCanDictate(!!speechRecognition());
-    loadOverview();
+    let saved: Period = "mtd";
+    try {
+      const p = localStorage.getItem(PERIOD_KEY);
+      if (p && (PERIODS as readonly string[]).includes(p)) saved = p as Period;
+    } catch {}
+    setPeriod(saved);
+    loadOverview(saved);
     refreshConversations();
     const id = new URL(window.location.href).searchParams.get("c");
     if (id) openConversation(id);
@@ -201,7 +218,7 @@ export default function Chat({
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ message: text, conversation_id: conversationId, language: locale, hotel }),
+        body: JSON.stringify({ message: text, conversation_id: conversationId, language: locale, hotel, period }),
         signal: controller.signal,
       });
       if (!res.ok || !res.body) {
@@ -303,7 +320,23 @@ export default function Chat({
               </span>
             )
           )}
+          <label className="hidden items-center gap-1.5 rounded-xl border border-stone-200 bg-white py-1 pl-2.5 pr-1 text-sm font-medium sm:flex dark:border-stone-700 dark:bg-stone-900">
+            <Icon name="calendar" className="size-4 text-stone-500" />
+            <select
+              value={period}
+              onChange={(e) => pickPeriod(e.target.value as Period)}
+              aria-label={t.period}
+              className="cursor-pointer bg-transparent py-0.5 outline-none"
+            >
+              {PERIODS.map((p) => (
+                <option key={p} value={p}>
+                  {t.periods[p]}
+                </option>
+              ))}
+            </select>
+          </label>
           <div className="ml-auto" />
+          <AlertsBell hotel={current} onAsk={send} />
           <button
             onClick={newChat}
             disabled={busy || messages.length === 0}
@@ -325,7 +358,7 @@ export default function Chat({
           className="flex-1 overflow-y-auto"
         >
           {messages.length === 0 ? (
-            <Home name={name} hotel={current} failed={overviewFailed} onAsk={send} onRetry={loadOverview} />
+            <Home name={name} hotel={current} failed={overviewFailed} period={period} onPeriod={pickPeriod} onAsk={send} onRetry={() => loadOverview()} />
           ) : (
             <div className="mx-auto max-w-3xl space-y-6 px-4 py-6">
               {messages.map((m, i) =>

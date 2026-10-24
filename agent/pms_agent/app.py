@@ -31,6 +31,7 @@ FILE_ID = re.compile(r"^[0-9a-f]{32}$")
 
 
 HOTEL_CODE = r"^[A-Za-z0-9_-]{1,12}$"
+Period = Literal["mtd", "last_month", "last_7", "last_30", "ytd"]
 
 
 class ChatRequest(BaseModel):
@@ -40,6 +41,8 @@ class ChatRequest(BaseModel):
     language: Literal["en", "es"] = "en"
     # The hotel picked in the website's header (a code), assumed unless the question names others.
     hotel: str | None = Field(default=None, pattern=HOTEL_CODE)
+    # The key-figure period picked there, for questions that don't say which dates.
+    period: Period | None = None
 
 
 class ConversationChange(BaseModel):
@@ -284,11 +287,12 @@ def create_app(settings: Settings | None = None, client: Any = None, mcp_target:
 
     @app.get("/api/overview")
     async def overview(hotel: str | None = Query(default=None, pattern=HOTEL_CODE),
+                       period: Period = Query(default="mtd"),
                        x_pms_user: str | None = Header(default=None)) -> dict[str, Any]:
-        """The home screen's key figures for the user's hotels, or one of them."""
+        """The home screen's key figures for the user's hotels, or one of them, for a period."""
         user = await active_user(x_pms_user, "en")
         try:
-            return await overviews.get(user, hotel)
+            return await overviews.get(user, hotel, period)
         except Exception:
             log.exception("overview failed")
             raise HTTPException(503, "The key figures aren't available right now.") from None
@@ -342,7 +346,7 @@ def create_app(settings: Settings | None = None, client: Any = None, mcp_target:
             async with conv.lock:
                 yield _sse("conversation", {"id": conv.id})
                 events = []
-                async for ev in agent.run_turn(conv, req.message, user, req.language, req.hotel):
+                async for ev in agent.run_turn(conv, req.message, user, req.language, req.hotel, req.period):
                     events.append(ev)
                     yield _sse(ev["event"], ev["data"])
                 # Only completed turns are kept, matching the history (failed turns are rolled back).

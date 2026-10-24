@@ -318,15 +318,17 @@ def build_server(dsn: str, statement_timeout_ms: int = 15000, artifacts_dir: str
         })
 
     @mcp.tool(annotations=READ_ONLY)
-    async def get_overview(hotel: str | None = None) -> CallToolResult:
+    async def get_overview(hotel: str | None = None,
+                           period: Literal["mtd", "last_month", "last_7", "last_30", "ytd"] = "mtd") -> CallToolResult:
         """Today's key figures per hotel, as on the website's home screen: occupancy today,
-        arrivals and departures today, ADR, RevPAR and room revenue this month so far, and
-        occupancy and room revenue on the books for the next 30 days. Changes compare with the
-        same days a year earlier (occupancy in points, the others relative: 0.08 = +8%).
-        "Today" is each hotel's first date that isn't an actual yet.
+        arrivals and departures today, ADR, RevPAR and room revenue for a period of actuals, and
+        occupancy and room revenue on the books for the next 30 days, plus alerts for figures well
+        below last year's. Changes compare with the same days a year earlier (occupancy in points,
+        the others relative: 0.08 = +8%). "Today" is each hotel's first date that isn't an actual yet.
 
         Args:
             hotel: A hotel code such as "FRA"; omit for every hotel you can see.
+            period: mtd (this month so far), last_month, last_7 or last_30 days, ytd (this year so far).
         """
         schema = await load_schema()
         hotels = {h["code"]: h for h in schema["hotels"]}
@@ -347,7 +349,7 @@ def build_server(dsn: str, statement_timeout_ms: int = 15000, artifacts_dir: str
                     moves[code] = (a + arrivals, d + departures)
         except QueryError as e:
             raise ToolError(str(e)) from e
-        figures = build_overview(daily.rows, {c: moves.get(c, (0, 0)) for c in codes})
+        figures = build_overview(daily.rows, {c: moves.get(c, (0, 0)) for c in codes}, period)
         out = []
         for code, h in hotels.items():
             if code in figures:

@@ -76,8 +76,10 @@ async def test_overview_and_hotel_context():
         r = await http.get("/api/overview", params={"hotel": "FRA"})
         assert r.json()["hotels"][0]["hotel_code"] == "FRA"
         assert (await http.get("/api/overview", params={"hotel": "x;y"})).status_code == 422
-        await http.post("/api/chat", json={"message": "How is today?", "hotel": "FRA"})
-    assert "hotel FRA selected" in client.messages.requests[0]["system"]
+        assert (await http.get("/api/overview", params={"period": "decade"})).status_code == 422
+        await http.post("/api/chat", json={"message": "How is today?", "hotel": "FRA", "period": "ytd"})
+    system = client.messages.requests[0]["system"]
+    assert "hotel FRA selected" in system and "showing this year so far" in system
 
 
 async def test_prepared_in_the_morning_and_kept_across_restarts():
