@@ -14,34 +14,30 @@ export type TableResult = {
 
 export type FileInfo = { file_id: string; filename: string; mime: string; size: number };
 
-/** One rendered layout of a chart: SVGs for both themes plus the geometry hover needs. */
-export type ChartLayout = {
-  svg_light: string;
-  svg_dark: string;
-  width: number;
-  height: number;
-  plot: { left: number; right: number; top: number; bottom: number };
-  x_positions: number[];
+/** Chart payload from make_chart: a Vega-Lite spec with its data, light and dark themes, number
+ * and date locales, and the table behind "Show data". */
+export type ChartPayload = {
+  kind: "vega-lite";
+  title: string;
+  spec: Record<string, unknown>;
+  config: { light: Record<string, unknown>; dark: Record<string, unknown> };
+  locale: { number: Record<string, unknown>; time: Record<string, unknown> };
+  table: { columns: string[]; rows: string[][]; numeric: boolean[] };
 };
 
-/** Chart payload from make_chart: a wide layout, an optional narrow (phone) layout, and the
- * formatted values shown on hover and in the data table. */
-export type ChartPayload = ChartLayout & {
-  kind: "line" | "bar";
-  title: string;
-  narrow?: ChartLayout;
-  x_labels: string[];
-  series: { name: string; color_light: string; color_dark: string; values: string[] }[];
-};
+/** Charts saved before the Vega-Lite charts: a static SVG per theme. */
+export type LegacyChart = { title: string; svg_light: string; svg_dark: string };
 
 export function fileOf(result: unknown): FileInfo | null {
   const f = (result as { file?: FileInfo } | null)?.file;
   return f && typeof f.file_id === "string" ? f : null;
 }
 
-export function chartOf(result: unknown): ChartPayload | null {
-  const c = (result as { chart?: ChartPayload } | null)?.chart;
-  return c && typeof c.svg_light === "string" ? c : null;
+export function chartOf(result: unknown): ChartPayload | LegacyChart | null {
+  const c = (result as { chart?: ChartPayload | LegacyChart } | null)?.chart;
+  if (!c) return null;
+  if ("kind" in c && c.kind === "vega-lite" && c.spec) return c;
+  return "svg_light" in c && typeof c.svg_light === "string" ? c : null;
 }
 
 export const fileUrl = (f: FileInfo) => `/api/files/${f.file_id}`;

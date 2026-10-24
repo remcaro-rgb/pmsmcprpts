@@ -160,15 +160,17 @@ access to the database. Tools:
 | `run_sql(query, preview_rows=100)` | One read-only `SELECT`/`WITH` query. The full result (up to 50k rows) is stored as a dataset; returns its `dataset_id`, columns, row count and a preview. |
 | `get_kpis(start, end, hotels?, granularity, by_hotel)` | Occupancy, ADR, RevPAR and revenue by day/week/month/quarter/year, with ratios aggregated correctly. |
 | `get_dataset(dataset_id, offset, limit)` | Page through a stored result. |
-| `make_chart(dataset_id, x, y, title, chart_type, series?, ...)` | Line or bar chart of one measure, shown interactively in the chat and saved as a PNG. Returns a `chart_id` for decks and reports. |
+| `make_chart(dataset_id, title, chart_type, x, y, series?, trend?, y2?, spec?, ...)` | Any analytic chart, drawn with [Vega-Lite](https://vega.github.io/vega-lite/): line, area, bar (grouped, stacked, horizontal), scatter, pie, donut, heatmap, histogram, box plot, with optional trend lines (linear, moving average) and a second measure on its own axis; anything else as a Vega-Lite spec over the dataset. Shown interactively in the chat and saved as a PNG; returns a `chart_id` for decks and reports. |
 | `make_spreadsheet(title, sheets)` | Excel workbook, one sheet per dataset, with number formats, frozen headers, filters and an About sheet listing each sheet's source query. |
 | `make_presentation(title, slides, subtitle?)` | 16:9 PowerPoint deck: title slide, then KPI tiles, charts (with optional takeaways), tables and bullet slides, each with a source footer. |
 | `make_report(title, sections, format)` | PDF or Word report: sections with headings, narrative, KPI tiles, charts and tables. |
 
 The document tools read every number from stored datasets (by `dataset_id` and column), never
-from text the model types, so the numbers in a file always match the query. Charts follow a
-validated colour-blind-safe palette, use one y-axis per chart, and come with light and dark
-variants plus a phone layout. Generated files go to `PMS_ARTIFACTS_DIR`, a volume shared with the
+from text the model types, so the numbers in a file always match the query. Charts are Vega-Lite
+specs filled with the dataset's rows: a spec from the model may not carry data of its own or load
+anything from a URL, and it is drawn as a PNG on the server (vl-convert) and interactively in the
+website (vega-embed, with expressions interpreted rather than compiled and network loads
+blocked). They follow a validated colour-blind-safe palette in light and dark. Generated files go to `PMS_ARTIFACTS_DIR`, a volume shared with the
 agent, which serves them for download, and expire after 24 hours. The chart and document tools take
 `language` (`en`, or `es` for Latin American Spanish) for the dates, column headers and source
 lines they add.
@@ -390,9 +392,9 @@ Run it locally with `pip install -r agent/requirements.txt`, then `python -m pms
 
 `web/` is a Next.js chat app. Chat messages are rate-limited per user, or per IP without
 sign-in (`CHAT_RATE_LIMIT`, default `20/600`: 20 messages per 10 minutes). Answers stream in as Markdown. Each tool step is a collapsible card
-with its input (the SQL, or the KPI parameters) and the result table. Charts appear inline with a
-hover crosshair and tooltip (also reachable with the arrow keys), a "Show data" table and a PNG
-download. Spreadsheets, decks and reports appear as download cards. There's a Stop button and
+with its input (the SQL, or the KPI parameters) and the result table. Charts appear inline,
+interactive (tooltips on every mark), fitted to the column at any width, with a "Show data" table
+and a PNG download. Spreadsheets, decks and reports appear as download cards. There's a Stop button and
 starter questions, and it works at phone width. It starts in light colors; the sun/moon button in the header switches to dark (remembered in the `pms_theme` cookie). A sidebar (a drawer on
 phones) lists saved conversations to reopen or delete; the open one is kept in the address (`?c=…`). The browser only talks
 to the site's own `/api/chat` and `/api/files/{id}` routes, which proxy the agent (`AGENT_URL`).
@@ -598,7 +600,7 @@ Website:
 
 ```bash
 cd web
-npm test                      # unit tests: SSE parser, stream-event reducer, chart hover, sign-in helpers
+npm test                      # unit tests: SSE parser, stream-event reducer, chart payloads, sign-in helpers
 npm run build
 PMS_DATABASE_URL=postgresql://pms_readonly:pms_readonly@localhost:5432/pms npm run e2e
 ```
@@ -610,9 +612,9 @@ user for one hotel, and that user's answers include only that hotel.
 
 The browser tests start the stand-in agent and the production build, then check a starter
 question end to end (tool card, SQL, result table, Markdown answer), follow-up questions in one
-conversation, Stop, refusals, an interactive chart (hover, keyboard, data table, PNG download) and
-downloading a generated .xlsx, .pptx and .pdf. The stand-in understands "chart", "excel", "deck"
-and "report" in a question. If Playwright's own Chromium isn't installed, set
+conversation, Stop, refusals, interactive charts (tooltips, bars with a trend line and a second
+axis, data table, PNG download) and downloading a generated .xlsx, .pptx and .pdf. The stand-in
+understands "trend", "chart", "excel", "deck" and "report" in a question. If Playwright's own Chromium isn't installed, set
 `PW_CHROMIUM_PATH` to a Chromium binary.
 
 ### Live check against the Claude API

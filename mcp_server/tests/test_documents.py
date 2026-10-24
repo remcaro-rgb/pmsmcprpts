@@ -99,20 +99,51 @@ async def test_make_chart(ctx):
     r = await call(client, "make_chart", dataset_id=ds, x="month", y="occupancy", series="hotel_code",
                    title="Occupancy by hotel", subtitle="Monthly, H1 2026")
     full = r.structured_content
-    assert full["series"] == ["BCN", "LIS", "OPO"] and full["points"] == 6
+    assert full["series"] == ["BCN", "LIS", "OPO"] and full["rows"] == 18 and full["type"] == "line"
     chart = full["chart"]
-    assert chart["svg_light"].startswith("<svg") and "#2a78d6" in chart["svg_light"]
-    assert "#3987e5" in chart["svg_dark"]
-    assert len(chart["x_positions"]) == 6 and chart["x_labels"][0] == "January 2026"
-    assert chart["narrow"]["width"] == 420 and len(chart["narrow"]["x_positions"]) == 6
-    assert chart["series"][0]["values"][0].endswith("%")
-    # The model gets the summary only, not the SVGs.
-    assert "svg_light" not in r.content[0].text and full["chart_id"] in r.content[0].text
+    # A Vega-Lite spec with the dataset's rows, both themes, and locales for the browser.
+    spec = chart["spec"]
+    assert chart["kind"] == "vega-lite" and spec["mark"]["type"] == "line" and len(spec["data"]["values"]) == 18
+    assert spec["encoding"]["x"]["type"] == "temporal" and spec["encoding"]["color"]["field"] == "hotel_code"
+    assert spec["data"]["values"][0]["month"].endswith("T00:00:00")  # the same day in every time zone
+    assert chart["config"]["light"]["range"]["category"][0] == "#2a78d6"
+    assert chart["config"]["dark"]["range"]["category"][0] == "#3987e5"
+    assert chart["locale"]["time"]["months"][0] == "January"
+    table = chart["table"]
+    assert table["columns"] == ["Month", "BCN", "LIS", "OPO"] and table["rows"][0][0] == "January 2026"
+    assert table["rows"][0][1].endswith("%")
+    # The model gets the summary and the image, not the payload.
+    assert '"spec"' not in r.content[0].text and full["chart_id"] in r.content[0].text
+    assert r.content[1].type == "image"
     assert files.read(full["chart_id"])[:8] == b"\x89PNG\r\n\x1a\n"
 
-    bar = await call(client, "make_chart", dataset_id=ds, x="hotel_code", y="room_revenue", chart_type="bar",
-                     title="Revenue")
-    assert bar.structured_content["chart"]["kind"] == "bar"
+    # Bars with a trend line and a second measure on its own axis.
+    combo = (await call(client, "make_chart", dataset_id=ds, x="month", y="room_revenue", chart_type="bar",
+                        series="hotel_code", trend="linear", y2="occupancy", title="Revenue and occupancy",
+                        currency="COP")).structured_content["chart"]
+    assert [list(layer) for layer in combo["spec"]["layer"]][1] == ["mark", "encoding"]
+    assert combo["spec"]["resolve"] == {"scale": {"y": "independent"}}
+    assert any(t.get("as") == "_trend" for layer in combo["spec"]["layer"][0]["layer"]
+               for t in layer.get("transform", []))
+    assert combo["locale"]["number"]["currency"] == ["COP ", ""]
+
+    for kind in ("stacked_bar", "horizontal_bar", "area", "stacked_area", "boxplot", "heatmap"):
+        await call(client, "make_chart", dataset_id=ds, x="month", y="occupancy", series="hotel_code",
+                   chart_type=kind, title=kind)
+    await call(client, "make_chart", dataset_id=ds, x="hotel_code", y="room_revenue", chart_type="donut",
+               title="Share")
+    await call(client, "make_chart", dataset_id=ds, x="occupancy", y="room_revenue", chart_type="scatter",
+               trend="linear", title="Scatter")
+    await call(client, "make_chart", dataset_id=ds, x="occupancy", chart_type="histogram", title="Spread")
+
+    # Anything else as a Vega-Lite spec over the dataset.
+    custom = await call(client, "make_chart", dataset_id=ds, title="With the average", spec={"layer": [
+        {"mark": "bar", "encoding": {"x": {"field": "hotel_code", "type": "nominal"},
+                                     "y": {"aggregate": "sum", "field": "room_revenue", "type": "quantitative"}}},
+        {"mark": "rule", "encoding": {"y": {"aggregate": "mean", "field": "room_revenue",
+                                            "type": "quantitative"}}}]})
+    assert custom.structured_content["type"] == "custom"
+    assert custom.structured_content["chart"]["spec"]["title"]["text"] == "With the average"
 
 
 @needs_db
@@ -125,9 +156,22 @@ async def test_make_chart_rejects_bad_input(ctx):
     assert "Unknown or expired" in await error(client, "make_chart", dataset_id="ds_x", x="a", y="b", title="t")
     nulls = (await call(client, "run_sql", query="SELECT 'a' AS x, NULL::numeric AS v")).structured_content
     assert "no values" in await error(client, "make_chart", dataset_id=nulls["dataset_id"], x="x", y="v", title="t")
-    many = (await call(client, "run_sql", query="SELECT id::text AS g, 1 AS d, 2 AS v FROM guests LIMIT 9")
+    many = (await call(client, "run_sql", query="SELECT id::text AS g, 1 AS d, 2 AS v FROM guests LIMIT 13")
             ).structured_content["dataset_id"]
     assert "too many" in await error(client, "make_chart", dataset_id=many, x="d", y="v", series="g", title="t")
+    # Specs carry no data of their own and load nothing from the network; fields must exist.
+    assert "may not contain 'data'" in await error(client, "make_chart", dataset_id=ds, title="t",
+                                                   spec={"data": {"url": "https://example.com/x.csv"},
+                                                         "mark": "bar"})
+    assert "may not contain 'layer[0].encoding.href'" in await error(
+        client, "make_chart", dataset_id=ds, title="t",
+        spec={"layer": [{"mark": "bar", "encoding": {"href": {"field": "hotel_code"}}}]})
+    assert "is not a column" in await error(client, "make_chart", dataset_id=ds, title="t",
+                                            spec={"mark": "bar", "encoding": {"x": {"field": "nope"}}})
+    assert "could not be drawn" in await error(client, "make_chart", dataset_id=ds, title="t",
+                                               spec={"mark": "no-such-mark"})
+    assert "Trend lines go on" in await error(client, "make_chart", dataset_id=ds, x="hotel_code", y="occupancy",
+                                              chart_type="pie", trend="linear", title="t")
 
 
 @needs_db
@@ -240,7 +284,9 @@ async def test_documents_in_spanish(ctx):
     ds = await monthly(client)
     chart = await call(client, "make_chart", dataset_id=ds, x="month", y="occupancy", series="hotel_code",
                        title="Ocupación por hotel", language="es")
-    assert chart.structured_content["chart"]["x_labels"][:2] == ["enero de 2026", "febrero de 2026"]
+    payload = chart.structured_content["chart"]
+    assert [r[0] for r in payload["table"]["rows"][:2]] == ["enero de 2026", "febrero de 2026"]
+    assert payload["table"]["columns"][0] == "Mes" and payload["locale"]["time"]["months"][0] == "enero"
     assert chart.structured_content["file"]["filename"] == "Ocupacion por hotel.png"
 
     r = await call(client, "make_spreadsheet", title="Ocupación S1 2026", language="es",

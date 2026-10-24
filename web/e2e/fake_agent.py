@@ -113,6 +113,12 @@ Q3 = {"start": "2026-07-01", "end": "2026-09-30", "granularity": "quarter"}
 
 # Each plan: tool steps (functions of earlier results -> (tool, input)), then a closing text.
 PLANS = {
+    "trend": ([
+        lambda r: ("get_kpis", {**MONTHLY, "by_hotel": False}),
+        lambda r: ("make_chart", {"dataset_id": r[0]["dataset_id"], "chart_type": "bar", "x": "period",
+                                  "y": "occupancy", "trend": "linear", "y2": "adr", "title": "Occupancy and ADR",
+                                  "subtitle": "All hotels, Oct 2025 – Sep 2026"}),
+    ], "Occupancy by month with its trend line, and ADR on the right-hand axis."),
     "chart": ([
         lambda r: ("get_kpis", MONTHLY),
         lambda r: ("make_chart", {"dataset_id": r[0]["dataset_id"], "x": "period", "y": "occupancy",
@@ -150,8 +156,9 @@ PLANS = {
 
 # Spanish versions for when the system prompt asks for Latin American Spanish: keywords that pick
 # each plan, closing texts, and the titles the plans give their documents.
-KEYWORDS_ES = {"chart": "gráfico", "excel": "hoja de cálculo", "deck": "presentación", "report": "reporte"}
+KEYWORDS_ES = {"trend": "tendencia", "chart": "gráfico", "excel": "hoja de cálculo", "deck": "presentación", "report": "reporte"}
 CLOSINGS_ES = {
+    "trend": "Ocupación mensual con su línea de tendencia y el ADR en el eje derecho.",
     "chart": "Esta es la ocupación mensual por hotel de los últimos 12 meses. Los tres hoteles tuvieron su pico en verano.",
     "excel": "Puse los KPI mensuales por hotel en una hoja de cálculo.",
     "deck": "La presentación del T3 2026 está lista: KPI principales, RevPAR por hotel y una tabla de KPI.",

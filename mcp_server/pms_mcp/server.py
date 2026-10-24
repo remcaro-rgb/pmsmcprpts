@@ -19,7 +19,7 @@ from starlette.responses import Response
 from .access import HotelAccess, Scope
 from .artifacts import ArtifactStore, FileInfo
 from .auth import SCOPE, AuthConfig, OIDCAuthProvider, current_user
-from .charts import ChartError, build_chart_data, chart_payload, render_png, render_svg
+from .charts import CHART_TYPES, ChartError, build_chart, build_custom, chart_payload, render_png
 from .datasets import Dataset, DatasetStore
 from .db import Database, QueryError
 from .documents import DocError, Section, SheetSpec, Slide, build_docx, build_pdf, build_pptx, build_xlsx
@@ -74,7 +74,7 @@ def _ok(payload: dict[str, Any], for_model: dict[str, Any] | None = None,
         extra_content: list[ContentBlock] | None = None) -> CallToolResult:
     """Structured result plus compact JSON text (the default text rendering is indented,
     which roughly doubles the tokens a model spends reading tables). `for_model` replaces
-    the text when the structured payload carries UI-only data (e.g. chart SVGs)."""
+    the text when the structured payload carries UI-only data (e.g. a chart's spec and data)."""
     text = json.dumps(for_model or payload, separators=(",", ":"), ensure_ascii=False, default=str)
     return CallToolResult(content=[TextContent(type="text", text=text), *(extra_content or [])],
                           structured_content=payload)
@@ -322,54 +322,84 @@ def build_server(dsn: str, statement_timeout_ms: int = 15000, artifacts_dir: str
     @mcp.tool(annotations=CREATES_FILE)
     async def make_chart(
         dataset_id: str,
-        x: str,
-        y: str,
         title: str,
-        chart_type: Literal["line", "bar"] = "line",
+        chart_type: Literal[CHART_TYPES] = "line",
+        x: str | None = None,
+        y: str | None = None,
         series: str | None = None,
         subtitle: str | None = None,
+        trend: Literal["linear", "moving_average"] | None = None,
+        trend_window: int = 3,
+        y2: str | None = None,
+        y2_type: Literal["line", "bar"] = "line",
         y_format: Literal[KINDS] | None = None,
+        y2_format: Literal[KINDS] | None = None,
+        currency: str = "EUR",
+        spec: dict[str, Any] | None = None,
         language: Literal["en", "es"] = "en",
     ) -> CallToolResult:
-        """Chart one numeric measure from a stored dataset. The chart is shown to the user in
-        the chat (interactive) and saved as a PNG; pass the returned chart_id to
-        make_presentation or make_report to embed it.
+        """Chart a stored dataset. The chart is shown to the user in the chat (interactive, with
+        tooltips) and saved as a PNG; pass the returned chart_id to make_presentation or
+        make_report to embed it. Every value comes from the dataset.
 
-        Use line for trends over time, bar for comparing categories or a few periods. One measure
-        per chart (never two y-axes): to compare occupancy and ADR, make two charts. At most 8
-        series; bar charts at most 60 bars.
+        Pick a chart_type with x, y and series:
+        - line (trends over time), area, stacked_area (parts of a total over time)
+        - bar (compare periods or categories; with series: grouped bars), stacked_bar,
+          horizontal_bar (ranking categories with long names)
+        - scatter (two measures: x and y numeric), pie / donut (shares: x = category, y = value;
+          at most ~6 slices), heatmap (x = columns, series = rows, y = value as color),
+          histogram (distribution of numeric x), boxplot (distribution of y per x category)
+        Add trend="linear" or "moving_average" (trend_window periods) for a dashed trend line on
+        line, bar, area or scatter charts. Add y2 for a second measure on its own right-hand axis
+        (e.g. bars of revenue with a line of occupancy; y2_type "line" or "bar").
+
+        For anything else (layers, reference lines, annotations, small multiples, waterfalls,
+        custom transforms) pass `spec`: a Vega-Lite v6 specification WITHOUT data (no "data",
+        "datasets" or URLs); the dataset's rows are its data and fields are its column names.
+        Date columns are ISO dates: use "type": "temporal" (timeUnit "yearmonth" for months).
+        With spec, chart_type/x/y/series/trend/y2 are ignored.
 
         Args:
             dataset_id: From run_sql or get_kpis. Rows should be ordered by x.
-            x: Column for the x-axis (dates or categories).
-            y: Numeric column to plot.
             title: Chart title, e.g. "Occupancy by hotel".
-            chart_type: "line" or "bar".
-            series: Column whose values become separate lines/bar colors, e.g. "hotel_code".
+            chart_type: One of the types above.
+            x: Column for the x-axis (dates or categories; the categories of a pie).
+            y: Numeric column to plot (not needed for histogram).
+            series: Column whose values become separate colors (lines, bars, slices of a stack).
             subtitle: Period and scope, e.g. "Monthly, Oct 2025 - Sep 2026".
-            y_format: Override the value format inferred from the column name.
-            language: Language of the text the tool adds (dates, column headers, source line):
-                "en", or "es" for Latin American Spanish. Write titles and text in the same language.
+            trend: Dashed trend line: "linear" (least squares) or "moving_average".
+            trend_window: Periods in the moving average.
+            y2: Second numeric column, drawn on a right-hand axis.
+            y2_type: "line" or "bar" for y2.
+            y_format, y2_format: Override the value format inferred from the column name.
+            currency: ISO code of the amounts (the hotel's hotels.currency), e.g. EUR or COP.
+            spec: A Vega-Lite spec for charts the types above don't cover.
+            language: Language of the dates and labels the tool adds: "en", or "es" for Latin
+                American Spanish. Write titles in the same language.
         """
         try:
-            chart = build_chart_data(_get(dataset_id), chart_type, x, y, series, title, subtitle, y_format,
-                                     language)
+            ds = _get(dataset_id)
+            if spec:
+                chart = build_custom(ds, spec, title, subtitle, language, currency)
+            else:
+                chart = build_chart(ds, chart_type, title, x, y, series, subtitle, y_format, language, currency,
+                                    trend, trend_window, y2, y2_type, y2_format)
+            png = render_png(chart)
         except ChartError as e:
             raise doc_error(e) from e
-        svg, _ = render_svg(chart, "light")
-        png = render_png(svg)
         info = artifacts.save(png, title, "png")
         charts[info.file_id] = (current_user(), png)
         summary = {
             "chart_id": info.file_id,
             "file": file_ref(info),
-            "series": [name for name, _ in chart.series],
-            "points": len(chart.categories),
+            "type": "custom" if spec else chart_type,
+            "rows": len(chart.rows),
+            "series": chart.series,
             "note": "The chart image is attached and shown to the user.",
         }
-        # A 1x image for clients that display tool images (e.g. Claude apps); the website uses
-        # the interactive payload instead.
-        image = ImageContent(type="image", data=base64.b64encode(render_png(svg, scale=1)).decode(),
+        # A 1x image for clients that display tool images (e.g. Claude apps) and for the model to
+        # check its work; the website draws the interactive chart from the payload instead.
+        image = ImageContent(type="image", data=base64.b64encode(render_png(chart, scale=1)).decode(),
                              mime_type="image/png")
         return _ok({**summary, "chart": chart_payload(chart)}, for_model=summary, extra_content=[image])
 
