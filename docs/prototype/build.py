@@ -270,9 +270,10 @@ def working():
 
 def mobile():
     kp = "".join(
-        f'<div class="kpi" style="min-width:150px"><span class="l">{l}</span><span class="v" style="font-size:19px">{v}</span>'
-        f'<span class="delta {k}">{d}</span>{spark(s, "#15803d" if k == "up" else "#b91c1c")}</div>'
-        for l, v, d, k, s in KPIS)
+        # Phones: all six at a glance in a 2 x 3 grid, without the trend lines.
+        f'<button class="kpi" style="padding:10px 11px;gap:1px"><span class="l" style="font-size:11.5px">{l}</span>'
+        f'<span class="v" style="font-size:18px">{v}</span><span class="delta {k}" style="font-size:11px">{d}</span></button>'
+        for l, v, d, k, _ in KPIS)
     body = f"""<div style="height:100vh;display:flex;flex-direction:column">
 <header class="hdr" style="padding:0 12px;gap:8px"><button class="iconbtn" style="border:0">{ic('menu', 20)}</button>
 <div class="logo" style="width:30px;height:30px;font-size:13px">HS</div>
@@ -280,7 +281,7 @@ def mobile():
 <button class="iconbtn" title="Nuevo chat">{ic('edit', 17)}</button><span class="avatar">MC</span></header>
 <div class="scroll"><div style="padding:16px;display:flex;flex-direction:column;gap:16px">
 <div><h1 style="font-size:21px">Buenos días, Manuel</h1><span class="fresh"><span class="dot"></span>Datos al 24 oct, 03:00</span></div>
-<div style="display:flex;gap:10px;overflow:hidden;margin-right:-16px">{kp}</div>
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">{kp}</div>
 <section><div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">{ic('spark', 16)}<h2>Recomendaciones del día</h2></div>{recs(compact=True)}</section>
 <section><h2 style="margin-bottom:8px">¿Qué te gustaría saber?</h2><div class="chips">
 <button class="chip">📈 Ocupación vs 2025</button><button class="chip">🔮 Próximos 30 días</button><button class="chip">🌐 Canales</button><button class="chip">📗 Exportar a Excel</button></div></section>
