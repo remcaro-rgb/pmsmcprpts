@@ -452,14 +452,41 @@ def render_png(chart: Chart, scale: float = 2) -> bytes:
         raise ChartError(f"The chart could not be drawn (check the Vega-Lite spec): {reason[:400]}") from e
 
 
-def chart_payload(chart: Chart) -> dict[str, Any]:
-    """Everything the website needs to draw the chart interactively: the spec with its data, the
-    light and dark themes, number and date locales, and the 'Show data' table."""
-    spec = {**chart.spec, "data": {"values": chart.rows}}
+# The types a chart can switch between on the website, by the type it was made as.
+SWITCHABLE = {
+    "line": ("bar", "line", "area"), "bar": ("bar", "line", "area"), "area": ("bar", "line", "area"),
+    "stacked_bar": ("stacked_bar", "line", "stacked_area"), "stacked_area": ("stacked_bar", "line", "stacked_area"),
+}
+
+
+def _sized(spec: dict[str, Any]) -> dict[str, Any]:
     if not _composite(spec):
         spec.setdefault("width", "container")
         spec.setdefault("height", 300)
         spec.setdefault("autosize", {"type": "fit-x", "contains": "padding"})
+    return spec
+
+
+def chart_variants(chart_type: str, build) -> dict[str, dict[str, Any]]:
+    """The same chart as the other types it can switch to (specs without data: the website adds the
+    chart's data). `build(type)` makes the chart as that type."""
+    out = {}
+    for other in SWITCHABLE.get(chart_type, ()):
+        if other == chart_type:
+            continue
+        try:
+            out[other] = json.loads(json.dumps(_sized({**build(other).spec}), default=str))
+        except ChartError:
+            continue
+    return out
+
+
+def chart_payload(chart: Chart, chart_type: str | None = None,
+                  variants: dict[str, dict[str, Any]] | None = None) -> dict[str, Any]:
+    """Everything the website needs to draw the chart interactively: the spec with its data, the
+    light and dark themes, number and date locales, the 'Show data' table, and the other types it
+    can be shown as."""
+    spec = _sized({**chart.spec, "data": {"values": chart.rows}})
     return {
         "kind": "vega-lite",
         "title": chart.title,
@@ -467,4 +494,5 @@ def chart_payload(chart: Chart) -> dict[str, Any]:
         "config": {"light": theme_config("light"), "dark": theme_config("dark")},
         "locale": {"number": format_locale(chart.currency), "time": time_locale(chart.lang)},
         "table": chart.table,
+        **({"type": chart_type, "variants": variants} if chart_type and variants else {}),
     }

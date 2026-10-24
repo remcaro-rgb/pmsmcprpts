@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { fileUrl, type ChartPayload, type FileInfo, type LegacyChart } from "@/lib/chat";
 import { useI18n } from "./I18n";
 import { Icon } from "./Icons";
@@ -96,8 +96,15 @@ export default function ChartView({ chart, file }: { chart: ChartPayload | Legac
   const [showData, setShowData] = useState(false);
   const [failed, setFailed] = useState(false);
   const [full, setFull] = useState(false);
+  const [kind, setKind] = useState<string | null>(null);
   const onError = useCallback(() => setFailed(true), []);
-  const vega = "kind" in chart ? chart : null;
+  const original = "kind" in chart ? chart : null;
+  // The chart as the type picked in the switch: the server built each one; they share the data.
+  const vega = useMemo(() => {
+    const variant = kind && original?.variants?.[kind];
+    return original && variant ? { ...original, spec: { ...variant, data: original.spec.data } } : original;
+  }, [original, kind]);
+  const types = original?.type && original.variants ? [original.type, ...Object.keys(original.variants)] : [];
 
   useEffect(() => {
     if (!full) return;
@@ -124,6 +131,27 @@ export default function ChartView({ chart, file }: { chart: ChartPayload | Legac
       )}
 
       <figcaption className="flex items-center gap-3 border-t border-black/5 px-4 py-2 text-xs dark:border-white/5">
+        {types.length > 1 && !failed && (
+          <div role="group" aria-label={t.chartType} className="flex overflow-hidden rounded-lg border border-stone-200 dark:border-stone-700">
+            {types.map((k) => {
+              const on = (kind ?? original?.type) === k;
+              const icon = k.includes("bar") ? "bars" : k.includes("area") ? "area" : "line";
+              return (
+                <button
+                  key={k}
+                  type="button"
+                  onClick={() => setKind(k === original?.type ? null : k)}
+                  aria-pressed={on}
+                  aria-label={t.chartTypes[icon]}
+                  title={t.chartTypes[icon]}
+                  className="flex h-6 w-7 items-center justify-center text-stone-500 hover:bg-stone-100 aria-pressed:bg-stone-900 aria-pressed:text-white dark:hover:bg-stone-800 dark:aria-pressed:bg-stone-100 dark:aria-pressed:text-stone-900"
+                >
+                  <Icon name={icon} className="size-3.5" />
+                </button>
+              );
+            })}
+          </div>
+        )}
         {vega && (
           <button
             type="button"

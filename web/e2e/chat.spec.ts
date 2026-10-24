@@ -204,6 +204,15 @@ test("charts render inline with tooltips, a data table and a PNG download", asyn
   await expect(chart.locator("tbody tr")).toHaveCount(12);
   await expect(chart.locator("thead th")).toHaveText(["Period", "BCN", "LIS", "OPO"]);
 
+  // The same chart as bars, then back to lines.
+  const types = chart.getByRole("group", { name: "Chart type" });
+  await expect(types.getByRole("button", { name: "Lines" })).toHaveAttribute("aria-pressed", "true");
+  await types.getByRole("button", { name: "Bars" }).click();
+  await expect(canvas.locator(".mark-rect path").first()).toBeVisible();
+  await expect(canvas.locator("svg")).toContainText("Occupancy by hotel");
+  await types.getByRole("button", { name: "Lines" }).click();
+  await expect(canvas.locator(".mark-rect path")).toHaveCount(0);
+
   // Full screen, closed with Escape.
   await chart.getByRole("button", { name: "Full screen" }).click();
   const dialog = page.getByRole("dialog", { name: "Occupancy by hotel" });

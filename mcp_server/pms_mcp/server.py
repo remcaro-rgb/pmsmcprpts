@@ -19,7 +19,7 @@ from starlette.responses import Response
 from .access import HotelAccess, Scope
 from .artifacts import ArtifactStore, FileInfo
 from .auth import SCOPE, AuthConfig, OIDCAuthProvider, current_user
-from .charts import CHART_TYPES, ChartError, build_chart, build_custom, chart_payload, render_png
+from .charts import CHART_TYPES, ChartError, build_chart, build_custom, chart_payload, chart_variants, render_png
 from .datasets import Dataset, DatasetStore
 from .db import Database, QueryError
 from .documents import DocError, Section, SheetSpec, Slide, build_docx, build_pdf, build_pptx, build_xlsx
@@ -420,11 +420,15 @@ def build_server(dsn: str, statement_timeout_ms: int = 15000, artifacts_dir: str
         """
         try:
             ds = _get(dataset_id)
+            variants: dict[str, Any] = {}
             if spec:
                 chart = build_custom(ds, spec, title, subtitle, language, currency)
             else:
-                chart = build_chart(ds, chart_type, title, x, y, series, subtitle, y_format, language, currency,
-                                    trend, trend_window, y2, y2_type, y2_format)
+                def build(kind):
+                    return build_chart(ds, kind, title, x, y, series, subtitle, y_format, language, currency,
+                                       trend, trend_window, y2, y2_type, y2_format)
+                chart = build(chart_type)
+                variants = chart_variants(chart_type, build)
             png = render_png(chart)
         except ChartError as e:
             raise doc_error(e) from e
@@ -442,7 +446,8 @@ def build_server(dsn: str, statement_timeout_ms: int = 15000, artifacts_dir: str
         # check its work; the website draws the interactive chart from the payload instead.
         image = ImageContent(type="image", data=base64.b64encode(render_png(chart, scale=1)).decode(),
                              mime_type="image/png")
-        return _ok({**summary, "chart": chart_payload(chart)}, for_model=summary, extra_content=[image])
+        payload = chart_payload(chart, None if spec else chart_type, variants)
+        return _ok({**summary, "chart": payload}, for_model=summary, extra_content=[image])
 
     @mcp.tool(annotations=CREATES_FILE)
     async def make_spreadsheet(title: str, sheets: list[SheetSpec], filename: str | None = None,
