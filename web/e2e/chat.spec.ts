@@ -61,7 +61,7 @@ test("shows refusals as a failed message", async ({ page }) => {
   await expect(alert).toContainText("not added to the conversation");
 });
 
-test("charts render inline with hover values, a data table and a PNG download", async ({ page }) => {
+test("charts render inline with tooltips, a data table and a PNG download", async ({ page }) => {
   await page.goto("/");
   const box = page.getByLabel("Message");
   await box.fill("Make a chart of monthly occupancy by hotel");
@@ -69,27 +69,41 @@ test("charts render inline with hover values, a data table and a PNG download", 
 
   const chart = page.getByTestId("chart");
   await expect(chart).toBeVisible();
-  await expect(chart.locator("svg").filter({ visible: true })).toContainText("Occupancy by hotel");
+  const canvas = chart.getByTestId("chart-canvas");
+  await expect(canvas.locator("svg")).toContainText("Occupancy by hotel");
+  await expect(canvas.locator("svg")).toContainText("LIS");  // legend
   await expect(page.getByTestId("assistant-message")).toContainText("peaked in summer");
 
-  // Keyboard reaches the same values as hover.
-  const hover = chart.getByTestId("chart-hover").filter({ visible: true });
-  await hover.focus();
-  await page.keyboard.press("ArrowRight");
-  const tooltip = chart.getByRole("tooltip");
-  await expect(tooltip).toContainText("October 2025");
-  await expect(tooltip).toContainText("LIS");
+  // Pointing at a point shows its values.
+  const point = await canvas.locator(".mark-symbol path").nth(5).boundingBox();
+  await page.mouse.move(point!.x + point!.width / 2, point!.y + point!.height / 2, { steps: 5 });
+  const tooltip = page.locator("#vg-tooltip-element");
+  await expect(tooltip).toBeVisible();
+  await expect(tooltip).toContainText(/(October|November|December) 2025/);
+  await expect(tooltip).toContainText("Hotel");
   await expect(tooltip).toContainText("%");
-  await hover.hover({ position: { x: 700, y: 200 } });
-  await expect(tooltip).not.toContainText("October 2025");
 
   await chart.getByRole("button", { name: "Show data" }).click();
   await expect(chart.locator("tbody tr")).toHaveCount(12);
+  await expect(chart.locator("thead th")).toHaveText(["Period", "BCN", "LIS", "OPO"]);
 
   const href = await chart.getByRole("link", { name: "Download PNG" }).getAttribute("href");
   const png = await page.request.get(href!);
   expect(png.status()).toBe(200);
   expect(png.headers()["content-type"]).toBe("image/png");
+});
+
+test("bar charts with a trend line and a second axis", async ({ page }) => {
+  await page.goto("/");
+  const box = page.getByLabel("Message");
+  await box.fill("Bar chart of monthly occupancy with a trend line");
+  await box.press("Enter");
+  const svg = page.getByTestId("chart-canvas").locator("svg");
+  await expect(svg).toContainText("Occupancy and ADR");
+  await expect(svg.locator(".mark-rect path")).toHaveCount(12);  // the bars
+  await expect(svg.locator(".mark-line path")).toHaveCount(2);  // the trend and the ADR line
+  await expect(svg).toContainText("ADR");  // right-hand axis title
+  await expect(page.getByTestId("assistant-message")).toContainText("trend line");
 });
 
 for (const [prompt, ext, magic] of [

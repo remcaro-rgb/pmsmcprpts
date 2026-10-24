@@ -13,7 +13,8 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 from .datasets import Dataset, DatasetStore
-from .formats import KINDS, Kind, format_headline, format_value, infer_kind, points_unit, to_date
+from .formats import (CURRENCY_CODE, KINDS, Kind, currency_prefix, format_headline, format_value, infer_kind,
+                      points_unit, to_date)
 from .i18n import ACCENTS_ES, COLUMNS_ES, Lang, fmt_date
 from .i18n import text as i18n_text
 
@@ -93,9 +94,10 @@ class Table:
     total_rows: int
     source: str
     lang: Lang = "en"
+    currency: str = "EUR"
 
     def formatted(self) -> list[list[str]]:
-        return [[format_value(v, k, self.lang) for v, k in zip(r, self.kinds)] for r in self.rows]
+        return [[format_value(v, k, self.lang, self.currency) for v, k in zip(r, self.kinds)] for r in self.rows]
 
     def showing(self) -> str:
         return i18n_text("showing", self.lang, shown=f"{len(self.rows):,}", total=f"{self.total_rows:,}")
@@ -112,8 +114,15 @@ def get_dataset(store: DatasetStore, dataset_id: str) -> Dataset:
         raise DocError(f"Unknown or expired dataset_id {dataset_id!r}; run the query again.") from None
 
 
+def check_currency(currency: str) -> str:
+    if not CURRENCY_CODE.match(currency):
+        raise DocError(f"currency must be a 3-letter ISO code such as EUR or COP, not {currency!r}.")
+    return currency.upper()
+
+
 def select_table(store: DatasetStore, dataset_id: str, columns: list[str] | None,
-                 formats: dict[str, str] | None, max_rows: int | None, lang: Lang = "en") -> Table:
+                 formats: dict[str, str] | None, max_rows: int | None, lang: Lang = "en",
+                 currency: str = "EUR") -> Table:
     ds = get_dataset(store, dataset_id)
     names = [c["name"] for c in ds.columns]
     columns = columns or names
@@ -125,10 +134,10 @@ def select_table(store: DatasetStore, dataset_id: str, columns: list[str] | None
     formats = formats or {}
     kinds = [formats.get(c) or infer_kind(c, ds.columns[i]["type"], [r[i] for r in ds.rows])
              for c, i in zip(columns, idx)]
-    return Table([pretty(c, lang) for c in columns], kinds, rows, len(ds.rows), ds.source, lang)
+    return Table([pretty(c, lang) for c in columns], kinds, rows, len(ds.rows), ds.source, lang, currency)
 
 
-def kpi_value(store: DatasetStore, k: KpiSpec, lang: Lang = "en") -> str:
+def kpi_value(store: DatasetStore, k: KpiSpec, lang: Lang = "en", currency: str = "EUR") -> str:
     ds = get_dataset(store, k.dataset_id)
     names = [c["name"] for c in ds.columns]
     if k.column not in names:
@@ -138,7 +147,7 @@ def kpi_value(store: DatasetStore, k: KpiSpec, lang: Lang = "en") -> str:
     i = names.index(k.column)
     value = ds.rows[k.row][i]
     kind = k.format or infer_kind(k.column, ds.columns[i]["type"], [r[i] for r in ds.rows])
-    return format_headline(value, kind, lang)
+    return format_headline(value, kind, lang, currency)
 
 
 def paragraphs(text: str) -> list[tuple[str, str]]:
@@ -160,8 +169,13 @@ def source_line(business_date: str, lang: Lang = "en") -> str:
 
 # ---------- spreadsheet ----------
 
-EXCEL_FORMATS = {"percent": "0.0%", "currency": "€#,##0.00", "integer": "#,##0", "decimal": "#,##0.00",
-                 "date": "yyyy-mm-dd"}
+EXCEL_FORMATS = {"percent": "0.0%", "integer": "#,##0", "decimal": "#,##0.00", "date": "yyyy-mm-dd"}
+
+
+def excel_currency_format(currency: str) -> str:
+    """€#,##0.00 for EUR; codes without a symbol as a quoted literal: "COP "#,##0.00."""
+    prefix = currency_prefix(currency)
+    return (prefix if len(prefix) == 1 else f'"{prefix}"') + "#,##0.00"
 
 
 def excel_value(value: Any, kind: Kind) -> Any:
@@ -178,13 +192,15 @@ def excel_points_format(lang: Lang) -> str:
 
 
 def build_xlsx(store: DatasetStore, title: str, sheets: list[SheetSpec], business_date: str,
-               lang: Lang = "en") -> bytes:
+               lang: Lang = "en", currency: str = "EUR") -> bytes:
     from openpyxl import Workbook
     from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
     from openpyxl.utils import get_column_letter
 
     if not sheets:
         raise DocError("Provide at least one sheet.")
+    currency = check_currency(currency)
+    formats = {**EXCEL_FORMATS, "currency": excel_currency_format(currency), "points": excel_points_format(lang)}
     wb = Workbook()
     wb.remove(wb.active)
     used: set[str] = set()
@@ -194,7 +210,7 @@ def build_xlsx(store: DatasetStore, title: str, sheets: list[SheetSpec], busines
     header_border = Border(bottom=Side(style="thin", color="C3C2B7"))
 
     for spec in sheets:
-        table = select_table(store, spec.dataset_id, spec.columns, spec.formats, None, lang)
+        table = select_table(store, spec.dataset_id, spec.columns, spec.formats, None, lang, currency)
         name = re.sub(r"[\[\]:*?/\\]", "", spec.name).strip()[:31] or i18n_text("sheet_default", lang)
         base, n = name, 2
         while name.lower() in used:
@@ -210,13 +226,13 @@ def build_xlsx(store: DatasetStore, title: str, sheets: list[SheetSpec], busines
             ws.append([excel_value(v, k) for v, k in zip(row, table.kinds)])
         for ci, (header, kind) in enumerate(zip(table.headers, table.kinds), start=1):
             letter = get_column_letter(ci)
-            number_format = (excel_points_format(lang) if kind == "points" else EXCEL_FORMATS.get(kind))
+            number_format = formats.get(kind)
             if number_format:
                 for (cell,) in ws.iter_rows(min_row=2, min_col=ci, max_col=ci):
                     cell.number_format = number_format
             if table.numeric[ci - 1]:
                 ws.cell(1, ci).alignment = Alignment(horizontal="right")
-            sample = [format_value(r[ci - 1], kind, lang) for r in table.rows[:200]]
+            sample = [format_value(r[ci - 1], kind, lang, currency) for r in table.rows[:200]]
             ws.column_dimensions[letter].width = min(50, max([len(header)] + [len(s) for s in sample]) + 3)
         ws.freeze_panes = "A2"
         if table.rows:
@@ -249,7 +265,7 @@ def build_xlsx(store: DatasetStore, title: str, sheets: list[SheetSpec], busines
 # ---------- presentation ----------
 
 def build_pptx(store: DatasetStore, charts: dict[str, bytes], title: str, subtitle: str | None,
-               slides: list[Slide], business_date: str, lang: Lang = "en") -> bytes:
+               slides: list[Slide], business_date: str, lang: Lang = "en", currency: str = "EUR") -> bytes:
     from pptx import Presentation
     from pptx.dml.color import RGBColor
     from pptx.enum.shapes import MSO_SHAPE
@@ -261,6 +277,7 @@ def build_pptx(store: DatasetStore, charts: dict[str, bytes], title: str, subtit
         raise DocError("Provide at least one slide.")
     if len(slides) > 25:
         raise DocError("At most 25 slides.")
+    currency = check_currency(currency)
     prs = Presentation()
     prs.slide_width, prs.slide_height = Inches(13.333), Inches(7.5)
     blank = prs.slide_layouts[6]
@@ -325,7 +342,7 @@ def build_pptx(store: DatasetStore, charts: dict[str, bytes], title: str, subtit
                 tile.fill.fore_color.rgb = rgb("FCFCFB")
                 tile.line.color.rgb = rgb(HAIRLINE)
                 textbox(s, x + 0.3, 2.25, w - 0.6, 0.5, k.label, 16, SECONDARY)
-                textbox(s, x + 0.3, 2.85, w - 0.6, 1.0, kpi_value(store, k, lang), 40, bold=True)
+                textbox(s, x + 0.3, 2.85, w - 0.6, 1.0, kpi_value(store, k, lang, currency), 40, bold=True)
                 if k.note:
                     textbox(s, x + 0.3, 3.9, w - 0.6, 0.5, k.note, 12, MUTED)
         elif spec.kind == "chart":
@@ -341,7 +358,7 @@ def build_pptx(store: DatasetStore, charts: dict[str, bytes], title: str, subtit
             if not spec.table:
                 raise DocError(f"Slide {spec.title!r}: kind=table needs a table.")
             t = select_table(store, spec.table.dataset_id, spec.table.columns, spec.table.formats,
-                             min(spec.table.max_rows, 14), lang)
+                             min(spec.table.max_rows, 14), lang, currency)
             rows, cols = len(t.rows) + 1, len(t.headers)
             shape = s.shapes.add_table(rows, cols, Inches(0.6), Inches(1.5), Inches(12.1), Inches(0.4 * rows))
             table = shape.table
@@ -373,13 +390,14 @@ def build_pptx(store: DatasetStore, charts: dict[str, bytes], title: str, subtit
 # ---------- report (docx / pdf) ----------
 
 def build_docx(store: DatasetStore, charts: dict[str, bytes], title: str, subtitle: str | None,
-               sections: list[Section], business_date: str, lang: Lang = "en") -> bytes:
+               sections: list[Section], business_date: str, lang: Lang = "en", currency: str = "EUR") -> bytes:
     from docx import Document
     from docx.enum.text import WD_ALIGN_PARAGRAPH
     from docx.oxml import OxmlElement
     from docx.oxml.ns import qn
     from docx.shared import Inches, Pt, RGBColor
 
+    currency = check_currency(currency)
     doc = Document()
     doc.styles["Normal"].font.name = "Calibri"
     doc.styles["Normal"].font.size = Pt(11)
@@ -407,7 +425,7 @@ def build_docx(store: DatasetStore, charts: dict[str, bytes], title: str, subtit
             for i, k in enumerate(sec.kpis):
                 t.cell(0, i).text = k.label
                 t.cell(0, i).paragraphs[0].runs[0].font.color.rgb = RGBColor.from_string(SECONDARY)
-                run = t.cell(1, i).paragraphs[0].add_run(kpi_value(store, k, lang))
+                run = t.cell(1, i).paragraphs[0].add_run(kpi_value(store, k, lang, currency))
                 run.bold, run.font.size = True, Pt(20)
                 if k.note:
                     note = t.cell(1, i).add_paragraph(k.note)
@@ -422,7 +440,8 @@ def build_docx(store: DatasetStore, charts: dict[str, bytes], title: str, subtit
                 raise DocError(f"Unknown chart_id {sec.chart_id!r}; create it with make_chart.")
             doc.add_picture(io.BytesIO(png), width=Inches(6.3))
         if sec.table:
-            t = select_table(store, sec.table.dataset_id, sec.table.columns, sec.table.formats, sec.table.max_rows, lang)
+            t = select_table(store, sec.table.dataset_id, sec.table.columns, sec.table.formats, sec.table.max_rows,
+                             lang, currency)
             table = doc.add_table(rows=len(t.rows) + 1, cols=len(t.headers))
             table.style = "Table Grid"
             for r, values in enumerate([t.headers] + t.formatted()):
@@ -479,7 +498,7 @@ def pdf_column_widths(headers: list[str], rows: list[list[str]], width: float,
 
 
 def build_pdf(store: DatasetStore, charts: dict[str, bytes], title: str, subtitle: str | None,
-              sections: list[Section], business_date: str, lang: Lang = "en") -> bytes:
+              sections: list[Section], business_date: str, lang: Lang = "en", currency: str = "EUR") -> bytes:
     from reportlab.lib import colors
     from reportlab.lib.enums import TA_RIGHT
     from reportlab.lib.pagesizes import A4
@@ -489,6 +508,7 @@ def build_pdf(store: DatasetStore, charts: dict[str, bytes], title: str, subtitl
                                     Spacer, Table as RLTable, TableStyle)
     from xml.sax.saxutils import escape
 
+    currency = check_currency(currency)
     ss = getSampleStyleSheet()
     ink = colors.HexColor("#" + INK)
     styles = {
@@ -516,7 +536,7 @@ def build_pdf(store: DatasetStore, charts: dict[str, bytes], title: str, subtitl
             story.append(Paragraph(escape(sec.heading), styles["h1"]))
         if sec.kpis:
             cells = [[Paragraph(escape(k.label), styles["kpi_label"]) for k in sec.kpis],
-                     [Paragraph(escape(kpi_value(store, k, lang)), styles["kpi_value"]) for k in sec.kpis]]
+                     [Paragraph(escape(kpi_value(store, k, lang, currency)), styles["kpi_value"]) for k in sec.kpis]]
             if any(k.note for k in sec.kpis):
                 cells.append([Paragraph(escape(k.note or ""), styles["meta"]) for k in sec.kpis])
             t = RLTable(cells, colWidths=[width / len(sec.kpis)] * len(sec.kpis))
@@ -542,7 +562,8 @@ def build_pdf(store: DatasetStore, charts: dict[str, bytes], title: str, subtitl
                 raise DocError(f"Unknown chart_id {sec.chart_id!r}; create it with make_chart.")
             story += [Spacer(1, 6), Image(io.BytesIO(png), width=width, height=width * 450 / 800), Spacer(1, 6)]
         if sec.table:
-            t = select_table(store, sec.table.dataset_id, sec.table.columns, sec.table.formats, sec.table.max_rows, lang)
+            t = select_table(store, sec.table.dataset_id, sec.table.columns, sec.table.formats, sec.table.max_rows,
+                             lang, currency)
             rows = t.formatted()
             widths, size = pdf_column_widths(t.headers, rows, width)
             cell = ParagraphStyle("c", parent=styles["cell"], fontSize=size, leading=size * 1.3)

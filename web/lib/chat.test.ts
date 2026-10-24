@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applyEvent, httpErrorMessage, isTableResult, messagesFromSaved, shortDate, type AssistantMessage } from "./chat";
+import { applyEvent, chartOf, httpErrorMessage, isTableResult, messagesFromSaved, shortDate, type AssistantMessage } from "./chat";
 
 const empty = (): AssistantMessage => ({ role: "assistant", id: "a1", parts: [], status: "streaming" });
 
@@ -93,5 +93,17 @@ describe("saved conversations", () => {
     expect(shortDate(new Date(2026, 8, 2).getTime() / 1000, now)).toBe("2 Sept");
     expect(shortDate(new Date(2026, 9, 15, 9, 5).getTime() / 1000, now, "es")).toBe("jue");
     expect(shortDate(new Date(2026, 8, 2).getTime() / 1000, now, "es")).toBe("2 sept");
+  });
+});
+
+describe("chartOf", () => {
+  it("accepts Vega-Lite charts and charts saved before them, nothing else", () => {
+    const vega = { kind: "vega-lite", title: "t", spec: { mark: "bar" }, config: {}, locale: {}, table: {} };
+    expect(chartOf({ chart: vega })).toBe(vega);
+    const legacy = { title: "t", svg_light: "<svg/>", svg_dark: "<svg/>" };
+    expect(chartOf({ chart: legacy })).toBe(legacy);
+    expect(chartOf({ chart: { kind: "vega-lite" } })).toBeNull();
+    expect(chartOf({ rows: [] })).toBeNull();
+    expect(chartOf(null)).toBeNull();
   });
 });

@@ -75,7 +75,7 @@ const en = {
   showData: "Show data",
   hideData: "Hide data",
   downloadPng: "Download PNG",
-  chartHelp: (title: string) => `${title}. Use the left and right arrow keys to read values.`,
+  chartFailed: "The chart couldn't be drawn here; download the PNG instead.",
   // Server responses and pages
   rateLimited: (seconds: number) => `You've sent a lot of messages. Try again in ${seconds} seconds.`,
   serviceUnreachable: "The assistant service is not reachable.",
@@ -224,7 +224,7 @@ const es: Messages = {
   showData: "Ver datos",
   hideData: "Ocultar datos",
   downloadPng: "Descargar PNG",
-  chartHelp: (title) => `${title}. Usa las flechas izquierda y derecha para leer los valores.`,
+  chartFailed: "No se pudo dibujar el gráfico aquí; descarga el PNG.",
   rateLimited: (seconds) => `Enviaste muchos mensajes. Intenta de nuevo en ${seconds} segundos.`,
   serviceUnreachable: "No se puede conectar con el servicio del asistente.",
   fileNotFound: "El archivo no existe o ya venció.",
