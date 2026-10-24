@@ -14,11 +14,13 @@ test("signs in through the provider, chats, and signs out", async ({ page }) => 
   await signInAs(page, "ann@hotel.example");
 
   await expect(page.getByText("ann@hotel.example")).toBeVisible();
+  await expect(page.getByTestId("kpis")).toBeVisible(); // interactive
   const box = page.getByLabel("Message");
   await box.fill("How is occupancy?");
   await box.press("Enter");
   await expect(page.getByTestId("assistant-message")).toContainText("tokens in");
 
+  await page.getByRole("button", { name: "Account menu" }).click();
   await page.getByRole("button", { name: "Sign out" }).click();
   await expect(page.getByRole("heading", { name: "You're signed out" })).toBeVisible();
   await page.goto("/");
@@ -65,6 +67,7 @@ test("a callback without a pending sign-in asks to start again", async ({ page }
 test("each person sees only their own conversations", async ({ page }) => {
   await page.goto("/");
   await signInAs(page, "ann@hotel.example");
+  await expect(page.getByTestId("kpis")).toBeVisible(); // interactive
   const box = page.getByLabel("Message");
   await box.fill("Ann's private question about occupancy");
   await box.press("Enter");
@@ -73,6 +76,7 @@ test("each person sees only their own conversations", async ({ page }) => {
   await expect(sidebar.getByRole("button", { name: /^Ann's private question/ })).toBeVisible();
   const annUrl = page.url();
 
+  await page.getByRole("button", { name: "Account menu" }).click();
   await page.getByRole("button", { name: "Sign out" }).click();
   await page.goto(annUrl);
   await signInAs(page, "bob@hotel.example");

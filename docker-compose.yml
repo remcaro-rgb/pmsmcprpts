@@ -78,6 +78,15 @@ services:
       PMS_TIMEZONE: ${PMS_TIMEZONE:-${FNS_TIMEZONE:-Europe/Madrid}}
       # User accounts (sign-in, admin page); see .env.example.
       PMS_APP_DATABASE_URL: ${PMS_APP_DATABASE_URL:-}
+      # The daily email (off without SMTP_HOST); see .env.example.
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM: ${SMTP_FROM:-}
+      SMTP_SECURITY: ${SMTP_SECURITY:-starttls}
+      PMS_DIGEST_TIME: ${PMS_DIGEST_TIME:-07:00}
+      PMS_SITE_URL: ${WEB_PUBLIC_URL:-http://localhost:5050}
     volumes:
       - artifacts:/artifacts:ro
       - agentdata:/data

@@ -24,6 +24,7 @@ from .datasets import Dataset, DatasetStore
 from .db import Database, QueryError
 from .documents import DocError, Section, SheetSpec, Slide, build_docx, build_pdf, build_pptx, build_xlsx
 from .formats import KINDS
+from .overview import DAILY, MOVES, MOVES_FNS, build as build_overview
 from .sql_guard import UnsafeQueryError, check_read_only
 
 INSTRUCTIONS = """\
@@ -315,6 +316,44 @@ def build_server(dsn: str, statement_timeout_ms: int = 15000, artifacts_dir: str
             "rows": ds.page(offset, max(0, min(limit, MAX_PREVIEW_ROWS))),
             "source": ds.source,
         })
+
+    @mcp.tool(annotations=READ_ONLY)
+    async def get_overview(hotel: str | None = None) -> CallToolResult:
+        """Today's key figures per hotel, as on the website's home screen: occupancy today,
+        arrivals and departures today, ADR, RevPAR and room revenue this month so far, and
+        occupancy and room revenue on the books for the next 30 days. Changes compare with the
+        same days a year earlier (occupancy in points, the others relative: 0.08 = +8%).
+        "Today" is each hotel's first date that isn't an actual yet.
+
+        Args:
+            hotel: A hotel code such as "FRA"; omit for every hotel you can see.
+        """
+        schema = await load_schema()
+        hotels = {h["code"]: h for h in schema["hotels"]}
+        if hotel and hotel.upper() not in hotels:
+            raise ToolError(f"Unknown hotel code {hotel!r}. Available: {sorted(hotels)}")
+        scope = my_scope()
+        where = "WHERE hotel_code = %(hotel)s" if hotel else ""
+        try:
+            daily = await db.query(DAILY.format(where=where), {"hotel": hotel.upper() if hotel else None},
+                                   hotels=scope.hotels, user=scope.user)
+            codes = sorted({r[0] for r in daily.rows})
+            days = [next(r[1] for r in daily.rows if r[0] == c) for c in codes]
+            moves: dict[str, tuple[int, int]] = {}
+            for sql in [MOVES] + ([MOVES_FNS] if schema_cache.get("fns") else []):
+                res = await db.query(sql, {"codes": codes, "days": days}, hotels=scope.hotels, user=scope.user)
+                for code, arrivals, departures in res.rows:
+                    a, d = moves.get(code, (0, 0))
+                    moves[code] = (a + arrivals, d + departures)
+        except QueryError as e:
+            raise ToolError(str(e)) from e
+        figures = build_overview(daily.rows, {c: moves.get(c, (0, 0)) for c in codes})
+        out = []
+        for code, h in hotels.items():
+            if code in figures:
+                out.append({"hotel_code": code, "name": h["name"], "currency": h["currency"].strip(),
+                            "data_as_of": h.get("fns_data_as_of"), **figures[code]})
+        return _ok({"hotels": out})
 
     def doc_error(e: Exception) -> ToolError:
         return ToolError(str(e))

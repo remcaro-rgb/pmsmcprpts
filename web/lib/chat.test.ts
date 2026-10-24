@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applyEvent, chartOf, httpErrorMessage, isTableResult, messagesFromSaved, shortDate, type AssistantMessage } from "./chat";
+import { applyEvent, chartOf, groupConversations, splitSuggestions, httpErrorMessage, isTableResult, messagesFromSaved, shortDate, type AssistantMessage } from "./chat";
 
 const empty = (): AssistantMessage => ({ role: "assistant", id: "a1", parts: [], status: "streaming" });
 
@@ -105,5 +105,40 @@ describe("chartOf", () => {
     expect(chartOf({ chart: { kind: "vega-lite" } })).toBeNull();
     expect(chartOf({ rows: [] })).toBeNull();
     expect(chartOf(null)).toBeNull();
+  });
+});
+
+describe("groupConversations", () => {
+  it("puts pinned first, then today, yesterday, this week and earlier", () => {
+    const now = new Date(2026, 9, 24, 12);
+    const at = (days: number) => new Date(2026, 9, 24 - days, 9).getTime() / 1000;
+    const list = [
+      { id: "a", title: "A", updated: at(0) },
+      { id: "b", title: "B", updated: at(1) },
+      { id: "c", title: "C", updated: at(3), pinned: true },
+      { id: "d", title: "D", updated: at(4) },
+      { id: "e", title: "E", updated: at(30) },
+    ];
+    expect(groupConversations(list, now).map((g) => [g.key, g.items.map((c) => c.id).join("")])).toEqual([
+      ["pinned", "c"], ["today", "a"], ["yesterday", "b"], ["week", "d"], ["earlier", "e"],
+    ]);
+  });
+});
+
+describe("splitSuggestions", () => {
+  it("takes the follow-up questions off the end of an answer", () => {
+    const text = "Occupancy is up.\n\n```suggestions\n- Break it down by channel\n- Compare with 2024\n```";
+    expect(splitSuggestions(text)).toEqual({
+      text: "Occupancy is up.",
+      suggestions: ["Break it down by channel", "Compare with 2024"],
+    });
+  });
+
+  it("hides a block that is still streaming", () => {
+    expect(splitSuggestions("Done.\n\n```sugg")).toEqual({ text: "Done.", suggestions: [] });
+    expect(splitSuggestions("Done.\n``")).toEqual({ text: "Done.", suggestions: [] });
+    expect(splitSuggestions("Done.\n```suggestions\n- One que")).toEqual({ text: "Done.", suggestions: ["One que"] });
+    expect(splitSuggestions("Code: ```sql").text).toBe("Code: ```sql");
+    expect(splitSuggestions("No block here.")).toEqual({ text: "No block here.", suggestions: [] });
   });
 });

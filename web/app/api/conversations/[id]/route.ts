@@ -1,4 +1,4 @@
-// One saved conversation: load it to show again, or delete it.
+// One saved conversation: load it to show again, rename or pin it, or delete it.
 
 import { relay } from "@/lib/agent";
 import { messages, requestLocale } from "@/lib/i18n";
@@ -20,4 +20,10 @@ export async function DELETE(req: Request, ctx: Ctx): Promise<Response> {
   const { id } = await ctx.params;
   if (!ID.test(id)) return notFound(req);
   return relay(req, `/api/conversations/${id}`, "DELETE");
+}
+
+export async function PATCH(req: Request, ctx: Ctx): Promise<Response> {
+  const { id } = await ctx.params;
+  if (!ID.test(id)) return notFound(req);
+  return relay(req, `/api/conversations/${id}`, "PATCH", await req.text());
 }

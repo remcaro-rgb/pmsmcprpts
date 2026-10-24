@@ -30,5 +30,17 @@ class Settings:
     app_database_url: str | None = field(default_factory=lambda: os.environ.get("PMS_APP_DATABASE_URL") or None)
     # When the day's recommendations are made again (the hotels' time zone).
     timezone: str = field(default_factory=lambda: os.environ.get("PMS_TIMEZONE", "UTC"))
+    # The daily email (digest.py): sent through this SMTP server at PMS_DIGEST_TIME (PMS_TIMEZONE)
+    # to the users who turn it on. Off without SMTP_HOST.
+    smtp_host: str | None = field(default_factory=lambda: os.environ.get("SMTP_HOST") or None)
+    smtp_port: int = field(default_factory=lambda: int(os.environ.get("SMTP_PORT") or "587"))
+    smtp_user: str | None = field(default_factory=lambda: os.environ.get("SMTP_USER") or None)
+    smtp_password: str | None = field(default_factory=lambda: os.environ.get("SMTP_PASSWORD") or None, repr=False)
+    smtp_from: str | None = field(default_factory=lambda: os.environ.get("SMTP_FROM") or None)
+    # "starttls" (port 587), "ssl" (port 465) or "none".
+    smtp_security: str = field(default_factory=lambda: (os.environ.get("SMTP_SECURITY") or "starttls").lower())
+    digest_time: str = field(default_factory=lambda: os.environ.get("PMS_DIGEST_TIME") or "07:00")
+    # The website's address, for the email's links.
+    site_url: str = field(default_factory=lambda: (os.environ.get("PMS_SITE_URL") or "http://localhost:5050").rstrip("/"))
     cors_origins: list[str] = field(
         default_factory=lambda: _env_list("PMS_CORS_ORIGINS", "http://localhost:5050"))

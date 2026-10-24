@@ -1,10 +1,12 @@
 """FastAPI service: POST /api/chat streams a Claude answer as server-sent events."""
 
+import asyncio
 import json
 import logging
 import re
 import time
 from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Literal
 
@@ -16,9 +18,10 @@ from pydantic import BaseModel, Field, field_validator
 
 from .config import Settings
 from .conversations import ConversationStore
+from .digest import Digest
 from .prompts import MESSAGES
 from .loop import ChatAgent
-from .recommend import DailyRecommendations
+from .recommend import DailyRecommendations, Overviews
 from .users import MIN_PASSWORD, User, UserDirectory, UserError
 
 log = logging.getLogger(__name__)
@@ -26,11 +29,39 @@ log = logging.getLogger(__name__)
 FILE_ID = re.compile(r"^[0-9a-f]{32}$")
 
 
+HOTEL_CODE = r"^[A-Za-z0-9_-]{1,12}$"
+
+
 class ChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=8000)
     conversation_id: str | None = Field(default=None, max_length=64)
     # Website language: "es" answers in Latin American Spanish.
     language: Literal["en", "es"] = "en"
+    # The hotel picked in the website's header (a code), assumed unless the question names others.
+    hotel: str | None = Field(default=None, pattern=HOTEL_CODE)
+
+
+class ConversationChange(BaseModel):
+    title: str | None = Field(default=None, max_length=200)
+    pinned: bool | None = None
+
+
+class Prefs(BaseModel):
+    digest: bool | None = None
+    language: Literal["en", "es"] | None = None
+    hotel: str | None = Field(default=None, pattern=HOTEL_CODE)
+
+
+class DigestTest(BaseModel):
+    language: Literal["en", "es"] = "en"
+    hotel: str | None = Field(default=None, pattern=HOTEL_CODE)
+
+
+class Feedback(BaseModel):
+    kind: Literal["answer", "recommendation"]
+    ref: str = Field(min_length=1, max_length=120, pattern=r"^[A-Za-z0-9_:.\-]+$")
+    value: Literal["up", "down", "done"] | None = None
+    note: str = Field(default="", max_length=1000)
 
 
 EMAIL = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
@@ -102,6 +133,7 @@ def create_app(settings: Settings | None = None, client: Any = None, mcp_target:
     agent = ChatAgent(settings, client or anthropic.AsyncAnthropic(), mcp_target)
     store = ConversationStore(settings.conversations_db)
     daily = DailyRecommendations(agent, settings.timezone)
+    overviews = Overviews(agent)
     directory = UserDirectory(settings.app_database_url) if settings.app_database_url else None
     failures: dict[str, list[float]] = {}  # sign-in failures per login, for a simple lockout
 
@@ -122,9 +154,22 @@ def create_app(settings: Settings | None = None, client: Any = None, mcp_target:
     def user_error(e: UserError) -> HTTPException:
         return HTTPException(e.status, str(e))
 
-    app = FastAPI(title="PMS Reports agent")
+    async def display_name(email: str) -> str | None:
+        account = await directory.get_by_email(email) if directory else None
+        return account.name if account else None
+
+    digest = Digest(settings, store, overviews, daily, names=display_name)
+
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI):
+        task = asyncio.create_task(digest.run()) if digest.available else None
+        yield
+        if task:
+            task.cancel()
+
+    app = FastAPI(title="PMS Reports agent", lifespan=lifespan)
     app.add_middleware(CORSMiddleware, allow_origins=settings.cors_origins,
-                       allow_methods=["GET", "POST", "PATCH", "DELETE"], allow_headers=["*"])
+                       allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"], allow_headers=["*"])
 
     @app.get("/api/health")
     async def health() -> dict[str, str]:
@@ -214,14 +259,69 @@ def create_app(settings: Settings | None = None, client: Any = None, mcp_target:
 
     @app.get("/api/recommendations")
     async def recommendations(language: Literal["en", "es"] = Query(default="en"),
+                              hotel: str | None = Query(default=None, pattern=HOTEL_CODE),
                               x_pms_user: str | None = Header(default=None)) -> dict[str, Any]:
-        """Today's three recommendations for the user's hotels (made on the first request of the day)."""
+        """Today's three recommendations for the user's hotels, or one of them (made on the first
+        request of the day), with the user's feedback on each."""
         user = await active_user(x_pms_user, language)
         try:
-            return await daily.get(user, language)
+            result = await daily.get(user, language, hotel)
         except Exception:
             log.exception("recommendations failed")
             raise HTTPException(503, MESSAGES[language]["no_recommendations"]) from None
+        prefix = f"{result['date']}:{result['hotel'] or 'ALL'}:"
+        votes = store.feedback(user, "recommendation", prefix)
+        # A vote (up or down) and "done" are kept apart: the vote under the item's ref, done under ref:done.
+        items = [{**r, "ref": f"{prefix}{i}", "feedback": votes.get(f"{prefix}{i}"),
+                  "done": votes.get(f"{prefix}{i}:done") == "done"}
+                 for i, r in enumerate(result["recommendations"])]
+        return {**result, "recommendations": items}
+
+    @app.get("/api/overview")
+    async def overview(hotel: str | None = Query(default=None, pattern=HOTEL_CODE),
+                       x_pms_user: str | None = Header(default=None)) -> dict[str, Any]:
+        """The home screen's key figures for the user's hotels, or one of them."""
+        user = await active_user(x_pms_user, "en")
+        try:
+            return await overviews.get(user, hotel)
+        except Exception:
+            log.exception("overview failed")
+            raise HTTPException(503, "The key figures aren't available right now.") from None
+
+    @app.get("/api/prefs")
+    async def get_prefs(x_pms_user: str | None = Header(default=None)) -> dict[str, Any]:
+        """The signed-in user's settings: the daily email (available when SMTP is set up)."""
+        user = await active_user(x_pms_user, "en")
+        prefs = store.prefs(user) if user else {"digest": False, "language": "en", "hotel": None}
+        return {"digest": prefs["digest"], "language": prefs["language"], "hotel": prefs["hotel"],
+                "digest_available": digest.available and bool(user), "digest_time": settings.digest_time}
+
+    @app.put("/api/prefs")
+    async def put_prefs(body: Prefs, x_pms_user: str | None = Header(default=None)) -> dict[str, Any]:
+        user = await active_user(x_pms_user, body.language or "en")
+        if not user:
+            raise HTTPException(400, "Sign in to keep settings.")
+        store.set_prefs(user, digest=body.digest, language=body.language,
+                        hotel=body.hotel.upper() if body.hotel else None)
+        return await get_prefs(x_pms_user)
+
+    @app.post("/api/digest/test", status_code=204)
+    async def digest_test(body: DigestTest, x_pms_user: str | None = Header(default=None)) -> None:
+        """Sends the signed-in user today's email now, to check it arrives."""
+        user = await active_user(x_pms_user, body.language)
+        if not user or not digest.available:
+            raise HTTPException(503, MESSAGES[body.language]["no_digest"])
+        try:
+            await digest.send_to(user, body.language, body.hotel)
+        except Exception:
+            log.exception("test email failed")
+            raise HTTPException(502, MESSAGES[body.language]["digest_failed"]) from None
+
+    @app.post("/api/feedback", status_code=204)
+    async def feedback(body: Feedback, x_pms_user: str | None = Header(default=None)) -> None:
+        """A thumbs up or down on an answer or a recommendation, or a recommendation marked done."""
+        user = await active_user(x_pms_user, "en")
+        store.set_feedback(user, body.kind, body.ref, body.value, body.note)
 
     @app.post("/api/chat")
     async def chat(req: ChatRequest, x_pms_user: str | None = Header(default=None)) -> StreamingResponse:
@@ -237,7 +337,7 @@ def create_app(settings: Settings | None = None, client: Any = None, mcp_target:
             async with conv.lock:
                 yield _sse("conversation", {"id": conv.id})
                 events = []
-                async for ev in agent.run_turn(conv, req.message, user, req.language):
+                async for ev in agent.run_turn(conv, req.message, user, req.language, req.hotel):
                     events.append(ev)
                     yield _sse(ev["event"], ev["data"])
                 # Only completed turns are kept, matching the history (failed turns are rolled back).
@@ -257,6 +357,14 @@ def create_app(settings: Settings | None = None, client: Any = None, mcp_target:
         if conv is None:
             raise HTTPException(404, "Conversation not found.")
         return conv
+
+    @app.patch("/api/conversations/{conversation_id}")
+    async def change_conversation(conversation_id: str, body: ConversationChange,
+                                  x_pms_user: str | None = Header(default=None)) -> dict[str, Any]:
+        """Renames or pins a conversation."""
+        if not store.update(conversation_id, _user(x_pms_user), body.title, body.pinned):
+            raise HTTPException(404, "Conversation not found.")
+        return {"id": conversation_id}
 
     @app.delete("/api/conversations/{conversation_id}", status_code=204)
     async def delete_conversation(conversation_id: str, x_pms_user: str | None = Header(default=None)) -> None:

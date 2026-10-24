@@ -16,6 +16,7 @@ async function signIn(page: Page, login: string, password: string) {
 }
 
 async function askForKpis(page: Page) {
+  await expect(page.getByTestId("kpis")).toBeVisible(); // interactive
   const box = page.getByLabel("Message");
   await box.fill("How did each hotel do last quarter?");
   await box.press("Enter");
@@ -34,6 +35,7 @@ test("administrators manage users, and users see only their hotels", async ({ pa
   for (const code of ["LIS", "BCN", "OPO"]) await expect(all.getByRole("cell", { name: code, exact: true })).toBeVisible();
 
   // ...and creates a user for Lisbon only.
+  await page.getByRole("button", { name: "Account menu" }).click();
   await page.getByRole("link", { name: "Admin" }).click();
   await expect(page.getByRole("heading", { name: "Administration" })).toBeVisible();
   await page.getByRole("button", { name: "New user" }).click();
@@ -63,6 +65,7 @@ test("administrators manage users, and users see only their hotels", async ({ pa
   const mine = await askForKpis(page);
   await expect(mine.getByRole("cell", { name: "LIS", exact: true })).toBeVisible();
   for (const code of ["BCN", "OPO"]) await expect(mine.getByRole("cell", { name: code, exact: true })).toHaveCount(0);
+  await page.getByRole("button", { name: "Account menu" }).click();
   await expect(page.getByRole("link", { name: "Admin" })).toHaveCount(0);
   await page.goto("/admin");
   await expect(page.getByRole("heading", { name: "Administrators only" })).toBeVisible();

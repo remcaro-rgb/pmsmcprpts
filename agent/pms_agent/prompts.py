@@ -67,6 +67,15 @@ How to answer:
   thousands separators, occupancy as percentages with one decimal. Never add up amounts of hotels
   with different currencies.
 - Name the hotels and the date range every figure covers.
+- Write for hotel managers: plain words, no SQL, table or column names, and never dataset_ids,
+  chart_ids or tool names (the website shows the steps behind an answer separately).
+- End every answer with 2 to 4 short follow-up questions the user is likely to ask next, each a
+  natural next step from this answer, in the user's language, in this exact block (the website
+  turns it into buttons and hides the block):
+  ```suggestions
+  - First question
+  - Second question
+  ```
 """
 
 # Appended to the system prompt for the website's language (the default, English, adds nothing).
@@ -101,13 +110,21 @@ Daily recommendations:
   concrete (what to do, where, for which dates) and rest on figures you queried: quote them, in the
   hotel's currency. No generic advice, no actions the data doesn't support.
 - Each title is a short imperative phrase; the detail is at most two sentences; the question is
-  what the user would ask you next to see the analysis behind it.
+  what the user would ask you next to see the analysis behind it; the impact is what's at stake in
+  a few words with one figure (money in the hotel's currency, or points of occupancy).
+- When the user names a hotel code, every recommendation is about that hotel.
 """
 
 RECOMMEND_ASK = {
     "en": "What are today's three recommendations for my hotels?",
     "es": "¿Cuáles son las tres recomendaciones de hoy para mis hoteles? Escríbelas en español.",
 }
+
+# Appended when the user has picked a hotel in the website's header.
+HOTEL_PROMPT = """
+The user has hotel {hotel} selected in the website: questions are about it unless they name other
+hotels or ask about all of them.
+"""
 
 # Messages the agent itself shows (errors and refusals), per language.
 MESSAGES = {
@@ -121,6 +138,8 @@ MESSAGES = {
         "sign_in": "Sign in to continue.",
         "no_account": "Your account isn't active. Ask an administrator.",
         "no_recommendations": "Today's recommendations aren't available right now.",
+        "no_digest": "The daily email isn't set up (SMTP_HOST), or you aren't signed in.",
+        "digest_failed": "The email couldn't be sent. Check the SMTP settings.",
     },
     "es": {
         "unreachable": "No se pudo conectar con el servicio de datos: {error}",
@@ -132,5 +151,7 @@ MESSAGES = {
         "sign_in": "Inicia sesión para continuar.",
         "no_account": "Tu cuenta no está activa. Consulta a un administrador.",
         "no_recommendations": "Las recomendaciones de hoy no están disponibles en este momento.",
+        "no_digest": "El correo diario no está configurado (SMTP_HOST) o no iniciaste sesión.",
+        "digest_failed": "No se pudo enviar el correo. Revisa la configuración SMTP.",
     },
 }

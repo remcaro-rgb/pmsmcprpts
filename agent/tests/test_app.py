@@ -121,3 +121,18 @@ async def test_spanish_conversations():
     async with httpx2.AsyncClient(transport=httpx2.ASGITransport(app=app), base_url="http://test") as http:
         await http.post("/api/chat", json={"message": "Hi"})
     assert "Spanish" not in english.messages.requests[-1]["system"]
+
+
+async def test_rename_pin_and_answer_feedback():
+    client = FakeClient(text_reply("One."), text_reply("Two."))
+    app = create_app(Settings(mcp_url="unused", conversations_db=":memory:"), client, toy_server())
+    async with httpx2.AsyncClient(transport=httpx2.ASGITransport(app=app), base_url="http://t") as http:
+        first = parse_sse((await http.post("/api/chat", json={"message": "First"})).text)[0][1]["id"]
+        await http.post("/api/chat", json={"message": "Second"})
+        assert (await http.patch(f"/api/conversations/{first}", json={"title": "Renamed", "pinned": True})).status_code == 200
+        listed = (await http.get("/api/conversations")).json()["conversations"]
+        assert listed[0] == {**listed[0], "id": first, "title": "Renamed", "pinned": True}
+        assert (await http.patch("/api/conversations/conv_nope", json={"pinned": True})).status_code == 404
+        await http.post("/api/feedback", json={"kind": "answer", "ref": f"{first}:0", "value": "down"})
+        saved = (await http.get(f"/api/conversations/{first}")).json()
+        assert saved["turns"][0]["feedback"] == "down"

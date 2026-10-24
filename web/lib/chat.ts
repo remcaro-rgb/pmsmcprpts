@@ -67,6 +67,8 @@ export type AssistantMessage = {
   status: "streaming" | "done" | "error" | "refused" | "stopped";
   error?: string;
   usage?: Usage;
+  turn?: number; // the turn's position in its saved conversation, for feedback
+  feedback?: "up" | "down" | null;
 };
 
 export type UserMessage = { role: "user"; id: string; text: string };
@@ -120,6 +122,35 @@ export function applyEvent(msg: AssistantMessage, ev: SseEvent): AssistantMessag
   }
 }
 
+const FENCE = "```suggestions";
+
+/** Splits the follow-up questions the model ends an answer with (a ```suggestions block of
+ * "- question" lines) from the answer's text. While streaming, a block (or the start of its
+ * fence) that isn't finished yet is hidden too. */
+export function splitSuggestions(text: string): { text: string; suggestions: string[] } {
+  const at = text.lastIndexOf(FENCE);
+  if (at < 0) {
+    // A fence still arriving: "`", "``", "```sugg"...
+    const tail = text.match(/\n?`{1,3}[a-z]*$/);
+    if (tail && FENCE.startsWith(tail[0].trim())) return { text: text.slice(0, tail.index).trimEnd(), suggestions: [] };
+    return { text, suggestions: [] };
+  }
+  const block = text.slice(at + FENCE.length).replace(/```[\s\S]*$/, "");
+  const suggestions = block
+    .split("\n")
+    .map((l) => l.replace(/^\s*(?:[-*•]|\d+[.)])\s*/, "").trim())
+    .filter((l) => l.length > 2)
+    .slice(0, 4);
+  return { text: text.slice(0, at).trimEnd(), suggestions };
+}
+
+/** The answer's text without its follow-up questions, for copying. */
+export function answerText(msg: AssistantMessage): string {
+  return splitSuggestions(
+    msg.parts.filter((p): p is { kind: "text"; text: string } => p.kind === "text").map((p) => p.text).join("\n\n"),
+  ).text;
+}
+
 /** Turns a non-2xx response from /api/chat into a readable message. */
 export function httpErrorMessage(status: number, body: string, t: Messages = messages("en")): string {
   try {
@@ -132,15 +163,43 @@ export function httpErrorMessage(status: number, body: string, t: Messages = mes
   return t.requestFailed(status);
 }
 
-export type ConversationSummary = { id: string; title: string; updated: number };
+export type ConversationSummary = { id: string; title: string; updated: number; pinned?: boolean };
+
+export type GroupKey = "pinned" | "today" | "yesterday" | "week" | "earlier";
+
+/** Pinned conversations first, then the rest by when they were last updated (local days). */
+export function groupConversations(
+  list: ConversationSummary[],
+  now = new Date(),
+): { key: GroupKey; items: ConversationSummary[] }[] {
+  const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime() / 1000;
+  const groups: Record<GroupKey, ConversationSummary[]> = { pinned: [], today: [], yesterday: [], week: [], earlier: [] };
+  for (const c of list) {
+    const key: GroupKey = c.pinned
+      ? "pinned"
+      : c.updated >= startOfDay
+        ? "today"
+        : c.updated >= startOfDay - 86400
+          ? "yesterday"
+          : c.updated >= startOfDay - 6 * 86400
+            ? "week"
+            : "earlier";
+    groups[key].push(c);
+  }
+  return (Object.keys(groups) as GroupKey[]).filter((k) => groups[k].length).map((key) => ({ key, items: groups[key] }));
+}
 
 /** A saved conversation: each turn's question and the events its answer streamed. */
-export type SavedConversation = ConversationSummary & { turns: { user: string; events: SseEvent[] }[] };
+export type SavedConversation = ConversationSummary & {
+  turns: { user: string; events: SseEvent[]; feedback?: "up" | "down" | null }[];
+};
 
 /** Rebuilds the messages of a saved conversation by replaying each answer's events. */
 export function messagesFromSaved(saved: SavedConversation): Message[] {
   return saved.turns.flatMap((turn, i): Message[] => {
-    const start: AssistantMessage = { role: "assistant", id: `${saved.id}-${i}-a`, parts: [], status: "streaming" };
+    const start: AssistantMessage = {
+      role: "assistant", id: `${saved.id}-${i}-a`, parts: [], status: "streaming", turn: i, feedback: turn.feedback ?? null,
+    };
     const answer = turn.events.reduce(applyEvent, start);
     return [
       { role: "user", id: `${saved.id}-${i}-u`, text: turn.user },

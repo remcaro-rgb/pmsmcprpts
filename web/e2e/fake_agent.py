@@ -92,6 +92,12 @@ def fmt(value, column):
     return str(value)
 
 
+SUGGESTIONS = ("\n\n```suggestions\n- Which booking channels have the highest cancellation rates this year?\n"
+               "- Compare it with 2024\n```")
+SUGGESTIONS_ES = ("\n\n```suggestions\n- ¿Qué canales de reserva tienen las tasas de cancelación más altas este año?\n"
+                  "- Compáralo con 2024\n```")
+
+
 def answer_from(result: dict, spanish: bool = False) -> str:
     wanted = [c["name"] for c in result["columns"]
               if c["name"] in ("hotel_code", "period", "channel", "occupancy", "adr", "revpar",
@@ -103,9 +109,9 @@ def answer_from(result: dict, spanish: bool = False) -> str:
     if spanish:
         return ("Esto es lo que muestra la base de datos (respuesta simulada para pruebas, armada con el "
                 "resultado de la herramienta):\n\n" + "\n".join(lines)
-                + f"\n\nConjunto de datos: `{result['dataset_id']}`.")
+                + SUGGESTIONS_ES)
     return ("Here is what the database shows (stand-in answer for testing, built from the tool "
-            "result):\n\n" + "\n".join(lines) + f"\n\nSource dataset: `{result['dataset_id']}`.")
+            "result):\n\n" + "\n".join(lines) + SUGGESTIONS)
 
 
 MONTHLY = {"start": "2025-10-01", "end": "2026-09-30", "granularity": "month"}
@@ -194,19 +200,19 @@ def turn_results(messages):
 
 RECOMMENDATIONS = {"recommendations": [
     {"title": "Cut OTA cancellations", "detail": "Booking.com cancels 31% of its bookings this year.",
-     "hotel": "Lisbon", "question": "Which booking channels have the highest cancellation rates this year?"},
+     "hotel": "Lisbon", "impact": "€18,400 at risk", "kind": "risk", "question": "Which booking channels have the highest cancellation rates this year?"},
     {"title": "Raise weekend rates", "detail": "Weekends are 94% full 30 days out.", "hotel": "Porto",
-     "question": "Show weekend occupancy on the books"},
+     "impact": "+€6,200 estimated", "kind": "money", "question": "Show weekend occupancy on the books"},
     {"title": "Fill midweek in March", "detail": "Tuesday to Thursday sit at 52%.", "hotel": "",
-     "question": "Show midweek occupancy in March"},
+     "impact": "−12 pp vs 2025", "kind": "risk", "question": "Show midweek occupancy in March"},
 ]}
 RECOMMENDATIONS_ES = {"recommendations": [
     {"title": "Reducir las cancelaciones de OTA", "detail": "Booking.com cancela el 31% de sus reservas este año.",
-     "hotel": "Lisboa", "question": "¿Qué canales de reserva tienen las tasas de cancelación más altas este año?"},
+     "hotel": "Lisboa", "impact": "€18,400 en riesgo", "kind": "risk", "question": "¿Qué canales de reserva tienen las tasas de cancelación más altas este año?"},
     {"title": "Subir las tarifas de fin de semana", "detail": "Los fines de semana están al 94% a 30 días.",
-     "hotel": "Oporto", "question": "Muestra la ocupación de fin de semana"},
+     "hotel": "Oporto", "impact": "+€6,200 estimados", "kind": "money", "question": "Muestra la ocupación de fin de semana"},
     {"title": "Llenar entre semana en marzo", "detail": "De martes a jueves están al 52%.", "hotel": "",
-     "question": "Muestra la ocupación entre semana en marzo"},
+     "impact": "−12 pp vs 2025", "kind": "risk", "question": "Muestra la ocupación entre semana en marzo"},
 ]}
 
 
