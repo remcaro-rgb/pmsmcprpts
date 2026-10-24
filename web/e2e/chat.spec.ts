@@ -79,6 +79,40 @@ test("answers end with actions and follow-up questions", async ({ page, context 
   await expect(page.getByTestId("suggestions")).toHaveCount(1);
 });
 
+test("an answer saves as a report that runs again from the sidebar", async ({ page }) => {
+  await open(page);
+  const box = page.getByLabel("Message");
+  await box.fill("How is occupancy for the saved test?");
+  await box.press("Enter");
+  await page.getByTestId("answer-actions").getByRole("button", { name: "Save as report" }).click();
+  const dialog = page.getByRole("dialog", { name: "Save as report" });
+  await expect(dialog).toContainText("How is occupancy for the saved test?");
+  // Without SMTP it can't be emailed: only "open it myself".
+  await expect(dialog.getByRole("radio", { name: /Every day/ })).toBeDisabled();
+  await expect(dialog).toContainText("To get it by email");
+  await dialog.getByLabel("Name").fill("Saved test");
+  await dialog.getByRole("button", { name: "Save" }).click();
+  await expect(dialog).toHaveCount(0);
+
+  const reports = page.getByTestId("reports");
+  await expect(reports.getByRole("button", { name: "Run “Saved test”" })).toBeVisible();
+  await page.getByRole("button", { name: "New chat" }).click();
+  await reports.getByRole("button", { name: "Run “Saved test”" }).click();
+  // A fresh conversation with the saved question.
+  await expect(page.getByTestId("assistant-message")).toHaveCount(1);
+  await expect(page.getByTestId("assistant-message")).toContainText("Here is what the database shows");
+  await expect(page.locator("main, .flex-1").getByText("How is occupancy for the saved test?", { exact: true }).first()).toBeVisible();
+
+  // Renamed, then deleted.
+  await reports.getByRole("button", { name: "Edit “Saved test”" }).click();
+  await page.getByRole("dialog").getByLabel("Name").fill("Saved test, renamed");
+  await page.getByRole("dialog").getByRole("button", { name: "Save" }).click();
+  await expect(reports.getByRole("button", { name: "Run “Saved test, renamed”" })).toBeVisible();
+  page.once("dialog", (d) => d.accept());
+  await reports.getByRole("button", { name: "Delete “Saved test, renamed”" }).click();
+  await expect(page.getByTestId("reports")).toHaveCount(0);
+});
+
 test("the home screen shows the key figures, recommendations and questions", async ({ page }) => {
   await open(page);
   // Key figures for the picked hotel; picking another one is remembered.

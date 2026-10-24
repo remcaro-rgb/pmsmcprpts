@@ -160,7 +160,7 @@ access to the database. Tools:
 | `run_sql(query, preview_rows=100)` | One read-only `SELECT`/`WITH` query. The full result (up to 50k rows) is stored as a dataset; returns its `dataset_id`, columns, row count and a preview. |
 | `get_kpis(start, end, hotels?, granularity, by_hotel)` | Occupancy, ADR, RevPAR and revenue by day/week/month/quarter/year, with ratios aggregated correctly. |
 | `get_dataset(dataset_id, offset, limit)` | Page through a stored result. |
-| `get_overview(hotel?)` | Today's key figures per hotel (the website's home screen): occupancy today, arrivals and departures, ADR, RevPAR and room revenue this month, the next 30 days on the books, each against the same days a year earlier. |
+| `get_overview(hotel?, period)` | Today's key figures per hotel (the website's home screen): occupancy today, arrivals and departures, ADR, RevPAR and room revenue for a period (mtd, last_month, last_7, last_30, ytd), the next 30 days on the books, each against the same days a year earlier, and alerts. |
 | `make_chart(dataset_id, title, chart_type, x, y, series?, trend?, y2?, spec?, ...)` | Any analytic chart, drawn with [Vega-Lite](https://vega.github.io/vega-lite/): line, area, bar (grouped, stacked, horizontal), scatter, pie, donut, heatmap, histogram, box plot, with optional trend lines (linear, moving average) and a second measure on its own axis; anything else as a Vega-Lite spec over the dataset. Shown interactively in the chat and saved as a PNG; returns a `chart_id` for decks and reports. |
 | `make_spreadsheet(title, sheets)` | Excel workbook, one sheet per dataset, with number formats, frozen headers, filters and an About sheet listing each sheet's source query. |
 | `make_presentation(title, slides, subtitle?)` | 16:9 PowerPoint deck: title slide, then KPI tiles, charts (with optional takeaways), tables and bullet slides, each with a source footer. |
@@ -385,11 +385,13 @@ Details:
 | `GET /api/conversations/{id}` | `{id, title, updated, turns: [{user, events, feedback}]}` |
 | `PATCH /api/conversations/{id}` | `{title?, pinned?}`: rename or pin |
 | `DELETE /api/conversations/{id}` | 204; 409 while it is answering |
-| `GET /api/overview?hotel=` | The home screen's key figures (MCP `get_overview`), kept 5 minutes per user |
+| `GET /api/overview?hotel=&period=` | The home screen's key figures and alerts (MCP `get_overview`), kept 5 minutes per user |
 | `GET /api/recommendations?language=&hotel=` | Today's three recommendations, with the user's feedback |
 | `POST /api/feedback` | `{kind: "answer" \| "recommendation", ref, value: "up" \| "down" \| "done" \| null}` |
 | `GET`/`PUT /api/prefs` | The daily email: `{digest, language, hotel}`, and whether it's available |
 | `POST /api/digest/test` | Sends the signed-in user today's email now |
+| `GET`/`POST /api/reports`, `PATCH`/`DELETE /api/reports/{id}` | Saved reports: `{title, question, hotel, language, schedule: none \| daily \| weekly \| monthly, weekday}` |
+| `POST /api/reports/{id}/send` | Runs a report and emails it now (202; it takes a minute) |
 | `GET /files/{file_id}` | Downloads a generated chart or document |
 
 Run it locally with `pip install -r agent/requirements.txt`, then `python -m pms_agent` from
@@ -411,15 +413,22 @@ to the site's own `/api/chat` and `/api/files/{id}` routes, which proxy the agen
 The welcome screen is built for a quick morning look at one hotel (picked in the header and
 remembered; the questions you ask are about it unless you name others):
 
-- **Key figures**: occupancy today, arrivals and departures, ADR, RevPAR and room revenue this
-  month so far, and the next 30 days on the books, each against the same days a year earlier, with
+- **Key figures**: occupancy today, arrivals and departures, ADR, RevPAR and room revenue for the
+  period picked in the header (this month so far, last month, the last 7 or 30 days, this year so
+  far; remembered, and the chat uses it for questions without dates), and the next 30 days on the
+  books, each against the same days a year earlier, with
   a 14-day trend line (hidden on phones, where the six fit on one screen). Clicking one asks about
   it. A line under the greeting says how fresh the data is (the last FNSrooms import).
 - **Recomendaciones del día** ("Today's recommendations"): the three actions worth the most right
   now, each with what's at stake, the figures behind it, "See the analysis", "Done" and 👍/👎 (kept
-  per user). The agent makes them with the read-only tools on the first visit of the day (a minute
-  or so), then keeps them until midnight in `PMS_TIMEZONE` (default `FNS_TIMEZONE`), per user,
-  hotel and language: `GET /api/recommendations?language=es&hotel=FRA`.
+  per user). They're made with the read-only tools once a day per user, hotel and language and kept
+  in the agent's database until midnight in `PMS_TIMEZONE` (default `FNS_TIMEZONE`). At
+  `PMS_PREPARE_TIME` (default 05:00, after the nightly import) the agent makes them for everyone who
+  looked at them in the last two weeks, so the first visit of the day doesn't wait:
+  `GET /api/recommendations?language=es&hotel=FRA`.
+- **Alerts**: the bell in the header lists the hotel's alerts (occupancy today 5 points or more
+  below last year, ADR 5% or room revenue 10% below, less than half of the next 30 days booked),
+  with a badge for the ones not seen yet; choosing one asks about it. The daily email has the same.
 - **Questions to start from**, grouped by topic, including charts, Excel and presentations.
 
 The sidebar has search, pinned conversations and day groups (rename and pin from each row), and
@@ -433,7 +442,16 @@ data…", "Drawing the chart…") and for how long. Finished answers show the te
 the reasoning, each query with its results, and the token count are folded under "How I worked it
 out". Each answer has Copy, Excel, PDF and 👍/👎, and the last one ends with follow-up questions to
 click (the model writes them in a `suggestions` block that the website turns into buttons). Charts
-open full screen.
+open full screen, and line, bar and area charts switch between the three (the server builds each,
+with the same trend line and second axis).
+
+### Saved reports
+
+"Save as report" under an answer keeps its question under a name; the sidebar's "Saved reports"
+asks it again on the day's data in a new conversation. With the daily email set up (SMTP and
+sign-in), a report can also be emailed every day, every week on a chosen weekday, or on the 1st of
+every month, at `PMS_DIGEST_TIME`: the agent asks the question as its owner and sends the answer
+with its charts and files attached (and "Email it now" from the sidebar sends one right away).
 
 ### Daily email
 

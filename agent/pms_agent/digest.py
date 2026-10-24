@@ -203,14 +203,19 @@ def render(h: dict[str, Any], recs: list[dict[str, Any]], language: str, name: s
     return subject, "\n".join(text), body
 
 
-def send_email(settings: Settings, to: str, subject: str, text: str, body: str) -> None:
-    """Sends one email through the configured SMTP server (blocking: run it in a thread)."""
+def send_email(settings: Settings, to: str, subject: str, text: str, body: str,
+               attachments: "list[tuple[str, str, bytes]]" = ()) -> None:
+    """Sends one email through the configured SMTP server (blocking: run it in a thread), with
+    optional (filename, mime type, bytes) attachments."""
     msg = EmailMessage()
     msg["Subject"] = subject
     msg["From"] = settings.smtp_from or settings.smtp_user or "hotel-super-intelligence@localhost"
     msg["To"] = to
     msg.set_content(text)
     msg.add_alternative(body, subtype="html")
+    for filename, mime, data in attachments:
+        main, _, sub = mime.partition("/")
+        msg.add_attachment(data, maintype=main or "application", subtype=sub or "octet-stream", filename=filename)
     context = ssl.create_default_context()
     if settings.smtp_security == "ssl":
         server: smtplib.SMTP = smtplib.SMTP_SSL(settings.smtp_host, settings.smtp_port, context=context, timeout=30)
