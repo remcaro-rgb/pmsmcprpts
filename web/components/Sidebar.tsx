@@ -35,7 +35,7 @@ export default function Sidebar(props: Props) {
       {open && <div className="fixed inset-0 z-20 bg-black/30 md:hidden" onClick={onClose} aria-hidden="true" />}
       <aside
         aria-label={t.conversations}
-        className={`${open ? "fixed inset-y-0 left-0 z-30 flex w-72 shadow-xl" : "hidden"} flex-col gap-3 border-r border-stone-200 bg-stone-100/70 p-3 md:static md:flex md:w-64 md:shadow-none dark:border-stone-800 dark:bg-stone-900`}
+        className={`${open ? "fixed inset-y-0 left-0 z-30 flex w-72 shadow-xl" : "hidden"} flex-col gap-3 border-r border-stone-200 bg-stone-100 p-3 md:static md:flex md:w-64 md:shadow-none dark:border-stone-800 dark:bg-stone-900`}
       >
         <div className="flex items-center gap-2">
           <button

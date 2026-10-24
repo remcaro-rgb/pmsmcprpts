@@ -110,13 +110,14 @@ function Questions({ hotelName, onAsk }: { hotelName: string; onAsk: (q: string)
         ))}
       </div>
       <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-        {shown.map((s) => (
+        {shown.map((s, i) => (
           <button
             key={s.text}
             onClick={() => onAsk(s.text)}
-            className="flex flex-col gap-1 rounded-xl border border-stone-200 bg-white p-3 text-left text-sm hover:border-stone-300 hover:bg-stone-50 dark:border-stone-800 dark:bg-stone-900 dark:hover:bg-stone-800"
+            // Phones show four; the topic tabs reach the rest.
+            className={`${cat === "all" && i >= 4 ? "hidden sm:flex" : "flex"} flex-col gap-1 rounded-xl border border-stone-200 bg-white px-3 py-2.5 text-left text-sm hover:border-stone-300 hover:bg-stone-50 sm:p-3 dark:border-stone-800 dark:bg-stone-900 dark:hover:bg-stone-800`}
           >
-            <span className="text-xs font-semibold text-stone-500">
+            <span className="hidden text-xs font-semibold text-stone-500 sm:block">
               {s.kind ? `${s.kind} ` : ""}
               {t.categories[s.cat]}
             </span>

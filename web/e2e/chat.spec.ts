@@ -269,6 +269,20 @@ test("saves conversations to reopen, reload and delete from the sidebar", async 
   await expect(page.getByText("What would you like to know?")).toBeVisible();
 });
 
+test("on phones the key figures fit on screen without trend lines", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await open(page);
+  const kpis = page.getByTestId("kpis");
+  const box = await kpis.boundingBox();
+  expect(box!.y + box!.height).toBeLessThan(844); // all six, no swiping
+  expect(box!.width).toBeLessThanOrEqual(390);
+  await expect(kpis.locator("svg")).toHaveCount(5); // the trend lines are there (arrivals has none)...
+  for (const line of await kpis.locator("svg").all()) await expect(line).toBeHidden(); // ...but hidden
+  const questions = page.getByRole("region", { name: "What would you like to know?" });
+  await expect(questions.locator("button:visible").filter({ hasNotText: /^(All|Occupancy|Rates|Channels|Bookings|Forecast|Charts & documents)$/ })).toHaveCount(4);
+  await expect(page.getByRole("button", { name: "New chat" })).toBeVisible(); // in the header
+});
+
 test("on phones the conversation list opens as a drawer", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 800 });
   await open(page);
