@@ -10,11 +10,14 @@ import {
   type Message,
   type SavedConversation,
 } from "@/lib/chat";
-import type { HotelOverview } from "@/lib/home";
+import { PERIODS, type HotelOverview, type Period } from "@/lib/home";
 import { INTL_LOCALE } from "@/lib/i18n";
+import type { Report, ReportList } from "@/lib/reports";
 import { readSse } from "@/lib/sse";
 import type { Theme } from "@/lib/theme";
+import AlertsBell from "./AlertsBell";
 import AssistantMessageView from "./AssistantMessageView";
+import ReportDialog, { type ReportDraft } from "./ReportDialog";
 import Home from "./Home";
 import { Icon } from "./Icons";
 import { useI18n } from "./I18n";
@@ -22,6 +25,7 @@ import Sidebar from "./Sidebar";
 import UserMenu from "./UserMenu";
 
 const HOTEL_KEY = "pms_hotel";
+const PERIOD_KEY = "pms_period";
 
 type Recognition = { lang: string; interimResults: boolean; start: () => void; stop: () => void;
   onresult: ((e: { results: ArrayLike<ArrayLike<{ transcript: string }>> }) => void) | null; onend: (() => void) | null };
@@ -48,9 +52,13 @@ export default function Chat({
   const [overview, setOverview] = useState<HotelOverview[] | null>(null);
   const [overviewFailed, setOverviewFailed] = useState(false);
   const [hotel, setHotel] = useState<string | null>(null);
+  const [period, setPeriod] = useState<Period>("mtd");
   const [listening, setListening] = useState(false);
   const [canDictate, setCanDictate] = useState(false);
   const recognitionRef = useRef<Recognition | null>(null);
+  const [reportList, setReportList] = useState<ReportList | null>(null);
+  const [dialog, setDialog] = useState<{ report: Report | null; draft: ReportDraft } | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [input, setInput] = useState("");
@@ -107,10 +115,10 @@ export default function Chat({
     }
   }
 
-  async function loadOverview() {
+  async function loadOverview(forPeriod: Period = period) {
     setOverviewFailed(false);
     try {
-      const res = await fetch("/api/overview", { cache: "no-store" });
+      const res = await fetch(`/api/overview?period=${forPeriod}`, { cache: "no-store" });
       if (!res.ok) throw new Error(String(res.status));
       const hotels: HotelOverview[] = (await res.json()).hotels ?? [];
       let saved: string | null = null;
@@ -122,6 +130,14 @@ export default function Chat({
     } catch {
       setOverviewFailed(true);
     }
+  }
+
+  function pickPeriod(next: Period) {
+    setPeriod(next);
+    try {
+      localStorage.setItem(PERIOD_KEY, next);
+    } catch {}
+    loadOverview(next);
   }
 
   function pickHotel(code: string) {
@@ -153,7 +169,14 @@ export default function Chat({
 
   useEffect(() => {
     setCanDictate(!!speechRecognition());
-    loadOverview();
+    let saved: Period = "mtd";
+    try {
+      const p = localStorage.getItem(PERIOD_KEY);
+      if (p && (PERIODS as readonly string[]).includes(p)) saved = p as Period;
+    } catch {}
+    setPeriod(saved);
+    loadOverview(saved);
+    loadReports();
     refreshConversations();
     const id = new URL(window.location.href).searchParams.get("c");
     if (id) openConversation(id);
@@ -178,14 +201,22 @@ export default function Chat({
     if (el && stickToBottom.current) el.scrollTop = el.scrollHeight;
   }, [messages]);
 
-  async function send(text: string) {
+  /** Asks a question; `fresh` starts a new conversation (a saved report), `forHotel` overrides the
+   * hotel picked in the header. */
+  async function send(text: string, { fresh = false, forHotel }: { fresh?: boolean; forHotel?: string | null } = {}) {
     text = text.trim();
     if (!text || busy) return;
     const assistantId = crypto.randomUUID();
     // Saved turns are numbered from 0; failed turns aren't saved.
-    const turn = messages.filter((m) => m.role === "assistant" && m.status === "done").length;
+    const turn = fresh ? 0 : messages.filter((m) => m.role === "assistant" && m.status === "done").length;
+    const askConversation = fresh ? null : conversationId;
+    if (fresh) {
+      setConversationId(null);
+      showInAddressBar(null);
+      setSidebarOpen(false);
+    }
     setMessages((m) => [
-      ...m,
+      ...(fresh ? [] : m),
       { role: "user", id: crypto.randomUUID(), text },
       { role: "assistant", id: assistantId, parts: [], status: "streaming", turn, feedback: null },
     ]);
@@ -201,7 +232,9 @@ export default function Chat({
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ message: text, conversation_id: conversationId, language: locale, hotel }),
+        body: JSON.stringify({
+          message: text, conversation_id: askConversation, language: locale, hotel: forHotel ?? hotel, period,
+        }),
         signal: controller.signal,
       });
       if (!res.ok || !res.body) {
@@ -230,6 +263,46 @@ export default function Chat({
       setBusy(false);
       refreshConversations();
     }
+  }
+
+  async function loadReports() {
+    try {
+      const r = await fetch("/api/reports", { cache: "no-store" });
+      if (r.ok) setReportList(await r.json());
+    } catch {}
+  }
+
+  function flash(text: string) {
+    setNotice(text);
+    setTimeout(() => setNotice((n) => (n === text ? null : n)), 5000);
+  }
+
+  async function saveReport(draft: ReportDraft): Promise<string | null> {
+    const editing = dialog?.report;
+    const r = await fetch(editing ? `/api/reports/${editing.id}` : "/api/reports", {
+      method: editing ? "PATCH" : "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(
+        editing
+          ? { title: draft.title, schedule: draft.schedule, weekday: draft.weekday }
+          : { ...draft, hotel, language: locale },
+      ),
+    }).catch(() => null);
+    if (!r?.ok) return r ? httpErrorMessage(r.status, await r.text(), t) : t.assistantUnreachable;
+    setDialog(null);
+    loadReports();
+    return null;
+  }
+
+  async function emailReport(report: Report) {
+    const r = await fetch(`/api/reports/${report.id}/send`, { method: "POST" }).catch(() => null);
+    flash(r?.ok ? t.reportSending : r ? httpErrorMessage(r.status, await r.text(), t) : t.assistantUnreachable);
+  }
+
+  async function deleteReport(report: Report) {
+    if (!window.confirm(t.confirmDeleteReport(report.title))) return;
+    const r = await fetch(`/api/reports/${report.id}`, { method: "DELETE" }).catch(() => null);
+    if (r?.ok || r?.status === 404) loadReports();
   }
 
   function answerFeedback(message: AssistantMessage, value: "up" | "down" | null) {
@@ -265,6 +338,14 @@ export default function Chat({
         onPin={(c) => changeConversation(c, { pinned: !c.pinned })}
         onRename={renameConversation}
         onClose={() => setSidebarOpen(false)}
+        reports={reportList?.reports ?? []}
+        canEmailReports={!!reportList?.scheduling_available}
+        onRunReport={(r) => send(r.question, { fresh: true, forHotel: r.hotel })}
+        onEditReport={(r) =>
+          setDialog({ report: r, draft: { title: r.title, question: r.question, schedule: r.schedule, weekday: r.weekday } })
+        }
+        onEmailReport={emailReport}
+        onDeleteReport={deleteReport}
       />
       <div className="flex min-w-0 flex-1 flex-col">
         <header className="flex h-14 shrink-0 items-center gap-2 border-b border-stone-200 bg-white/80 px-3 backdrop-blur sm:gap-3 sm:px-4 dark:border-stone-800 dark:bg-stone-950/80">
@@ -303,7 +384,23 @@ export default function Chat({
               </span>
             )
           )}
+          <label className="hidden items-center gap-1.5 rounded-xl border border-stone-200 bg-white py-1 pl-2.5 pr-1 text-sm font-medium sm:flex dark:border-stone-700 dark:bg-stone-900">
+            <Icon name="calendar" className="size-4 text-stone-500" />
+            <select
+              value={period}
+              onChange={(e) => pickPeriod(e.target.value as Period)}
+              aria-label={t.period}
+              className="cursor-pointer bg-transparent py-0.5 outline-none"
+            >
+              {PERIODS.map((p) => (
+                <option key={p} value={p}>
+                  {t.periods[p]}
+                </option>
+              ))}
+            </select>
+          </label>
           <div className="ml-auto" />
+          <AlertsBell hotel={current} onAsk={send} />
           <button
             onClick={newChat}
             disabled={busy || messages.length === 0}
@@ -325,7 +422,7 @@ export default function Chat({
           className="flex-1 overflow-y-auto"
         >
           {messages.length === 0 ? (
-            <Home name={name} hotel={current} failed={overviewFailed} onAsk={send} onRetry={loadOverview} />
+            <Home name={name} hotel={current} failed={overviewFailed} period={period} onPeriod={pickPeriod} onAsk={send} onRetry={() => loadOverview()} />
           ) : (
             <div className="mx-auto max-w-3xl space-y-6 px-4 py-6">
               {messages.map((m, i) =>
@@ -342,6 +439,14 @@ export default function Chat({
                     isLast={i === messages.length - 1 && !busy}
                     onAsk={send}
                     onFeedback={conversationId ? (v) => answerFeedback(m, v) : undefined}
+                    onSave={
+                      messages[i - 1]?.role === "user"
+                        ? () => {
+                            const question = (messages[i - 1] as { text: string }).text;
+                            setDialog({ report: null, draft: { title: question, question, schedule: "none", weekday: 0 } });
+                          }
+                        : undefined
+                    }
                   />
                 ),
               )}
@@ -410,6 +515,20 @@ export default function Chat({
           </p>
         </form>
       </div>
+      {dialog && (
+        <ReportDialog
+          draft={dialog.draft}
+          schedulingAvailable={!!reportList?.scheduling_available}
+          sendTime={reportList?.send_time ?? "07:00"}
+          onSave={saveReport}
+          onClose={() => setDialog(null)}
+        />
+      )}
+      {notice && (
+        <p role="status" className="fixed bottom-24 left-1/2 z-50 -translate-x-1/2 rounded-xl bg-stone-900 px-4 py-2 text-sm text-white shadow-lg dark:bg-stone-100 dark:text-stone-900">
+          {notice}
+        </p>
+      )}
     </div>
   );
 }

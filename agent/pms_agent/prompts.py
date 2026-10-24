@@ -126,6 +126,16 @@ The user has hotel {hotel} selected in the website: questions are about it unles
 hotels or ask about all of them.
 """
 
+# Appended when the user has picked a period for the key figures in the website's header.
+PERIOD_PROMPT = """
+The website's key figures are showing {period} (actuals up to yesterday): use that period when a
+question doesn't say which dates.
+"""
+PERIODS = {
+    "mtd": "this month so far", "last_month": "last month", "last_7": "the last 7 days",
+    "last_30": "the last 30 days", "ytd": "this year so far",
+}
+
 # Messages the agent itself shows (errors and refusals), per language.
 MESSAGES = {
     "en": {

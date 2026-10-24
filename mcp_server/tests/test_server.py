@@ -55,12 +55,17 @@ async def test_overview(client):
     schema = await call(client, "describe_schema")
     assert lis["today"] == str(schema["business_date"]) and lis["currency"] == "EUR"
     assert 0 < lis["occupancy_today"] <= 1 and lis["arrivals_today"] > 0
-    assert lis["adr_month"] > 0 and lis["revenue_month"] > 0 and lis["occupancy_next_30"] > 0
+    assert lis["adr_period"] > 0 and lis["revenue_period"] > 0 and lis["occupancy_next_30"] > 0
+    assert lis["period"]["key"] == "mtd" and isinstance(lis["alerts"], list)
     assert len(lis["series"]["occupancy"]) == 14 and len(lis["series"]["occupancy_next_30"]) == 30
     # The month-to-date revenue matches get_kpis for the same days.
-    kpis = await call(client, "get_kpis", start=lis["month"]["start"], end=lis["month"]["end"],
+    kpis = await call(client, "get_kpis", start=lis["period"]["start"], end=lis["period"]["end"],
                       hotels=["LIS"], granularity="year")
-    assert abs(float(kpis["rows"][0][7]) - lis["revenue_month"]) < 0.01
+    assert abs(float(kpis["rows"][0][7]) - lis["revenue_period"]) < 0.01
+    # This year so far, against the same days of last year.
+    ytd = (await call(client, "get_overview", hotel="LIS", period="ytd"))["hotels"][0]
+    assert ytd["period"]["start"].endswith("-01-01") and ytd["revenue_period"] > lis["revenue_period"]
+    assert ytd["revenue_period_change"] is not None
     one = await call(client, "get_overview", hotel="opo")
     assert [h["hotel_code"] for h in one["hotels"]] == ["OPO"]
     assert "Unknown hotel" in await call_error(client, "get_overview", hotel="XXX")

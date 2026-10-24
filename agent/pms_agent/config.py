@@ -40,6 +40,9 @@ class Settings:
     # "starttls" (port 587), "ssl" (port 465) or "none".
     smtp_security: str = field(default_factory=lambda: (os.environ.get("SMTP_SECURITY") or "starttls").lower())
     digest_time: str = field(default_factory=lambda: os.environ.get("PMS_DIGEST_TIME") or "07:00")
+    # When the day's recommendations are made for everyone who used them lately (after the nightly
+    # FNSrooms import, before people arrive), so the first visit doesn't wait for them.
+    prepare_time: str = field(default_factory=lambda: os.environ.get("PMS_PREPARE_TIME") or "05:00")
     # The website's address, for the email's links.
     site_url: str = field(default_factory=lambda: (os.environ.get("PMS_SITE_URL") or "http://localhost:5050").rstrip("/"))
     cors_origins: list[str] = field(

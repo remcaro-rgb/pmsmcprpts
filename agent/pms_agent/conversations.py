@@ -37,6 +37,35 @@ CREATE TABLE IF NOT EXISTS feedback (
     updated REAL NOT NULL,
     PRIMARY KEY (owner, kind, ref)
 );
+CREATE TABLE IF NOT EXISTS recommendations (
+    owner TEXT NOT NULL,
+    language TEXT NOT NULL,
+    hotel TEXT NOT NULL,          -- hotel code, or '' for all the user's hotels
+    day TEXT NOT NULL,            -- YYYY-MM-DD in PMS_TIMEZONE
+    generated_at TEXT NOT NULL,
+    items TEXT NOT NULL,          -- JSON list
+    PRIMARY KEY (owner, language, hotel, day)
+);
+CREATE TABLE IF NOT EXISTS recommendation_readers (
+    owner TEXT NOT NULL,          -- who asked for them, so they're ready the next morning
+    language TEXT NOT NULL,
+    hotel TEXT NOT NULL,
+    last_seen REAL NOT NULL,
+    PRIMARY KEY (owner, language, hotel)
+);
+CREATE TABLE IF NOT EXISTS reports (
+    id TEXT PRIMARY KEY,
+    owner TEXT NOT NULL,
+    title TEXT NOT NULL,
+    question TEXT NOT NULL,       -- asked again each time the report runs, on fresh data
+    hotel TEXT NOT NULL DEFAULT '',
+    language TEXT NOT NULL DEFAULT 'en',
+    schedule TEXT NOT NULL DEFAULT 'none',  -- none, daily, weekly or monthly (emailed)
+    weekday INTEGER NOT NULL DEFAULT 0,     -- for weekly: 0 = Monday
+    created REAL NOT NULL,
+    last_run TEXT NOT NULL DEFAULT ''       -- the day it was last emailed
+);
+CREATE INDEX IF NOT EXISTS reports_owner ON reports (owner, created);
 CREATE TABLE IF NOT EXISTS prefs (
     owner TEXT PRIMARY KEY,       -- the signed-in user's email
     digest INTEGER NOT NULL DEFAULT 0,  -- the daily email is on
@@ -209,3 +238,80 @@ class ConversationStore:
     def subscribers(self) -> "list[tuple[str, dict[str, Any]]]":
         rows = self.db.execute("SELECT owner FROM prefs WHERE digest = 1 ORDER BY owner").fetchall()
         return [(r[0], self.prefs(r[0])) for r in rows]
+
+    def save_recommendations(self, owner: str, language: str, hotel: str, day: str, generated_at: str,
+                             items: "list[dict[str, Any]]") -> None:
+        with self.db:
+            self.db.execute("BEGIN")
+            self.db.execute(
+                "INSERT INTO recommendations (owner, language, hotel, day, generated_at, items) VALUES (?, ?, ?, ?, ?, ?)"
+                " ON CONFLICT (owner, language, hotel, day) DO UPDATE SET generated_at = excluded.generated_at,"
+                " items = excluded.items", (owner, language, hotel, day, generated_at, json.dumps(items)))
+            self.db.execute("DELETE FROM recommendations WHERE day < ?", (day,))  # only today's are kept
+
+    def load_recommendations(self, owner: str, language: str, hotel: str,
+                             day: str) -> "tuple[list[dict[str, Any]], str] | None":
+        row = self.db.execute("SELECT items, generated_at FROM recommendations WHERE owner = ? AND language = ?"
+                              " AND hotel = ? AND day = ?", (owner, language, hotel, day)).fetchone()
+        return (json.loads(row[0]), row[1]) if row else None
+
+    def saw_recommendations(self, owner: str, language: str, hotel: str) -> None:
+        self.db.execute(
+            "INSERT INTO recommendation_readers (owner, language, hotel, last_seen) VALUES (?, ?, ?, ?)"
+            " ON CONFLICT (owner, language, hotel) DO UPDATE SET last_seen = excluded.last_seen",
+            (owner, language, hotel, time.time()))
+
+    def recommendation_readers(self, days: int = 14) -> "list[tuple[str, str, str]]":
+        """(owner, language, hotel) of everyone who looked at recommendations in the last `days`."""
+        rows = self.db.execute("SELECT owner, language, hotel FROM recommendation_readers WHERE last_seen >= ?"
+                               " ORDER BY last_seen DESC", (time.time() - days * 86400,)).fetchall()
+        return [tuple(r) for r in rows]
+
+    REPORT_FIELDS = ("id", "title", "question", "hotel", "language", "schedule", "weekday", "created", "last_run")
+
+    def _report(self, row) -> dict[str, Any]:
+        r = dict(zip(self.REPORT_FIELDS, row))
+        r["hotel"] = r["hotel"] or None
+        r["last_run"] = r["last_run"] or None
+        return r
+
+    def reports(self, owner: str | None) -> "list[dict[str, Any]]":
+        rows = self.db.execute(f"SELECT {', '.join(self.REPORT_FIELDS)} FROM reports WHERE owner = ? ORDER BY created",
+                               (owner or "",)).fetchall()
+        return [self._report(r) for r in rows]
+
+    def report(self, owner: str | None, report_id: str) -> dict[str, Any] | None:
+        row = self.db.execute(f"SELECT {', '.join(self.REPORT_FIELDS)} FROM reports WHERE owner = ? AND id = ?",
+                              (owner or "", report_id)).fetchone()
+        return self._report(row) if row else None
+
+    def create_report(self, owner: str | None, title: str, question: str, hotel: str | None, language: str,
+                      schedule: str = "none", weekday: int = 0) -> dict[str, Any]:
+        report_id = f"rep_{secrets.token_hex(8)}"
+        self.db.execute(
+            "INSERT INTO reports (id, owner, title, question, hotel, language, schedule, weekday, created)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (report_id, owner or "", _title(title), question, (hotel or "").upper(), language, schedule, weekday,
+             time.time()))
+        return self.report(owner, report_id)
+
+    def update_report(self, owner: str | None, report_id: str, **changes: Any) -> dict[str, Any] | None:
+        allowed = {k: v for k, v in changes.items() if k in ("title", "schedule", "weekday", "last_run") and v is not None}
+        if "title" in allowed:
+            allowed["title"] = _title(allowed["title"])
+        if allowed:
+            sets = ", ".join(f"{k} = ?" for k in allowed)
+            self.db.execute(f"UPDATE reports SET {sets} WHERE owner = ? AND id = ?",
+                            (*allowed.values(), owner or "", report_id))
+        return self.report(owner, report_id)
+
+    def delete_report(self, owner: str | None, report_id: str) -> bool:
+        return self.db.execute("DELETE FROM reports WHERE owner = ? AND id = ?", (owner or "", report_id)).rowcount > 0
+
+    def due_reports(self, day: str, weekday: int, day_of_month: int) -> "list[tuple[str, dict[str, Any]]]":
+        """(owner, report) of the scheduled reports to email today that haven't been yet."""
+        rows = self.db.execute(
+            f"SELECT owner, {', '.join(self.REPORT_FIELDS)} FROM reports WHERE schedule <> 'none' AND last_run <> ?"
+            " AND owner <> '' AND (schedule = 'daily' OR (schedule = 'weekly' AND weekday = ?)"
+            " OR (schedule = 'monthly' AND ? = 1)) ORDER BY created", (day, weekday, day_of_month)).fetchall()
+        return [(r[0], self._report(r[1:])) for r in rows]

@@ -1,5 +1,6 @@
-"""The home screen's key figures per hotel: today, this month so far and the next 30 days, each
-against the same days a year earlier, plus a short daily series for the small trend lines."""
+"""The home screen's key figures per hotel: today, a period (this month so far by default) and the
+next 30 days, each against the same days a year earlier, a short daily series for the small trend
+lines, and alerts for figures well below last year's."""
 
 from datetime import date, timedelta
 from typing import Any
@@ -15,7 +16,7 @@ WITH k AS (
 )
 SELECT k.hotel_code, t.today, k.stay_date, k.rooms_available, k.rooms_sold, k.room_revenue
 FROM k JOIN t USING (hotel_id)
-WHERE k.stay_date BETWEEN t.today - 400 AND t.today + 29
+WHERE k.stay_date BETWEEN t.today - 740 AND t.today + 29
 ORDER BY 1, 3"""
 
 # Arrivals and departures today, from the sample tables and (when imported) FNSrooms.
@@ -42,6 +43,14 @@ WHERE coalesce(r.status, '') NOT ILIKE 'cancel%%'
 GROUP BY h.code"""
 
 SERIES_DAYS = 14
+
+PERIODS = ("mtd", "last_month", "last_7", "last_30", "ytd")
+
+# Alerts: changes against the same days a year earlier at or past these, and low occupancy ahead.
+ALERT_OCCUPANCY_PP = -0.05
+ALERT_ADR = -0.05
+ALERT_REVENUE = -0.10
+ALERT_NEXT_30 = 0.5
 
 
 def _num(v: Any) -> float:
@@ -86,14 +95,44 @@ def year_before(d: date) -> date:
         return d.replace(year=d.year - 1, day=28)
 
 
+def period_range(today: date, period: str) -> tuple[date, date, date, date]:
+    """(start, end, start a year earlier, end a year earlier) of a period of actuals ending yesterday:
+    this month so far (on the 1st, last month), last month, the last 7 or 30 days (compared with
+    the same weekdays 52 weeks earlier) or this year so far."""
+    end = today - timedelta(days=1)
+    if period in ("last_7", "last_30"):
+        start = today - timedelta(days=7 if period == "last_7" else 30)
+        return start, end, start - timedelta(days=364), end - timedelta(days=364)
+    if period == "last_month":
+        end = end.replace(day=1) - timedelta(days=1)
+        start = end.replace(day=1)
+    elif period == "ytd":
+        start = end.replace(month=1, day=1)
+    else:
+        start = end.replace(day=1)
+    return start, end, year_before(start), year_before(end)
+
+
+def alerts(figures: dict[str, Any]) -> list[dict[str, Any]]:
+    """Figures well below last year's, or low occupancy ahead: [{key, value}]."""
+    out = []
+    checks = [("occupancy_today", figures["occupancy_today_change_pp"], ALERT_OCCUPANCY_PP),
+              ("adr", figures["adr_period_change"], ALERT_ADR),
+              ("revenue", figures["revenue_period_change"], ALERT_REVENUE)]
+    for key, value, limit in checks:
+        if value is not None and value <= limit:
+            out.append({"key": key, "value": value})
+    if figures["occupancy_next_30"] is not None and figures["occupancy_next_30"] < ALERT_NEXT_30:
+        out.append({"key": "next_30", "value": figures["occupancy_next_30"]})
+    return out
+
+
 def summarize(code: str, today: date, days: dict[date, tuple[float, float, float]],
-              moves: tuple[int, int] | None) -> dict[str, Any]:
+              moves: tuple[int, int] | None, period: str = "mtd") -> dict[str, Any]:
     """Key figures for one hotel from its daily (rooms available, rooms sold, room revenue)."""
-    # This month so far (actuals up to yesterday); on the 1st, last month.
-    month_end = today - timedelta(days=1)
-    month_start = month_end.replace(day=1)
+    month_start, month_end, ly_start, ly_end = period_range(today, period)
     a, s, r = _sums(days, month_start, month_end)
-    la, ls, lr = _sums(days, year_before(month_start), year_before(month_end))
+    la, ls, lr = _sums(days, ly_start, ly_end)
     adr, adr_ly = _ratio(r, s), _ratio(lr, ls)
     revpar, revpar_ly = _ratio(r, a), _ratio(lr, la)
 
@@ -116,31 +155,34 @@ def summarize(code: str, today: date, days: dict[date, tuple[float, float, float
                      for i in range((month_end - month_start).days + 1)):
         running += dr
         cumulative.append(round(running, 2))
-    return {
+    figures = {
         "hotel_code": code,
         "today": today.isoformat(),
-        "month": {"start": month_start.isoformat(), "end": month_end.isoformat()},
+        "period": {"key": period, "start": month_start.isoformat(), "end": month_end.isoformat()},
         "occupancy_today": occ_today,
         "occupancy_today_change_pp": _diff(occ_today, occ_ly),
         "arrivals_today": moves[0] if moves else None,
         "departures_today": moves[1] if moves else None,
-        "adr_month": adr, "adr_month_change": _change(adr, adr_ly),
-        "revpar_month": revpar, "revpar_month_change": _change(revpar, revpar_ly),
-        "revenue_month": round(r, 2), "revenue_month_change": _change(r, lr),
+        "adr_period": adr, "adr_period_change": _change(adr, adr_ly),
+        "revpar_period": revpar, "revpar_period_change": _change(revpar, revpar_ly),
+        "revenue_period": round(r, 2), "revenue_period_change": _change(r, lr),
         "occupancy_next_30": _ratio(fs, fa), "revenue_next_30": round(fr, 2),
         "series": {
             "occupancy": daily(series_start, SERIES_DAYS, lambda a, s, r: _ratio(s, a)),
             "adr": daily(series_start, SERIES_DAYS, lambda a, s, r: _ratio(r, s)),
             "revpar": daily(series_start, SERIES_DAYS, lambda a, s, r: _ratio(r, a)),
-            "revenue_month": cumulative,
+            "revenue_period": cumulative,
             "occupancy_next_30": daily(today, 30, lambda a, s, r: _ratio(s, a)),
         },
     }
+    figures["alerts"] = alerts(figures)
+    return figures
 
 
-def build(daily_rows: list[list[Any]], moves: dict[str, tuple[int, int]]) -> dict[str, dict[str, Any]]:
+def build(daily_rows: list[list[Any]], moves: dict[str, tuple[int, int]],
+          period: str = "mtd") -> dict[str, dict[str, Any]]:
     """Per hotel code, from DAILY's rows and MOVES' counts."""
     hotels: dict[str, tuple[date, dict[date, tuple[float, float, float]]]] = {}
     for code, today, stay_date, avail, sold, revenue in daily_rows:
         hotels.setdefault(code, (_day(today), {}))[1][_day(stay_date)] = (_num(avail), _num(sold), _num(revenue))
-    return {code: summarize(code, today, days, moves.get(code)) for code, (today, days) in hotels.items()}
+    return {code: summarize(code, today, days, moves.get(code), period) for code, (today, days) in hotels.items()}

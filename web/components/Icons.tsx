@@ -24,6 +24,14 @@ const PATHS = {
   building: "M5 21V5l7-2v18M12 8h7v13M8 8h1M8 12h1M8 16h1M15 12h1M15 16h1M3 21h18",
   stop: "M7 7h10v10H7z",
   user: "M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM4 21a8 8 0 0 1 16 0",
+  bell: "M6 16v-5a6 6 0 0 1 12 0v5l2 2H4zM10 21h4",
+  calendar: "M4 5h16v15H4zM4 10h16M9 3v4M15 3v4",
+  save: "M6 3h12v18l-6-4-6 4z",
+  bars: "M5 20V10M12 20V4M19 20v-7",
+  line: "m3 17 6-6 4 4 8-8",
+  area: "M3 20V14l6-5 4 3 8-7v15z",
+  table: "M3 5h18v14H3zM3 10h18M9 10v9",
+  clock: "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM12 7v5l3 2",
 } as const;
 
 export type IconName = keyof typeof PATHS;

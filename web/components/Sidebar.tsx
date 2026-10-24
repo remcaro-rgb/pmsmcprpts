@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { groupConversations, shortDate, type ConversationSummary } from "@/lib/chat";
+import type { Report } from "@/lib/reports";
 import { Icon } from "./Icons";
 import { useI18n } from "./I18n";
 
@@ -16,12 +17,19 @@ type Props = {
   onPin: (c: ConversationSummary) => void;
   onRename: (c: ConversationSummary) => void;
   onClose: () => void;
+  reports: Report[];
+  canEmailReports: boolean;
+  onRunReport: (r: Report) => void;
+  onEditReport: (r: Report) => void;
+  onEmailReport: (r: Report) => void;
+  onDeleteReport: (r: Report) => void;
 };
 
 /** New chat, search, and the saved conversations: pinned first, then by day. Before the first
  * conversation, a short guide to what the assistant can do. */
 export default function Sidebar(props: Props) {
   const { conversations, activeId, disabled, open, onSelect, onNewChat, onDelete, onPin, onRename, onClose } = props;
+  const { reports, canEmailReports, onRunReport, onEditReport, onEmailReport, onDeleteReport } = props;
   const { locale, t } = useI18n();
   const [query, setQuery] = useState("");
   const q = query.trim().toLowerCase();
@@ -116,6 +124,44 @@ export default function Sidebar(props: Props) {
             ))
           )}
         </nav>
+        {reports.length > 0 && (
+          <section aria-labelledby="reports-title" className="-mx-1 max-h-[40%] overflow-y-auto border-t border-stone-200 px-1 pt-2 dark:border-stone-800" data-testid="reports">
+            <h3 id="reports-title" className="px-2 pb-1 text-[11px] font-bold uppercase tracking-wider text-stone-500">{t.reportsTitle}</h3>
+            <ul className="space-y-0.5">
+              {reports.map((r) => (
+                <li key={r.id} className="group relative">
+                  <button
+                    onClick={() => onRunReport(r)}
+                    disabled={disabled}
+                    aria-label={t.runReport(r.title)}
+                    className="flex w-full items-center gap-2 rounded-lg py-1.5 pl-2.5 pr-24 text-left text-sm hover:bg-stone-200/70 disabled:opacity-50 md:pr-2 md:group-focus-within:pr-24 md:group-hover:pr-24 dark:hover:bg-stone-800"
+                  >
+                    <Icon name={r.schedule === "none" ? "save" : "clock"} className="size-3.5 text-stone-400" />
+                    <span className="min-w-0 flex-1 truncate">{r.title}</span>
+                    {r.schedule !== "none" && (
+                      <span className="hidden shrink-0 text-xs text-stone-500 md:inline md:group-focus-within:hidden md:group-hover:hidden">
+                        {t.scheduleShort[r.schedule]}
+                      </span>
+                    )}
+                  </button>
+                  <div className="absolute right-1 top-1/2 flex -translate-y-1/2 gap-0.5 md:opacity-0 md:group-focus-within:opacity-100 md:group-hover:opacity-100">
+                    <button onClick={() => onEditReport(r)} disabled={disabled} aria-label={t.editReport(r.title)} title={t.rename} className={action}>
+                      <Icon name="edit" className="size-3.5" />
+                    </button>
+                    {canEmailReports && (
+                      <button onClick={() => onEmailReport(r)} disabled={disabled} aria-label={t.emailReport(r.title)} title={t.emailReport(r.title)} className={action}>
+                        <Icon name="send" className="size-3.5" />
+                      </button>
+                    )}
+                    <button onClick={() => onDeleteReport(r)} disabled={disabled} aria-label={t.deleteReport(r.title)} title={t.delete} className={action}>
+                      <Icon name="trash" className="size-3.5" />
+                    </button>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </section>
+        )}
       </aside>
     </>
   );

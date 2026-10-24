@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { change, longDate, money, pct, pp, stamp, trend, type HotelOverview } from "@/lib/home";
+import { PERIODS, change, longDate, money, pct, pp, stamp, trend, type HotelOverview, type Period } from "@/lib/home";
 import type { StarterCategory } from "@/lib/i18n";
 import { Sparkline } from "./Icons";
 import { useI18n } from "./I18n";
@@ -23,6 +23,7 @@ function KpiGrid({ hotel, onAsk }: { hotel: HotelOverview; onAsk: (q: string) =>
   const vs = (s: string | null) => (s ? t.vsYear(s, year) : null);
   const m = (v: number | null) => money(v, hotel.currency, locale);
   const h = hotel.name;
+  const p = t.periodShort[hotel.period.key];
   const tiles: Tile[] = [
     {
       key: "occupancy", label: t.kpiOccupancyToday, value: pct(hotel.occupancy_today, locale),
@@ -34,16 +35,16 @@ function KpiGrid({ hotel, onAsk }: { hotel: HotelOverview; onAsk: (q: string) =>
       sub: t.kpiMovesSub, tone: "flat", ask: t.kpiAsk.moves(h),
     },
     {
-      key: "adr", label: t.kpiAdr, value: m(hotel.adr_month), sub: vs(change(hotel.adr_month_change, locale)),
-      tone: trend(hotel.adr_month_change), series: hotel.series.adr, ask: t.kpiAsk.adr(h),
+      key: "adr", label: t.kpiAdr(p), value: m(hotel.adr_period), sub: vs(change(hotel.adr_period_change, locale)),
+      tone: trend(hotel.adr_period_change), series: hotel.series.adr, ask: t.kpiAsk.adr(h, p),
     },
     {
-      key: "revpar", label: t.kpiRevpar, value: m(hotel.revpar_month), sub: vs(change(hotel.revpar_month_change, locale)),
-      tone: trend(hotel.revpar_month_change), series: hotel.series.revpar, ask: t.kpiAsk.revpar(h),
+      key: "revpar", label: t.kpiRevpar(p), value: m(hotel.revpar_period), sub: vs(change(hotel.revpar_period_change, locale)),
+      tone: trend(hotel.revpar_period_change), series: hotel.series.revpar, ask: t.kpiAsk.revpar(h, p),
     },
     {
-      key: "revenue", label: t.kpiRevenue, value: m(hotel.revenue_month), sub: vs(change(hotel.revenue_month_change, locale)),
-      tone: trend(hotel.revenue_month_change), series: hotel.series.revenue_month, ask: t.kpiAsk.revenue(h),
+      key: "revenue", label: t.kpiRevenue(p), value: m(hotel.revenue_period), sub: vs(change(hotel.revenue_period_change, locale)),
+      tone: trend(hotel.revenue_period_change), series: hotel.series.revenue_period, ask: t.kpiAsk.revenue(h, p),
     },
     {
       key: "next30", label: t.kpiNext30, value: pct(hotel.occupancy_next_30, locale), sub: t.kpiOnBooks(money(hotel.revenue_next_30, hotel.currency, locale, 100_000)),
@@ -134,12 +135,16 @@ export default function Home({
   name,
   hotel,
   failed,
+  period,
+  onPeriod,
   onAsk,
   onRetry,
 }: {
   name: string | null;
   hotel: HotelOverview | null; // null while loading
   failed: boolean;
+  period: Period;
+  onPeriod: (p: Period) => void; // on phones the picker is here instead of the header
   onAsk: (q: string) => void;
   onRetry: () => void;
 }) {
@@ -153,6 +158,18 @@ export default function Home({
           <h2 className="text-xl font-bold tracking-tight sm:text-2xl">{t.greeting(hour, name)}</h2>
           {hotel && <p className="mt-0.5 hidden text-stone-500 sm:block">{t.todayLine(hotel.name, longDate(hotel.today, locale))}</p>}
         </div>
+        <select
+          value={period}
+          onChange={(e) => onPeriod(e.target.value as Period)}
+          aria-label={t.period}
+          className="order-last rounded-lg border border-stone-200 bg-white px-2 py-1 text-sm sm:hidden dark:border-stone-700 dark:bg-stone-900"
+        >
+          {PERIODS.map((p) => (
+            <option key={p} value={p}>
+              {t.periods[p]}
+            </option>
+          ))}
+        </select>
         {hotel && (
           <span className="ml-auto inline-flex items-center gap-2 text-xs text-stone-500" data-testid="data-freshness">
             <span className="size-2 rounded-full bg-green-500 ring-4 ring-green-100 dark:ring-green-950" />

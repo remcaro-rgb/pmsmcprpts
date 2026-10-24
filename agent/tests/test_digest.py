@@ -18,9 +18,10 @@ pytestmark = pytest.mark.anyio
 HOTEL = {
     "hotel_code": "FRA", "name": "Fragata <Cartagena>", "currency": "COP", "today": "2026-10-24",
     "occupancy_today": 0.784, "occupancy_today_change_pp": -0.061, "arrivals_today": 14, "departures_today": 9,
-    "adr_month": 412300, "adr_month_change": 0.082, "revpar_month": 318900, "revpar_month_change": 0.125,
-    "revenue_month": 186_400_000, "revenue_month_change": -0.12, "occupancy_next_30": 0.612,
+    "adr_period": 412300, "adr_period_change": 0.082, "revpar_period": 318900, "revpar_period_change": 0.125,
+    "revenue_period": 186_400_000, "revenue_period_change": -0.12, "occupancy_next_30": 0.612,
     "revenue_next_30": 527_000_000, "series": {},
+    "alerts": [{"key": "occupancy_today", "value": -0.061}, {"key": "revenue", "value": -0.12}],
 }
 RECS = [{"title": "Raise the holiday rate", "detail": "92% booked.", "hotel": "Fragata", "question": "q",
          "impact": "+COP 9.8 M", "kind": "money"}]
@@ -38,7 +39,9 @@ def test_money_and_alerts():
     assert money(527_000, "EUR", 100_000) == "€527K"
     assert alerts(HOTEL, "en") == ["occupancy today is −6.1 pp against the same day last year.",
                                    "room revenue this month is −12.0% against last year."]
-    assert alerts({**HOTEL, "occupancy_today_change_pp": 0.01, "revenue_month_change": 0.0}, "es") == []
+    assert alerts({**HOTEL, "alerts": []}, "es") == []
+    assert alerts({**HOTEL, "alerts": [{"key": "next_30", "value": 0.42}]}, "es") == [
+        "solo está reservado el 42.0% de los próximos 30 días."]
 
 
 def test_render_in_spanish_escapes_and_has_every_part():

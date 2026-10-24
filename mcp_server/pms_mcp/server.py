@@ -19,7 +19,7 @@ from starlette.responses import Response
 from .access import HotelAccess, Scope
 from .artifacts import ArtifactStore, FileInfo
 from .auth import SCOPE, AuthConfig, OIDCAuthProvider, current_user
-from .charts import CHART_TYPES, ChartError, build_chart, build_custom, chart_payload, render_png
+from .charts import CHART_TYPES, ChartError, build_chart, build_custom, chart_payload, chart_variants, render_png
 from .datasets import Dataset, DatasetStore
 from .db import Database, QueryError
 from .documents import DocError, Section, SheetSpec, Slide, build_docx, build_pdf, build_pptx, build_xlsx
@@ -318,15 +318,17 @@ def build_server(dsn: str, statement_timeout_ms: int = 15000, artifacts_dir: str
         })
 
     @mcp.tool(annotations=READ_ONLY)
-    async def get_overview(hotel: str | None = None) -> CallToolResult:
+    async def get_overview(hotel: str | None = None,
+                           period: Literal["mtd", "last_month", "last_7", "last_30", "ytd"] = "mtd") -> CallToolResult:
         """Today's key figures per hotel, as on the website's home screen: occupancy today,
-        arrivals and departures today, ADR, RevPAR and room revenue this month so far, and
-        occupancy and room revenue on the books for the next 30 days. Changes compare with the
-        same days a year earlier (occupancy in points, the others relative: 0.08 = +8%).
-        "Today" is each hotel's first date that isn't an actual yet.
+        arrivals and departures today, ADR, RevPAR and room revenue for a period of actuals, and
+        occupancy and room revenue on the books for the next 30 days, plus alerts for figures well
+        below last year's. Changes compare with the same days a year earlier (occupancy in points,
+        the others relative: 0.08 = +8%). "Today" is each hotel's first date that isn't an actual yet.
 
         Args:
             hotel: A hotel code such as "FRA"; omit for every hotel you can see.
+            period: mtd (this month so far), last_month, last_7 or last_30 days, ytd (this year so far).
         """
         schema = await load_schema()
         hotels = {h["code"]: h for h in schema["hotels"]}
@@ -347,7 +349,7 @@ def build_server(dsn: str, statement_timeout_ms: int = 15000, artifacts_dir: str
                     moves[code] = (a + arrivals, d + departures)
         except QueryError as e:
             raise ToolError(str(e)) from e
-        figures = build_overview(daily.rows, {c: moves.get(c, (0, 0)) for c in codes})
+        figures = build_overview(daily.rows, {c: moves.get(c, (0, 0)) for c in codes}, period)
         out = []
         for code, h in hotels.items():
             if code in figures:
@@ -418,11 +420,15 @@ def build_server(dsn: str, statement_timeout_ms: int = 15000, artifacts_dir: str
         """
         try:
             ds = _get(dataset_id)
+            variants: dict[str, Any] = {}
             if spec:
                 chart = build_custom(ds, spec, title, subtitle, language, currency)
             else:
-                chart = build_chart(ds, chart_type, title, x, y, series, subtitle, y_format, language, currency,
-                                    trend, trend_window, y2, y2_type, y2_format)
+                def build(kind):
+                    return build_chart(ds, kind, title, x, y, series, subtitle, y_format, language, currency,
+                                       trend, trend_window, y2, y2_type, y2_format)
+                chart = build(chart_type)
+                variants = chart_variants(chart_type, build)
             png = render_png(chart)
         except ChartError as e:
             raise doc_error(e) from e
@@ -440,7 +446,8 @@ def build_server(dsn: str, statement_timeout_ms: int = 15000, artifacts_dir: str
         # check its work; the website draws the interactive chart from the payload instead.
         image = ImageContent(type="image", data=base64.b64encode(render_png(chart, scale=1)).decode(),
                              mime_type="image/png")
-        return _ok({**summary, "chart": chart_payload(chart)}, for_model=summary, extra_content=[image])
+        payload = chart_payload(chart, None if spec else chart_type, variants)
+        return _ok({**summary, "chart": payload}, for_model=summary, extra_content=[image])
 
     @mcp.tool(annotations=CREATES_FILE)
     async def make_spreadsheet(title: str, sheets: list[SheetSpec], filename: str | None = None,

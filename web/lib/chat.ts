@@ -23,6 +23,9 @@ export type ChartPayload = {
   config: { light: Record<string, unknown>; dark: Record<string, unknown> };
   locale: { number: Record<string, unknown>; time: Record<string, unknown> };
   table: { columns: string[]; rows: string[][]; numeric: boolean[] };
+  // The type it was made as and the same chart as the other types it can switch to (no data).
+  type?: string;
+  variants?: Record<string, Record<string, unknown>>;
 };
 
 /** Charts saved before the Vega-Lite charts: a static SVG per theme. */

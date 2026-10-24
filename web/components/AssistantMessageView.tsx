@@ -64,10 +64,12 @@ function Actions({
   message,
   onAsk,
   onFeedback,
+  onSave,
 }: {
   message: AssistantMessage;
   onAsk: (q: string) => void;
   onFeedback?: (value: "up" | "down" | null) => void;
+  onSave?: () => void;
 }) {
   const { t } = useI18n();
   const [copied, setCopied] = useState(false);
@@ -95,6 +97,12 @@ function Actions({
         <Icon name="doc" className="size-3.5" />
         {t.toPdf}
       </button>
+      {onSave && (
+        <button onClick={onSave} className={button}>
+          <Icon name="save" className="size-3.5" />
+          {t.saveReport}
+        </button>
+      )}
       {onFeedback && (
         <>
           <span className="flex-1" />
@@ -115,11 +123,13 @@ export default function AssistantMessageView({
   isLast = false,
   onAsk = () => {},
   onFeedback,
+  onSave,
 }: {
   message: AssistantMessage;
   isLast?: boolean;
   onAsk?: (q: string) => void;
   onFeedback?: (value: "up" | "down" | null) => void;
+  onSave?: () => void; // saves the question behind this answer as a report
 }) {
   const { t } = useI18n();
   const streaming = message.status === "streaming";
@@ -177,7 +187,7 @@ export default function AssistantMessageView({
           </div>
         </details>
       )}
-      {message.status === "done" && <Actions message={message} onAsk={onAsk} onFeedback={onFeedback} />}
+      {message.status === "done" && <Actions message={message} onAsk={onAsk} onFeedback={onFeedback} onSave={onSave} />}
       {message.status === "done" && isLast && suggestions.length > 0 && (
         <div>
           <p className="mb-1.5 text-xs font-semibold text-stone-500">{t.keepExploring}</p>

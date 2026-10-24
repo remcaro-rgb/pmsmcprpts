@@ -124,6 +124,10 @@ async def test_make_chart(ctx):
     table = chart["table"]
     assert table["columns"] == ["Month", "BCN", "LIS", "OPO"] and table["rows"][0][0] == "January 2026"
     assert table["rows"][0][1].endswith("%")
+    # The same chart as bars and areas, to switch to on the website (specs without their data).
+    assert chart["type"] == "line" and set(chart["variants"]) == {"bar", "area"}
+    bars = chart["variants"]["bar"]
+    assert bars["mark"]["type"] == "bar" and bars["encoding"]["x"]["type"] == "ordinal" and "data" not in bars
     # The model gets the summary and the image, not the payload.
     assert '"spec"' not in r.content[0].text and full["chart_id"] in r.content[0].text
     assert r.content[1].type == "image"
@@ -139,6 +143,8 @@ async def test_make_chart(ctx):
                for t in layer.get("transform", []))
     assert combo["locale"]["number"]["currency"] == ["COP ", ""]
     assert combo["table"]["rows"][0][1].startswith("COP ")
+    assert set(combo["variants"]) == {"line", "area"}  # with the same trend and second axis
+    assert combo["variants"]["line"]["resolve"] == {"scale": {"y": "independent"}}
 
     for kind in ("stacked_bar", "horizontal_bar", "area", "stacked_area", "boxplot", "heatmap"):
         await call(client, "make_chart", dataset_id=ds, x="month", y="occupancy", series="hotel_code",

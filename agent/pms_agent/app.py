@@ -22,6 +22,8 @@ from .digest import Digest
 from .prompts import MESSAGES
 from .loop import ChatAgent
 from .recommend import DailyRecommendations, Overviews
+from .reports import Reports
+from .scheduler import every_day
 from .users import MIN_PASSWORD, User, UserDirectory, UserError
 
 log = logging.getLogger(__name__)
@@ -30,6 +32,7 @@ FILE_ID = re.compile(r"^[0-9a-f]{32}$")
 
 
 HOTEL_CODE = r"^[A-Za-z0-9_-]{1,12}$"
+Period = Literal["mtd", "last_month", "last_7", "last_30", "ytd"]
 
 
 class ChatRequest(BaseModel):
@@ -39,6 +42,8 @@ class ChatRequest(BaseModel):
     language: Literal["en", "es"] = "en"
     # The hotel picked in the website's header (a code), assumed unless the question names others.
     hotel: str | None = Field(default=None, pattern=HOTEL_CODE)
+    # The key-figure period picked there, for questions that don't say which dates.
+    period: Period | None = None
 
 
 class ConversationChange(BaseModel):
@@ -55,6 +60,24 @@ class Prefs(BaseModel):
 class DigestTest(BaseModel):
     language: Literal["en", "es"] = "en"
     hotel: str | None = Field(default=None, pattern=HOTEL_CODE)
+
+
+Schedule = Literal["none", "daily", "weekly", "monthly"]
+
+
+class NewReport(BaseModel):
+    title: str = Field(min_length=1, max_length=200)
+    question: str = Field(min_length=1, max_length=8000)
+    hotel: str | None = Field(default=None, pattern=HOTEL_CODE)
+    language: Literal["en", "es"] = "en"
+    schedule: Schedule = "none"
+    weekday: int = Field(default=0, ge=0, le=6)
+
+
+class ReportChange(BaseModel):
+    title: str | None = Field(default=None, min_length=1, max_length=200)
+    schedule: Schedule | None = None
+    weekday: int | None = Field(default=None, ge=0, le=6)
 
 
 class Feedback(BaseModel):
@@ -132,7 +155,7 @@ def create_app(settings: Settings | None = None, client: Any = None, mcp_target:
     settings = settings or Settings()
     agent = ChatAgent(settings, client or anthropic.AsyncAnthropic(), mcp_target)
     store = ConversationStore(settings.conversations_db)
-    daily = DailyRecommendations(agent, settings.timezone)
+    daily = DailyRecommendations(agent, settings.timezone, store)
     overviews = Overviews(agent)
     directory = UserDirectory(settings.app_database_url) if settings.app_database_url else None
     failures: dict[str, list[float]] = {}  # sign-in failures per login, for a simple lockout
@@ -159,12 +182,21 @@ def create_app(settings: Settings | None = None, client: Any = None, mcp_target:
         return account.name if account else None
 
     digest = Digest(settings, store, overviews, daily, names=display_name)
+    reports = Reports(settings, store, agent, daily.zone)
+    background: set[asyncio.Task] = set()  # reports being sent on request
+
+    async def morning() -> str:
+        return f"{await digest.send_all()} daily emails, {await reports.run_due()} reports"
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
-        task = asyncio.create_task(digest.run()) if digest.available else None
+        tasks = [asyncio.create_task(every_day(daily.zone, settings.prepare_time, daily.prepare,
+                                               "preparing recommendations"))]
+        if digest.available:
+            tasks.append(asyncio.create_task(every_day(daily.zone, settings.digest_time, morning,
+                                                       "daily email and reports")))
         yield
-        if task:
+        for task in tasks:
             task.cancel()
 
     app = FastAPI(title="PMS Reports agent", lifespan=lifespan)
@@ -279,11 +311,12 @@ def create_app(settings: Settings | None = None, client: Any = None, mcp_target:
 
     @app.get("/api/overview")
     async def overview(hotel: str | None = Query(default=None, pattern=HOTEL_CODE),
+                       period: Period = Query(default="mtd"),
                        x_pms_user: str | None = Header(default=None)) -> dict[str, Any]:
-        """The home screen's key figures for the user's hotels, or one of them."""
+        """The home screen's key figures for the user's hotels, or one of them, for a period."""
         user = await active_user(x_pms_user, "en")
         try:
-            return await overviews.get(user, hotel)
+            return await overviews.get(user, hotel, period)
         except Exception:
             log.exception("overview failed")
             raise HTTPException(503, "The key figures aren't available right now.") from None
@@ -317,6 +350,63 @@ def create_app(settings: Settings | None = None, client: Any = None, mcp_target:
             log.exception("test email failed")
             raise HTTPException(502, MESSAGES[body.language]["digest_failed"]) from None
 
+    def scheduled_needs_email(user: str | None, schedule: str | None, language: str) -> None:
+        if schedule and schedule != "none" and not (user and reports.available):
+            raise HTTPException(400, MESSAGES[language]["no_digest"])
+
+    @app.get("/api/reports")
+    async def list_reports(x_pms_user: str | None = Header(default=None)) -> dict[str, Any]:
+        """The user's saved reports, and whether they can be emailed on a schedule."""
+        user = await active_user(x_pms_user, "en")
+        return {"reports": store.reports(user), "scheduling_available": reports.available and bool(user),
+                "send_time": settings.digest_time}
+
+    @app.post("/api/reports", status_code=201)
+    async def create_report(body: NewReport, x_pms_user: str | None = Header(default=None)) -> dict[str, Any]:
+        user = await active_user(x_pms_user, body.language)
+        scheduled_needs_email(user, body.schedule, body.language)
+        if len(store.reports(user)) >= 100:
+            raise HTTPException(400, "You can keep up to 100 reports.")
+        return store.create_report(user, body.title, body.question, body.hotel, body.language, body.schedule,
+                                   body.weekday)
+
+    @app.patch("/api/reports/{report_id}")
+    async def change_report(report_id: str, body: ReportChange,
+                            x_pms_user: str | None = Header(default=None)) -> dict[str, Any]:
+        user = await active_user(x_pms_user, "en")
+        scheduled_needs_email(user, body.schedule, "en")
+        report = store.update_report(user, report_id, **body.model_dump(exclude_unset=True))
+        if report is None:
+            raise HTTPException(404, "Report not found.")
+        return report
+
+    @app.delete("/api/reports/{report_id}", status_code=204)
+    async def delete_report(report_id: str, x_pms_user: str | None = Header(default=None)) -> None:
+        user = await active_user(x_pms_user, "en")
+        if not store.delete_report(user, report_id):
+            raise HTTPException(404, "Report not found.")
+
+    @app.post("/api/reports/{report_id}/send", status_code=202)
+    async def send_report(report_id: str, x_pms_user: str | None = Header(default=None)) -> dict[str, str]:
+        """Runs the report and emails it now, in the background (it takes a minute or so)."""
+        user = await active_user(x_pms_user, "en")
+        report = store.report(user, report_id)
+        if report is None:
+            raise HTTPException(404, "Report not found.")
+        if not user or not reports.available:
+            raise HTTPException(503, MESSAGES[report["language"]]["no_digest"])
+
+        async def go():
+            try:
+                await reports.send(user, report)
+            except Exception:
+                log.exception("sending report %s failed", report_id)
+
+        task = asyncio.create_task(go())
+        background.add(task)
+        task.add_done_callback(background.discard)
+        return {"status": "sending"}
+
     @app.post("/api/feedback", status_code=204)
     async def feedback(body: Feedback, x_pms_user: str | None = Header(default=None)) -> None:
         """A thumbs up or down on an answer or a recommendation, or a recommendation marked done."""
@@ -337,7 +427,7 @@ def create_app(settings: Settings | None = None, client: Any = None, mcp_target:
             async with conv.lock:
                 yield _sse("conversation", {"id": conv.id})
                 events = []
-                async for ev in agent.run_turn(conv, req.message, user, req.language, req.hotel):
+                async for ev in agent.run_turn(conv, req.message, user, req.language, req.hotel, req.period):
                     events.append(ev)
                     yield _sse(ev["event"], ev["data"])
                 # Only completed turns are kept, matching the history (failed turns are rolled back).
