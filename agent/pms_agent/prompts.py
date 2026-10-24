@@ -101,13 +101,21 @@ Daily recommendations:
   concrete (what to do, where, for which dates) and rest on figures you queried: quote them, in the
   hotel's currency. No generic advice, no actions the data doesn't support.
 - Each title is a short imperative phrase; the detail is at most two sentences; the question is
-  what the user would ask you next to see the analysis behind it.
+  what the user would ask you next to see the analysis behind it; the impact is what's at stake in
+  a few words with one figure (money in the hotel's currency, or points of occupancy).
+- When the user names a hotel code, every recommendation is about that hotel.
 """
 
 RECOMMEND_ASK = {
     "en": "What are today's three recommendations for my hotels?",
     "es": "¿Cuáles son las tres recomendaciones de hoy para mis hoteles? Escríbelas en español.",
 }
+
+# Appended when the user has picked a hotel in the website's header.
+HOTEL_PROMPT = """
+The user has hotel {hotel} selected in the website: questions are about it unless they name other
+hotels or ask about all of them.
+"""
 
 # Messages the agent itself shows (errors and refusals), per language.
 MESSAGES = {

@@ -3,6 +3,7 @@ tools and hands back the three actions most worth taking, for the hotels the use
 
 import asyncio
 import logging
+import time
 from datetime import datetime
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -34,8 +35,14 @@ SUBMIT_TOOL = {
                         "hotel": {"type": "string", "description": "The hotel's name, or empty for all of them."},
                         "question": {"type": "string",
                                      "description": "A follow-up question the user can ask to see the analysis."},
+                        "impact": {"type": "string",
+                                   "description": "What's at stake, in a few words with a figure, e.g. "
+                                                  "\"+COP 9.8 M estimated\" or \"-18 pp vs 2025\"."},
+                        "kind": {"type": "string", "enum": ["money", "risk", "info"],
+                                 "description": "money: an opportunity to earn more; risk: a loss to prevent; "
+                                                "info: anything else."},
                     },
-                    "required": ["title", "detail", "hotel", "question"],
+                    "required": ["title", "detail", "hotel", "question", "impact", "kind"],
                     "additionalProperties": False,
                 },
             },
@@ -44,7 +51,8 @@ SUBMIT_TOOL = {
         "additionalProperties": False,
     },
 }
-FIELDS = {"title": 120, "detail": 600, "hotel": 120, "question": 300}
+FIELDS = {"title": 120, "detail": 600, "hotel": 120, "question": 300, "impact": 60, "kind": 10}
+KINDS = {"money", "risk", "info"}
 
 
 class RecommendationError(RuntimeError):
@@ -57,19 +65,24 @@ def clean(raw: Any) -> list[dict[str, str]]:
     out = []
     for item in items if isinstance(items, list) else []:
         if isinstance(item, dict) and str(item.get("title") or "").strip():
-            out.append({k: str(item.get(k) or "").strip()[:n] for k, n in FIELDS.items()})
+            rec = {k: str(item.get(k) or "").strip()[:n] for k, n in FIELDS.items()}
+            rec["kind"] = rec["kind"] if rec["kind"] in KINDS else "info"
+            out.append(rec)
     if not out:
         raise RecommendationError("No recommendations came back.")
     return out[:COUNT]
 
 
-async def recommend(agent: ChatAgent, user: str | None, language: str) -> list[dict[str, str]]:
-    """Ask Claude for today's recommendations, as the signed-in user (the database limits the hotels)."""
+async def recommend(agent: ChatAgent, user: str | None, language: str,
+                    hotel: str | None = None) -> list[dict[str, str]]:
+    """Ask Claude for today's recommendations, as the signed-in user (the database limits the hotels);
+    with `hotel` (a code), for that hotel only."""
     async with agent._mcp(user) as mcp:
         tools = [t for t in tool_definitions((await mcp.list_tools()).tools) if t["name"] in DATA_TOOLS]
         system = (SYSTEM_PROMPT + LANGUAGE_PROMPTS[language]
                   + ("\n" + mcp.instructions if mcp.instructions else "") + RECOMMEND_PROMPT)
-        messages: list[dict[str, Any]] = [{"role": "user", "content": RECOMMEND_ASK[language]}]
+        ask = RECOMMEND_ASK[language] + (f" (hotel {hotel})" if hotel else "")
+        messages: list[dict[str, Any]] = [{"role": "user", "content": ask}]
         for _ in range(agent.settings.max_tool_steps):
             async with agent.client.beta.messages.stream(
                     **agent._request(system, [*tools, SUBMIT_TOOL], messages)) as stream:
@@ -102,18 +115,46 @@ class DailyRecommendations:
         except Exception:
             log.warning("unknown PMS_TIMEZONE %r, using UTC", timezone)
             self.zone = ZoneInfo("UTC")
-        self.cache: dict[tuple[str, str, str], list[dict[str, str]]] = {}
-        self.locks: dict[tuple[str, str, str], asyncio.Lock] = {}
+        # (user, language, hotel, day) -> (recommendations, when they were made)
+        self.cache: dict[tuple[str, str, str, str], tuple[list[dict[str, str]], str]] = {}
+        self.locks: dict[tuple[str, str, str, str], asyncio.Lock] = {}
 
-    async def get(self, user: str | None, language: str) -> dict[str, Any]:
-        day = datetime.now(self.zone).date().isoformat()
-        key = (user or "", language, day)
+    async def get(self, user: str | None, language: str, hotel: str | None = None) -> dict[str, Any]:
+        now = datetime.now(self.zone)
+        day = now.date().isoformat()
+        key = (user or "", language, (hotel or "").upper(), day)
         async with self.locks.setdefault(key, asyncio.Lock()):
             if key not in self.cache:
-                items = await recommend(self.agent, user, language)
+                items = await recommend(self.agent, user, language, hotel)
                 # Keep only today's.
-                for old in [k for k in self.cache if k[2] != day]:
+                for old in [k for k in self.cache if k[3] != day]:
                     del self.cache[old]
                     self.locks.pop(old, None)
-                self.cache[key] = items
-        return {"date": day, "recommendations": self.cache[key]}
+                self.cache[key] = (items, now.isoformat(timespec="minutes"))
+        items, made = self.cache[key]
+        return {"date": day, "hotel": key[2] or None, "generated_at": made, "recommendations": items}
+
+
+class Overviews:
+    """The home screen's key figures (the MCP server's get_overview), kept a few minutes per user."""
+
+    TTL = 300.0
+
+    def __init__(self, agent: ChatAgent):
+        self.agent = agent
+        self.cache: dict[tuple[str, str], tuple[float, dict[str, Any]]] = {}
+
+    async def get(self, user: str | None, hotel: str | None = None) -> dict[str, Any]:
+        key = (user or "", (hotel or "").upper())
+        hit = self.cache.get(key)
+        if hit and time.monotonic() - hit[0] < self.TTL:
+            return hit[1]
+        async with self.agent._mcp(user) as mcp:
+            result = await mcp.call_tool("get_overview", {"hotel": hotel} if hotel else {})
+        if result.is_error or result.structured_content is None:
+            text = "".join(getattr(c, "text", "") for c in result.content)
+            raise RecommendationError(text or "No key figures came back.")
+        if len(self.cache) > 500:
+            self.cache.clear()
+        self.cache[key] = (time.monotonic(), result.structured_content)
+        return result.structured_content

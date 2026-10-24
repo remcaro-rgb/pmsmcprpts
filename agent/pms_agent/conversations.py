@@ -28,6 +28,15 @@ CREATE TABLE IF NOT EXISTS turns (
     events TEXT NOT NULL,         -- UI events of the answer (JSON), deltas merged
     PRIMARY KEY (conversation_id, seq)
 );
+CREATE TABLE IF NOT EXISTS feedback (
+    owner TEXT NOT NULL,
+    kind TEXT NOT NULL,           -- 'answer' or 'recommendation'
+    ref TEXT NOT NULL,            -- conversation id and turn, or the day, hotel and position
+    value TEXT NOT NULL,          -- 'up', 'down' or 'done'
+    note TEXT NOT NULL DEFAULT '',
+    updated REAL NOT NULL,
+    PRIMARY KEY (owner, kind, ref)
+);
 """
 
 
@@ -64,6 +73,9 @@ class ConversationStore:
         self.db = sqlite3.connect(path, check_same_thread=False, isolation_level=None)
         self.db.execute("PRAGMA foreign_keys = ON")
         self.db.executescript(SCHEMA)
+        columns = {r[1] for r in self.db.execute("PRAGMA table_info(conversations)")}
+        if "pinned" not in columns:  # files saved before pinning
+            self.db.execute("ALTER TABLE conversations ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0")
         self.cache_size = cache_size
         # Loaded conversations, with the lock that serializes their turns.
         self._live: OrderedDict[str, Conversation] = OrderedDict()
@@ -105,9 +117,44 @@ class ConversationStore:
 
     def list(self, owner: str | None, limit: int = 100) -> list[dict[str, Any]]:
         rows = self.db.execute(
-            "SELECT id, title, updated FROM conversations WHERE owner = ? ORDER BY updated DESC LIMIT ?",
-            (owner or "", limit)).fetchall()
-        return [{"id": r[0], "title": r[1], "updated": r[2]} for r in rows]
+            "SELECT id, title, updated, pinned FROM conversations WHERE owner = ?"
+            " ORDER BY pinned DESC, updated DESC LIMIT ?", (owner or "", limit)).fetchall()
+        return [{"id": r[0], "title": r[1], "updated": r[2], "pinned": bool(r[3])} for r in rows]
+
+    def update(self, conversation_id: str, owner: str | None, title: str | None = None,
+               pinned: bool | None = None) -> bool:
+        """Renames or pins one of the owner's conversations."""
+        sets, args = [], []
+        if title is not None and title.strip():
+            sets.append("title = ?")
+            args.append(_title(title))
+        if pinned is not None:
+            sets.append("pinned = ?")
+            args.append(int(pinned))
+        if not sets:
+            return self.db.execute("SELECT 1 FROM conversations WHERE id = ? AND owner = ?",
+                                   (conversation_id, owner or "")).fetchone() is not None
+        return self.db.execute(f"UPDATE conversations SET {', '.join(sets)} WHERE id = ? AND owner = ?",
+                               (*args, conversation_id, owner or "")).rowcount > 0
+
+    def set_feedback(self, owner: str | None, kind: str, ref: str, value: str | None, note: str = "") -> None:
+        """Records a thumbs up or down, or "done"; None clears it."""
+        with self.db:
+            self.db.execute("BEGIN")
+            if value is None:
+                self.db.execute("DELETE FROM feedback WHERE owner = ? AND kind = ? AND ref = ?",
+                                (owner or "", kind, ref))
+            else:
+                self.db.execute(
+                    "INSERT INTO feedback (owner, kind, ref, value, note, updated) VALUES (?, ?, ?, ?, ?, ?)"
+                    " ON CONFLICT (owner, kind, ref) DO UPDATE SET value = excluded.value,"
+                    " note = excluded.note, updated = excluded.updated",
+                    (owner or "", kind, ref, value, note, time.time()))
+
+    def feedback(self, owner: str | None, kind: str, prefix: str = "") -> dict[str, str]:
+        rows = self.db.execute("SELECT ref, value FROM feedback WHERE owner = ? AND kind = ?"
+                               " AND substr(ref, 1, length(?)) = ?", (owner or "", kind, prefix, prefix)).fetchall()
+        return dict(rows)
 
     def load(self, conversation_id: str, owner: str | None) -> dict[str, Any] | None:
         row = self.db.execute("SELECT title, updated FROM conversations WHERE id = ? AND owner = ?",
@@ -116,8 +163,10 @@ class ConversationStore:
             return None
         turns = self.db.execute("SELECT user_text, events FROM turns WHERE conversation_id = ? ORDER BY seq",
                                 (conversation_id,)).fetchall()
+        votes = self.feedback(owner, "answer", f"{conversation_id}:")
         return {"id": conversation_id, "title": row[0], "updated": row[1],
-                "turns": [{"user": t[0], "events": json.loads(t[1])} for t in turns]}
+                "turns": [{"user": t[0], "events": json.loads(t[1]),
+                           "feedback": votes.get(f"{conversation_id}:{i}")} for i, t in enumerate(turns)]}
 
     def delete(self, conversation_id: str, owner: str | None) -> bool:
         """Raises RuntimeError while the conversation is answering."""

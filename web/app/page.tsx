@@ -13,7 +13,7 @@ export default async function Home() {
   const account = await currentAccount(user);
   return (
     <I18nProvider initial={await serverLocale()}>
-      <Chat user={user} isAdmin={!!account?.is_admin} theme={await serverTheme()} />
+      <Chat user={user} name={account?.name ?? null} isAdmin={!!account?.is_admin} theme={await serverTheme()} />
     </I18nProvider>
   );
 }

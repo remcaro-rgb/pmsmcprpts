@@ -39,16 +39,52 @@ test("follow-up questions continue the conversation and show SQL", async ({ page
   await expect(page.getByText("What would you like to know?")).toBeVisible();
 });
 
-test("today's recommendations open their analysis", async ({ page }) => {
+test("the home screen shows the key figures, recommendations and questions", async ({ page }) => {
   await page.goto("/");
+  // Key figures for the picked hotel; picking another one is remembered.
+  const kpis = page.getByTestId("kpis");
+  await expect(kpis.getByRole("listitem")).toHaveCount(6);
+  await expect(kpis).toContainText("Occupancy today");
+  await expect(kpis).toContainText(/€\d/);
+  await expect(page.getByTestId("data-freshness")).toContainText("Sample data");
+  await page.getByLabel("Hotel", { exact: true }).selectOption("OPO");
+  await expect(page.getByLabel("Message")).toHaveAttribute("placeholder", /Douro Plaza Hotel/);
+  await page.reload();
+  await expect(page.getByLabel("Hotel", { exact: true })).toHaveValue("OPO");
+  await page.getByLabel("Hotel", { exact: true }).selectOption("LIS");
+
+  // Recommendations: marked done and voted on, and still so after a reload.
   const section = page.getByTestId("recommendations");
   await expect(section.getByRole("heading", { name: "Today's recommendations:" })).toBeVisible();
-  const first = section.getByRole("button", { name: /Cut OTA cancellations/ });
-  await expect(first).toContainText("Lisbon");
+  const first = section.getByRole("listitem").first();
+  await expect(first).toContainText("Cut OTA cancellations");
+  await expect(first).toContainText("€18,400 at risk");
   await expect(section.getByRole("listitem")).toHaveCount(3);
-  await first.click();
+  const saved = () => page.waitForResponse((r) => r.url().endsWith("/api/feedback") && r.status() === 204);
+  await Promise.all([saved(), first.getByRole("button", { name: "Done" }).click()]);
+  await Promise.all([saved(), first.getByRole("button", { name: "Useful", exact: true }).click()]);
+  await expect(first.getByRole("button", { name: "Useful", exact: true })).toHaveAttribute("aria-pressed", "true");
+  await page.reload();
+  await expect(page.getByTestId("recommendations").getByRole("listitem").first().getByRole("button", { name: "Done" }))
+    .toHaveAttribute("aria-pressed", "true");
+
+  // Questions grouped by topic.
+  const questions = page.getByRole("region", { name: "What would you like to know?" });
+  await expect(questions.getByRole("button", { name: /occupancy, ADR and RevPAR/ })).toHaveCount(1);
+  await page.getByRole("tab", { name: "Charts & documents" }).click();
+  await expect(questions.getByRole("button", { name: /to Excel/ })).toBeVisible();
+  await expect(questions.getByRole("button", { name: /occupancy, ADR and RevPAR/ })).toHaveCount(0);
+
+  // A recommendation opens its analysis.
+  await page.getByTestId("recommendations").getByRole("button", { name: "See the analysis" }).first().click();
   await expect(page.getByText("Which booking channels have the highest cancellation rates this year?").last()).toBeVisible();
   await expect(page.getByTestId("assistant-message")).toContainText("Ran a SQL query");
+});
+
+test("a key figure asks about itself", async ({ page }) => {
+  await page.goto("/");
+  await page.getByTestId("kpis").getByRole("button", { name: /Arrivals · Departures/ }).click();
+  await expect(page.getByText(/Who arrives and who leaves .* today\?/).last()).toBeVisible();
 });
 
 test("Stop cancels a streaming answer", async ({ page }) => {
@@ -167,9 +203,22 @@ test("saves conversations to reopen, reload and delete from the sidebar", async 
   await page.reload();
   await expect(page.getByTestId("assistant-message")).toContainText("tokens in");
 
+  // Pin and rename it; search finds it by its new name.
+  await sidebar.getByRole("button", { name: /^Pin “How is occupancy for the sidebar test\?”/ }).click();
+  await expect(sidebar.getByRole("heading", { name: "Pinned" })).toBeVisible();
+  page.once("dialog", (d) => d.accept("Sidebar test, renamed"));
+  await sidebar.getByRole("button", { name: /^Rename “How is occupancy for the sidebar test\?”/ }).click();
+  const renamed = sidebar.getByRole("button", { name: /^Sidebar test, renamed/ });
+  await expect(renamed).toBeVisible();
+  await sidebar.getByLabel("Search conversations").fill("renamed");
+  await expect(renamed).toBeVisible();
+  await sidebar.getByLabel("Search conversations").fill("nothing like this");
+  await expect(sidebar).toContainText("No conversations match.");
+  await sidebar.getByLabel("Search conversations").fill("");
+
   page.once("dialog", (d) => d.accept());
-  await sidebar.getByRole("button", { name: /Delete “How is occupancy for the sidebar test\?”/ }).click();
-  await expect(item).toHaveCount(0);
+  await sidebar.getByRole("button", { name: /Delete “Sidebar test, renamed”/ }).click();
+  await expect(renamed).toHaveCount(0);
   await expect(page.getByText("What would you like to know?")).toBeVisible();
 });
 
@@ -200,10 +249,12 @@ test.describe("in Latin American Spanish", () => {
     await expect(answer).toContainText("Esto es lo que muestra la base de datos");
     await expect(answer).toContainText("tokens de entrada");
 
+    await page.getByRole("button", { name: "Menú de la cuenta" }).click();
     await page.getByLabel("Idioma").selectOption("en");
     await expect(page.getByRole("button", { name: "New chat" })).toBeVisible();
     await expect(page.locator("html")).toHaveAttribute("lang", "en");
     await page.reload();
+    await page.getByRole("button", { name: "Account menu" }).click();
     await expect(page.getByLabel("Language")).toHaveValue("en"); // the cookie beats the browser language
     await page.getByLabel("Language").selectOption("es");
     await page.reload();
@@ -234,15 +285,19 @@ test.describe("light and dark colors", () => {
     await expect(html).not.toHaveClass(/dark/);
     const light = await background();
 
+    const menu = page.getByRole("button", { name: "Account menu" });
+    await menu.click();
     await page.getByRole("button", { name: "Switch to dark mode" }).click();
     await expect(html).toHaveClass(/dark/);
     expect(await background()).not.toBe(light);
 
     await page.reload();
     await expect(html).toHaveClass(/dark/); // rendered dark by the server, no flash of light
+    await menu.click();
     await page.getByRole("button", { name: "Switch to light mode" }).click();
     await expect(html).not.toHaveClass(/dark/);
     await page.reload();
+    await menu.click();
     await expect(page.getByRole("button", { name: "Switch to dark mode" })).toBeVisible();
     expect(await background()).toBe(light);
   });

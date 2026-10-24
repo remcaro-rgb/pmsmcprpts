@@ -132,10 +132,36 @@ export function httpErrorMessage(status: number, body: string, t: Messages = mes
   return t.requestFailed(status);
 }
 
-export type ConversationSummary = { id: string; title: string; updated: number };
+export type ConversationSummary = { id: string; title: string; updated: number; pinned?: boolean };
+
+export type GroupKey = "pinned" | "today" | "yesterday" | "week" | "earlier";
+
+/** Pinned conversations first, then the rest by when they were last updated (local days). */
+export function groupConversations(
+  list: ConversationSummary[],
+  now = new Date(),
+): { key: GroupKey; items: ConversationSummary[] }[] {
+  const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime() / 1000;
+  const groups: Record<GroupKey, ConversationSummary[]> = { pinned: [], today: [], yesterday: [], week: [], earlier: [] };
+  for (const c of list) {
+    const key: GroupKey = c.pinned
+      ? "pinned"
+      : c.updated >= startOfDay
+        ? "today"
+        : c.updated >= startOfDay - 86400
+          ? "yesterday"
+          : c.updated >= startOfDay - 6 * 86400
+            ? "week"
+            : "earlier";
+    groups[key].push(c);
+  }
+  return (Object.keys(groups) as GroupKey[]).filter((k) => groups[k].length).map((key) => ({ key, items: groups[key] }));
+}
 
 /** A saved conversation: each turn's question and the events its answer streamed. */
-export type SavedConversation = ConversationSummary & { turns: { user: string; events: SseEvent[] }[] };
+export type SavedConversation = ConversationSummary & {
+  turns: { user: string; events: SseEvent[]; feedback?: "up" | "down" | null }[];
+};
 
 /** Rebuilds the messages of a saved conversation by replaying each answer's events. */
 export function messagesFromSaved(saved: SavedConversation): Message[] {

@@ -19,6 +19,7 @@ test("signs in through the provider, chats, and signs out", async ({ page }) => 
   await box.press("Enter");
   await expect(page.getByTestId("assistant-message")).toContainText("tokens in");
 
+  await page.getByRole("button", { name: "Account menu" }).click();
   await page.getByRole("button", { name: "Sign out" }).click();
   await expect(page.getByRole("heading", { name: "You're signed out" })).toBeVisible();
   await page.goto("/");
@@ -73,6 +74,7 @@ test("each person sees only their own conversations", async ({ page }) => {
   await expect(sidebar.getByRole("button", { name: /^Ann's private question/ })).toBeVisible();
   const annUrl = page.url();
 
+  await page.getByRole("button", { name: "Account menu" }).click();
   await page.getByRole("button", { name: "Sign out" }).click();
   await page.goto(annUrl);
   await signInAs(page, "bob@hotel.example");
