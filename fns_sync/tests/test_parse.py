@@ -101,12 +101,14 @@ def test_settings():
 def test_answers_that_mean_no_data():
     import httpx2
 
-    from fns_sync.client import AuthError, FNSClient, MissingRate
+    from fns_sync.client import AuthError, FNSClient, MissingRate, RangeTooLong
     answers = {"/v1/reservas/bloqueos.php": (403, {"@attributes": {"error_code": "1"},
                                                   "error": "No se han encontrado bloqueos"}),
                "/v1/ventas/produccion.php": (422, {"mensaje": "No existe tipo de cambio en la fecha: 2026-10-22 "
                                                               "para la moneda con id: 10"}),
-               "/v1/ventas/revenue.php": (403, {"mensaje": "Los datos de acceso no son válidos"})}
+               "/v1/ventas/revenue.php": (403, {"mensaje": "Los datos de acceso no son válidos"}),
+               "/v1/disponibilidad/consulta.php": (403, {"error": "El rango de fechas no puede ser superior "
+                                                                  "a 30 días"})}
     transport = httpx2.MockTransport(lambda r: httpx2.Response(answers[r.url.path][0], json=answers[r.url.path][1]))
     client = FNSClient(Config.from_env(ENV), transport=transport, retries=0)
     assert client.call("blocks", {}) is None
@@ -114,3 +116,5 @@ def test_answers_that_mean_no_data():
         client.call("production", {})
     with pytest.raises(AuthError):
         client.call("revenue", {})
+    with pytest.raises(RangeTooLong):  # a 403 that isn't about access
+        client.call("availability", {})

@@ -74,7 +74,7 @@ def test_first_import_calls_every_method_and_stores_it(owner):
         "/v1/ventas/produccion_cc.php": 1, "/v1/ventas/produccion.php": 1 + CFG.refresh_days + 1,
         "/v1/custom/ventas1.php": 1, "/v1/ventas/pos.php": 1, "/v1/contabilidad/cobros.php": 1,
         "/v1/contabilidad/facturacion.php": 1, "/v1/contabilidad/produccion.php": 1,
-        "/v1/reservas/listado.php": 3 * 2, "/v1/reservas/bloqueos.php": 4, "/v1/disponibilidad/consulta.php": 1}
+        "/v1/reservas/listado.php": 3 * 2, "/v1/reservas/bloqueos.php": 4, "/v1/disponibilidad/consulta.php": 2}
 
     n = counts(owner)
     history = CFG.backfill_days + 1

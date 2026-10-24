@@ -205,6 +205,8 @@ class FakeFNS:
 
     # disponibilidad
     def v1_disponibilidad_consulta(self, f, body):
+        if len(list(_days(f))) > 30:  # as the real API answers
+            return httpx2.Response(403, json={"error": "El rango de fechas no puede ser superior a 30 días"})
         return {"dayAvailibityRoomType": [  # sic, as the real API spells it
             {"roomType": rt, "availability": 5, "date": d.isoformat(),
              "rates": [{"rate_id": 900, "prices": [{"occupancy": 1, "price": 100.0}, {"occupancy": 2, "price": 120.5}],

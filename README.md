@@ -104,7 +104,7 @@ only when an administrator assigns it to them.
 
 The first import loads `FNS_BACKFILL_DAYS` (365) of history instead of 7 days, the most asked-about
 data (revenue, reservations) first. Each method reads its whole range in one call, except
-reservations and blocks (the API allows 30 days per call): about 50 calls for a year. When the API
+reservations, blocks and availability (the API allows 30 days per call): about 50 calls for a year. When the API
 rejects a long range or doesn't answer it in time, that range is read again in 30-day parts. Amounts are in
 the hotel's currency, net of tax. Every run is logged in `fns_sync_runs` with each call's dates, rows
 and errors; a failing call doesn't stop the others, and wrong credentials stop the run. When the API
