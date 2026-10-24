@@ -37,6 +37,22 @@ CREATE TABLE IF NOT EXISTS feedback (
     updated REAL NOT NULL,
     PRIMARY KEY (owner, kind, ref)
 );
+CREATE TABLE IF NOT EXISTS recommendations (
+    owner TEXT NOT NULL,
+    language TEXT NOT NULL,
+    hotel TEXT NOT NULL,          -- hotel code, or '' for all the user's hotels
+    day TEXT NOT NULL,            -- YYYY-MM-DD in PMS_TIMEZONE
+    generated_at TEXT NOT NULL,
+    items TEXT NOT NULL,          -- JSON list
+    PRIMARY KEY (owner, language, hotel, day)
+);
+CREATE TABLE IF NOT EXISTS recommendation_readers (
+    owner TEXT NOT NULL,          -- who asked for them, so they're ready the next morning
+    language TEXT NOT NULL,
+    hotel TEXT NOT NULL,
+    last_seen REAL NOT NULL,
+    PRIMARY KEY (owner, language, hotel)
+);
 CREATE TABLE IF NOT EXISTS prefs (
     owner TEXT PRIMARY KEY,       -- the signed-in user's email
     digest INTEGER NOT NULL DEFAULT 0,  -- the daily email is on
@@ -209,3 +225,31 @@ class ConversationStore:
     def subscribers(self) -> "list[tuple[str, dict[str, Any]]]":
         rows = self.db.execute("SELECT owner FROM prefs WHERE digest = 1 ORDER BY owner").fetchall()
         return [(r[0], self.prefs(r[0])) for r in rows]
+
+    def save_recommendations(self, owner: str, language: str, hotel: str, day: str, generated_at: str,
+                             items: "list[dict[str, Any]]") -> None:
+        with self.db:
+            self.db.execute("BEGIN")
+            self.db.execute(
+                "INSERT INTO recommendations (owner, language, hotel, day, generated_at, items) VALUES (?, ?, ?, ?, ?, ?)"
+                " ON CONFLICT (owner, language, hotel, day) DO UPDATE SET generated_at = excluded.generated_at,"
+                " items = excluded.items", (owner, language, hotel, day, generated_at, json.dumps(items)))
+            self.db.execute("DELETE FROM recommendations WHERE day < ?", (day,))  # only today's are kept
+
+    def load_recommendations(self, owner: str, language: str, hotel: str,
+                             day: str) -> "tuple[list[dict[str, Any]], str] | None":
+        row = self.db.execute("SELECT items, generated_at FROM recommendations WHERE owner = ? AND language = ?"
+                              " AND hotel = ? AND day = ?", (owner, language, hotel, day)).fetchone()
+        return (json.loads(row[0]), row[1]) if row else None
+
+    def saw_recommendations(self, owner: str, language: str, hotel: str) -> None:
+        self.db.execute(
+            "INSERT INTO recommendation_readers (owner, language, hotel, last_seen) VALUES (?, ?, ?, ?)"
+            " ON CONFLICT (owner, language, hotel) DO UPDATE SET last_seen = excluded.last_seen",
+            (owner, language, hotel, time.time()))
+
+    def recommendation_readers(self, days: int = 14) -> "list[tuple[str, str, str]]":
+        """(owner, language, hotel) of everyone who looked at recommendations in the last `days`."""
+        rows = self.db.execute("SELECT owner, language, hotel FROM recommendation_readers WHERE last_seen >= ?"
+                               " ORDER BY last_seen DESC", (time.time() - days * 86400,)).fetchall()
+        return [tuple(r) for r in rows]

@@ -78,3 +78,34 @@ async def test_overview_and_hotel_context():
         assert (await http.get("/api/overview", params={"hotel": "x;y"})).status_code == 422
         await http.post("/api/chat", json={"message": "How is today?", "hotel": "FRA"})
     assert "hotel FRA selected" in client.messages.requests[0]["system"]
+
+
+async def test_prepared_in_the_morning_and_kept_across_restarts():
+    from pms_agent.conversations import ConversationStore
+    from pms_agent.loop import ChatAgent
+    from pms_agent.recommend import DailyRecommendations
+
+    store = ConversationStore(":memory:")
+    store.saw_recommendations("ann@hotel.example", "es", "FRA")  # Ann looked at them yesterday
+    client = FakeClient(submit(3))
+    agent = ChatAgent(Settings(mcp_url="unused"), client, toy_server())
+    daily = DailyRecommendations(agent, "UTC", store)
+    assert await daily.prepare() == 1
+    assert len(client.messages.requests) == 1
+    # A restart: a new instance reads them from the database instead of asking Claude again.
+    again = DailyRecommendations(agent, "UTC", store)
+    result = await again.get("ann@hotel.example", "es", "fra")
+    assert len(result["recommendations"]) == 3 and result["hotel"] == "FRA"
+    assert len(client.messages.requests) == 1
+
+
+def test_next_run():
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    from pms_agent.scheduler import next_run
+
+    zone = ZoneInfo("America/Bogota")
+    assert next_run(datetime(2026, 10, 24, 4, 0, tzinfo=zone), "05:00") == datetime(2026, 10, 24, 5, 0, tzinfo=zone)
+    assert next_run(datetime(2026, 10, 24, 6, 0, tzinfo=zone), "05:00") == datetime(2026, 10, 25, 5, 0, tzinfo=zone)
+    assert next_run(datetime(2026, 10, 24, 6, 0, tzinfo=zone), "nope").hour == 7

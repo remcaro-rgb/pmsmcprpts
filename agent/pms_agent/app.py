@@ -22,6 +22,7 @@ from .digest import Digest
 from .prompts import MESSAGES
 from .loop import ChatAgent
 from .recommend import DailyRecommendations, Overviews
+from .scheduler import every_day
 from .users import MIN_PASSWORD, User, UserDirectory, UserError
 
 log = logging.getLogger(__name__)
@@ -132,7 +133,7 @@ def create_app(settings: Settings | None = None, client: Any = None, mcp_target:
     settings = settings or Settings()
     agent = ChatAgent(settings, client or anthropic.AsyncAnthropic(), mcp_target)
     store = ConversationStore(settings.conversations_db)
-    daily = DailyRecommendations(agent, settings.timezone)
+    daily = DailyRecommendations(agent, settings.timezone, store)
     overviews = Overviews(agent)
     directory = UserDirectory(settings.app_database_url) if settings.app_database_url else None
     failures: dict[str, list[float]] = {}  # sign-in failures per login, for a simple lockout
@@ -162,9 +163,13 @@ def create_app(settings: Settings | None = None, client: Any = None, mcp_target:
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
-        task = asyncio.create_task(digest.run()) if digest.available else None
+        tasks = [asyncio.create_task(every_day(daily.zone, settings.prepare_time, daily.prepare,
+                                               "preparing recommendations"))]
+        if digest.available:
+            tasks.append(asyncio.create_task(every_day(daily.zone, settings.digest_time, digest.send_all,
+                                                       "daily email")))
         yield
-        if task:
+        for task in tasks:
             task.cancel()
 
     app = FastAPI(title="PMS Reports agent", lifespan=lifespan)

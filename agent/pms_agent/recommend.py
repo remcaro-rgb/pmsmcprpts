@@ -8,6 +8,7 @@ from datetime import datetime
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from .conversations import ConversationStore
 from .loop import ChatAgent, echo_content, tool_definitions
 from .prompts import LANGUAGE_PROMPTS, RECOMMEND_ASK, RECOMMEND_PROMPT, SYSTEM_PROMPT
 
@@ -106,10 +107,12 @@ async def recommend(agent: ChatAgent, user: str | None, language: str,
 
 
 class DailyRecommendations:
-    """Recommendations made once a day per user and language (the data changes overnight)."""
+    """Recommendations made once a day per user, language and hotel (the data changes overnight),
+    kept in the agent's database; `prepare` makes them early for the people who use them."""
 
-    def __init__(self, agent: ChatAgent, timezone: str):
+    def __init__(self, agent: ChatAgent, timezone: str, store: ConversationStore | None = None):
         self.agent = agent
+        self.store = store
         try:
             self.zone = ZoneInfo(timezone)
         except Exception:
@@ -119,20 +122,40 @@ class DailyRecommendations:
         self.cache: dict[tuple[str, str, str, str], tuple[list[dict[str, str]], str]] = {}
         self.locks: dict[tuple[str, str, str, str], asyncio.Lock] = {}
 
-    async def get(self, user: str | None, language: str, hotel: str | None = None) -> dict[str, Any]:
+    async def get(self, user: str | None, language: str, hotel: str | None = None,
+                  reader: bool = True) -> dict[str, Any]:
+        """Today's, made now if nobody has yet; `reader` records who looked, for `prepare`."""
         now = datetime.now(self.zone)
         day = now.date().isoformat()
         key = (user or "", language, (hotel or "").upper(), day)
+        if reader and self.store:
+            self.store.saw_recommendations(*key[:3])
         async with self.locks.setdefault(key, asyncio.Lock()):
+            if key not in self.cache and self.store and (saved := self.store.load_recommendations(*key)):
+                self.cache[key] = saved
             if key not in self.cache:
                 items = await recommend(self.agent, user, language, hotel)
+                made = datetime.now(self.zone).isoformat(timespec="minutes")
                 # Keep only today's.
                 for old in [k for k in self.cache if k[3] != day]:
                     del self.cache[old]
                     self.locks.pop(old, None)
-                self.cache[key] = (items, now.isoformat(timespec="minutes"))
+                self.cache[key] = (items, made)
+                if self.store:
+                    self.store.save_recommendations(*key, made, items)
         items, made = self.cache[key]
         return {"date": day, "hotel": key[2] or None, "generated_at": made, "recommendations": items}
+
+    async def prepare(self) -> int:
+        """Makes today's for everyone who looked at them in the last two weeks, one at a time."""
+        made = 0
+        for owner, language, hotel in self.store.recommendation_readers() if self.store else []:
+            try:
+                await self.get(owner or None, language, hotel or None, reader=False)
+                made += 1
+            except Exception:
+                log.exception("preparing recommendations for %s failed", owner or "(no sign-in)")
+        return made
 
 
 class Overviews:

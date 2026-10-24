@@ -4,16 +4,16 @@ sent through SMTP at PMS_DIGEST_TIME (in PMS_TIMEZONE) to the users who turn it 
 import asyncio
 import html
 import logging
-import re
 import smtplib
 import ssl
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 from email.message import EmailMessage
 from typing import Any
 
 from .config import Settings
 from .conversations import ConversationStore
 from .recommend import DailyRecommendations, Overviews
+from .scheduler import next_run
 
 log = logging.getLogger(__name__)
 
@@ -271,18 +271,4 @@ class Digest:
         return sent
 
     def next_run(self, now: datetime) -> datetime:
-        match = re.fullmatch(r"([01]?\d|2[0-3]):([0-5]\d)", self.settings.digest_time.strip())
-        hour, minute = (int(match[1]), int(match[2])) if match else (7, 0)
-        run = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
-        return run if run > now else run + timedelta(days=1)
-
-    async def run(self) -> None:
-        log.info("daily email at %s (%s)", self.settings.digest_time, self.zone)
-        while True:
-            now = datetime.now(self.zone)
-            await asyncio.sleep((self.next_run(now) - now).total_seconds())
-            try:
-                log.info("daily email sent to %d users", await self.send_all())
-            except Exception:
-                log.exception("daily email failed")
-
+        return next_run(now, self.settings.digest_time)
