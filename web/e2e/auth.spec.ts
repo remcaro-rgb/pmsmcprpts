@@ -14,6 +14,7 @@ test("signs in through the provider, chats, and signs out", async ({ page }) => 
   await signInAs(page, "ann@hotel.example");
 
   await expect(page.getByText("ann@hotel.example")).toBeVisible();
+  await expect(page.getByTestId("kpis")).toBeVisible(); // interactive
   const box = page.getByLabel("Message");
   await box.fill("How is occupancy?");
   await box.press("Enter");
@@ -66,6 +67,7 @@ test("a callback without a pending sign-in asks to start again", async ({ page }
 test("each person sees only their own conversations", async ({ page }) => {
   await page.goto("/");
   await signInAs(page, "ann@hotel.example");
+  await expect(page.getByTestId("kpis")).toBeVisible(); // interactive
   const box = page.getByLabel("Message");
   await box.fill("Ann's private question about occupancy");
   await box.press("Enter");

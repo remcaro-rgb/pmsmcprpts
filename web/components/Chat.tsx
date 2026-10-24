@@ -182,10 +182,12 @@ export default function Chat({
     text = text.trim();
     if (!text || busy) return;
     const assistantId = crypto.randomUUID();
+    // Saved turns are numbered from 0; failed turns aren't saved.
+    const turn = messages.filter((m) => m.role === "assistant" && m.status === "done").length;
     setMessages((m) => [
       ...m,
       { role: "user", id: crypto.randomUUID(), text },
-      { role: "assistant", id: assistantId, parts: [], status: "streaming" },
+      { role: "assistant", id: assistantId, parts: [], status: "streaming", turn, feedback: null },
     ]);
     setInput("");
     setBusy(true);
@@ -228,6 +230,16 @@ export default function Chat({
       setBusy(false);
       refreshConversations();
     }
+  }
+
+  function answerFeedback(message: AssistantMessage, value: "up" | "down" | null) {
+    if (!conversationId || message.turn == null) return;
+    setMessages((ms) => ms.map((m) => (m.id === message.id ? { ...(m as AssistantMessage), feedback: value } : m)));
+    fetch("/api/feedback", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ kind: "answer", ref: `${conversationId}:${message.turn}`, value }),
+    }).catch(() => {});
   }
 
   function newChat() {
@@ -316,7 +328,7 @@ export default function Chat({
             <Home name={name} hotel={current} failed={overviewFailed} onAsk={send} onRetry={loadOverview} />
           ) : (
             <div className="mx-auto max-w-3xl space-y-6 px-4 py-6">
-              {messages.map((m) =>
+              {messages.map((m, i) =>
                 m.role === "user" ? (
                   <div key={m.id} className="flex justify-end">
                     <p className="max-w-[85%] whitespace-pre-wrap rounded-2xl bg-stone-200/80 px-4 py-2 text-[15px] dark:bg-stone-800">
@@ -324,7 +336,13 @@ export default function Chat({
                     </p>
                   </div>
                 ) : (
-                  <AssistantMessageView key={m.id} message={m} />
+                  <AssistantMessageView
+                    key={m.id}
+                    message={m}
+                    isLast={i === messages.length - 1 && !busy}
+                    onAsk={send}
+                    onFeedback={conversationId ? (v) => answerFeedback(m, v) : undefined}
+                  />
                 ),
               )}
             </div>

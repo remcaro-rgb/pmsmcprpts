@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { fileUrl, type ChartPayload, type FileInfo, type LegacyChart } from "@/lib/chat";
 import { useI18n } from "./I18n";
+import { Icon } from "./Icons";
 
 /** Follows the light/dark switch (the `dark` class on <html>). */
 function subscribeTheme(onChange: () => void) {
@@ -94,8 +95,16 @@ export default function ChartView({ chart, file }: { chart: ChartPayload | Legac
   const { t } = useI18n();
   const [showData, setShowData] = useState(false);
   const [failed, setFailed] = useState(false);
+  const [full, setFull] = useState(false);
   const onError = useCallback(() => setFailed(true), []);
   const vega = "kind" in chart ? chart : null;
+
+  useEffect(() => {
+    if (!full) return;
+    const close = (e: KeyboardEvent) => e.key === "Escape" && setFull(false);
+    document.addEventListener("keydown", close);
+    return () => document.removeEventListener("keydown", close);
+  }, [full]);
 
   return (
     <figure
@@ -130,7 +139,42 @@ export default function ChartView({ chart, file }: { chart: ChartPayload | Legac
             {t.downloadPng}
           </a>
         )}
+        {vega && !failed && (
+          <button
+            type="button"
+            onClick={() => setFull(true)}
+            aria-label={t.fullScreen}
+            title={t.fullScreen}
+            className={`${file ? "" : "ml-auto "}flex size-7 items-center justify-center rounded-md text-stone-500 hover:bg-stone-100 hover:text-stone-900 dark:hover:bg-stone-800 dark:hover:text-stone-100`}
+          >
+            <Icon name="expand" className="size-4" />
+          </button>
+        )}
       </figcaption>
+      {full && vega && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label={vega.title}
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-3 sm:p-8"
+          onClick={(e) => e.target === e.currentTarget && setFull(false)}
+        >
+          <div className="max-h-full w-full max-w-6xl overflow-auto rounded-2xl bg-[#fcfcfb] p-4 shadow-2xl dark:bg-[#1a1a19]">
+            <div className="mb-2 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setFull(false)}
+                aria-label={t.close}
+                className="flex size-8 items-center justify-center rounded-lg text-stone-500 hover:bg-stone-100 dark:hover:bg-stone-800"
+              >
+                <Icon name="close" />
+              </button>
+            </div>
+            <VegaChart chart={vega} onError={onError} />
+            <DataTable table={vega.table} />
+          </div>
+        </div>
+      )}
 
       {vega && showData && <DataTable table={vega.table} />}
     </figure>

@@ -67,6 +67,15 @@ How to answer:
   thousands separators, occupancy as percentages with one decimal. Never add up amounts of hotels
   with different currencies.
 - Name the hotels and the date range every figure covers.
+- Write for hotel managers: plain words, no SQL, table or column names, and never dataset_ids,
+  chart_ids or tool names (the website shows the steps behind an answer separately).
+- End every answer with 2 to 4 short follow-up questions the user is likely to ask next, each a
+  natural next step from this answer, in the user's language, in this exact block (the website
+  turns it into buttons and hides the block):
+  ```suggestions
+  - First question
+  - Second question
+  ```
 """
 
 # Appended to the system prompt for the website's language (the default, English, adds nothing).

@@ -1,12 +1,21 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
+
+/** Opens the site and waits until it's interactive (the key figures load after hydration). */
+async function open(page: Page) {
+  await page.goto("/");
+  await expect(page.getByTestId("kpis")).toBeVisible();
+}
 
 test("answers a starter question with the query, results and a streamed answer", async ({ page }) => {
-  await page.goto("/");
+  await open(page);
   await page.getByRole("button", { name: /occupancy, ADR and RevPAR/ }).click();
 
   const answer = page.getByTestId("assistant-message");
-  // Tool step: collapsed card with the row count; expanding shows inputs and the result table.
-  const card = answer.locator("details", { hasText: "Fetched KPIs" });
+  // The steps are folded under "How I worked it out"; each is a card with the row count, and
+  // expanding it shows the inputs and the result table.
+  await expect(answer.getByTestId("how")).toContainText("How I worked it out · 1 step");
+  await answer.getByTestId("how").locator("summary").first().click();
+  const card = answer.locator("details details", { hasText: "Fetched KPIs" });
   await expect(card).toContainText("3 rows");
   await card.locator("summary").click();
   await expect(card).toContainText("2026-07-01");
@@ -20,7 +29,7 @@ test("answers a starter question with the query, results and a streamed answer",
 });
 
 test("follow-up questions continue the conversation and show SQL", async ({ page }) => {
-  await page.goto("/");
+  await open(page);
   const box = page.getByLabel("Message");
   await box.fill("How is occupancy?");
   await box.press("Enter");
@@ -29,7 +38,8 @@ test("follow-up questions continue the conversation and show SQL", async ({ page
   await box.fill("Which channels cancel most?");
   await box.press("Enter");
   const second = page.getByTestId("assistant-message").nth(1);
-  const card = second.locator("details", { hasText: "Ran a SQL query" });
+  await second.getByTestId("how").locator("summary").first().click();
+  const card = second.locator("details details", { hasText: "Ran a SQL query" });
   await card.locator("summary").click();
   await expect(card.locator("pre")).toContainText("FROM v_channel_mix");
   await expect(card).toContainText("7 rows");
@@ -39,8 +49,38 @@ test("follow-up questions continue the conversation and show SQL", async ({ page
   await expect(page.getByText("What would you like to know?")).toBeVisible();
 });
 
+test("answers end with actions and follow-up questions", async ({ page, context }) => {
+  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+  await open(page);
+  const box = page.getByLabel("Message");
+  await box.fill("How is occupancy for the actions test?");
+  await box.press("Enter");
+  const answer = page.getByTestId("assistant-message");
+  const actions = answer.getByTestId("answer-actions");
+  await expect(actions).toBeVisible();
+  // No dataset ids or raw suggestion block in the visible answer.
+  await expect(answer.locator(".markdown")).not.toContainText("suggestions");
+
+  await actions.getByRole("button", { name: "Copy" }).click();
+  await expect(actions.getByRole("button", { name: "Copied" })).toBeVisible();
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toContain("Here is what the database shows");
+
+  const saved = page.waitForResponse((r) => r.url().endsWith("/api/feedback") && r.status() === 204);
+  await actions.getByRole("button", { name: "Useful", exact: true }).click();
+  await saved;
+  await page.reload();
+  await expect(page.getByTestId("answer-actions").getByRole("button", { name: "Useful", exact: true }))
+    .toHaveAttribute("aria-pressed", "true");
+
+  // A follow-up question asks the next one.
+  await page.getByTestId("suggestions").getByRole("button", { name: /Which booking channels/ }).click();
+  await expect(page.getByTestId("assistant-message").nth(1)).toContainText("Ran a SQL query");
+  // Only the last answer offers follow-ups.
+  await expect(page.getByTestId("suggestions")).toHaveCount(1);
+});
+
 test("the home screen shows the key figures, recommendations and questions", async ({ page }) => {
-  await page.goto("/");
+  await open(page);
   // Key figures for the picked hotel; picking another one is remembered.
   const kpis = page.getByTestId("kpis");
   await expect(kpis.getByRole("listitem")).toHaveCount(6);
@@ -82,13 +122,13 @@ test("the home screen shows the key figures, recommendations and questions", asy
 });
 
 test("a key figure asks about itself", async ({ page }) => {
-  await page.goto("/");
+  await open(page);
   await page.getByTestId("kpis").getByRole("button", { name: /Arrivals · Departures/ }).click();
   await expect(page.getByText(/Who arrives and who leaves .* today\?/).last()).toBeVisible();
 });
 
 test("Stop cancels a streaming answer", async ({ page }) => {
-  await page.goto("/");
+  await open(page);
   const box = page.getByLabel("Message");
   await box.fill("Give me a slow answer");
   await box.press("Enter");
@@ -100,7 +140,7 @@ test("Stop cancels a streaming answer", async ({ page }) => {
 });
 
 test("shows refusals as a failed message", async ({ page }) => {
-  await page.goto("/");
+  await open(page);
   const box = page.getByLabel("Message");
   await box.fill("Please refuse this");
   await box.press("Enter");
@@ -110,7 +150,7 @@ test("shows refusals as a failed message", async ({ page }) => {
 });
 
 test("charts render inline with tooltips, a data table and a PNG download", async ({ page }) => {
-  await page.goto("/");
+  await open(page);
   const box = page.getByLabel("Message");
   await box.fill("Make a chart of monthly occupancy by hotel");
   await box.press("Enter");
@@ -135,6 +175,13 @@ test("charts render inline with tooltips, a data table and a PNG download", asyn
   await expect(chart.locator("tbody tr")).toHaveCount(12);
   await expect(chart.locator("thead th")).toHaveText(["Period", "BCN", "LIS", "OPO"]);
 
+  // Full screen, closed with Escape.
+  await chart.getByRole("button", { name: "Full screen" }).click();
+  const dialog = page.getByRole("dialog", { name: "Occupancy by hotel" });
+  await expect(dialog.getByTestId("chart-canvas").locator("svg")).toContainText("Occupancy by hotel");
+  await page.keyboard.press("Escape");
+  await expect(dialog).toHaveCount(0);
+
   const href = await chart.getByRole("link", { name: "Download PNG" }).getAttribute("href");
   const png = await page.request.get(href!);
   expect(png.status()).toBe(200);
@@ -142,7 +189,7 @@ test("charts render inline with tooltips, a data table and a PNG download", asyn
 });
 
 test("bar charts with a trend line and a second axis", async ({ page }) => {
-  await page.goto("/");
+  await open(page);
   const box = page.getByLabel("Message");
   await box.fill("Bar chart of monthly occupancy with a trend line");
   await box.press("Enter");
@@ -160,7 +207,7 @@ for (const [prompt, ext, magic] of [
   ["Write an occupancy report", "pdf", "%PDF"],
 ] as const) {
   test(`creates a downloadable ${ext}`, async ({ page }) => {
-    await page.goto("/");
+    await open(page);
     const box = page.getByLabel("Message");
     await box.fill(prompt);
     await box.press("Enter");
@@ -179,7 +226,7 @@ for (const [prompt, ext, magic] of [
 }
 
 test("saves conversations to reopen, reload and delete from the sidebar", async ({ page }) => {
-  await page.goto("/");
+  await open(page);
   const box = page.getByLabel("Message");
   await box.fill("How is occupancy for the sidebar test?");
   await box.press("Enter");
@@ -196,7 +243,7 @@ test("saves conversations to reopen, reload and delete from the sidebar", async 
   // Reopening replays the saved answer: tool step, results and the answer text.
   await item.click();
   const answer = page.getByTestId("assistant-message");
-  await expect(answer.locator("details", { hasText: "Fetched KPIs" })).toContainText("3 rows");
+  await expect(answer.locator("details details", { hasText: "Fetched KPIs" })).toContainText("3 rows");
   await expect(answer).toContainText("tokens in");
   await expect(page.getByText("How is occupancy for the sidebar test?", { exact: true }).last()).toBeVisible();
 
@@ -224,7 +271,7 @@ test("saves conversations to reopen, reload and delete from the sidebar", async 
 
 test("on phones the conversation list opens as a drawer", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 800 });
-  await page.goto("/");
+  await open(page);
   const sidebar = page.getByRole("complementary", { name: "Conversations" });
   await expect(sidebar).toBeHidden();
   await page.getByRole("button", { name: "Show conversations" }).click();
@@ -237,7 +284,7 @@ test.describe("in Latin American Spanish", () => {
   test.use({ locale: "es-MX" });
 
   test("follows the browser language, answers in Spanish, and remembers the switch", async ({ page }) => {
-    await page.goto("/");
+    await open(page);
     await expect(page.locator("html")).toHaveAttribute("lang", "es-419");
     await expect(page.getByRole("heading", { name: "¿Qué te gustaría saber?" })).toBeVisible();
     await expect(page.getByRole("heading", { name: "Recomendaciones del día:" })).toBeVisible();
@@ -245,7 +292,9 @@ test.describe("in Latin American Spanish", () => {
 
     await page.getByRole("button", { name: /¿Qué canales le traen/ }).click();
     const answer = page.getByTestId("assistant-message");
-    await expect(answer.locator("details", { hasText: "Ejecutó una consulta SQL" })).toContainText("7 filas");
+    await expect(answer.locator("details details", { hasText: "Ejecutó una consulta SQL" })).toContainText("7 filas");
+    await expect(answer.getByTestId("how")).toContainText("Ver cómo lo calculé");
+    await expect(page.getByTestId("suggestions")).toContainText("Compáralo con 2024");
     await expect(answer).toContainText("Esto es lo que muestra la base de datos");
     await expect(answer).toContainText("tokens de entrada");
 
@@ -262,7 +311,7 @@ test.describe("in Latin American Spanish", () => {
   });
 
   test("charts get Spanish dates and controls", async ({ page }) => {
-    await page.goto("/");
+    await open(page);
     const box = page.getByLabel("Mensaje");
     await box.fill("Hazme un gráfico de la ocupación mensual");
     await box.press("Enter");
@@ -279,7 +328,7 @@ test.describe("light and dark colors", () => {
   test.use({ colorScheme: "dark" }); // the system preference doesn't decide: light is the default
 
   test("starts light, switches to dark, and remembers the choice", async ({ page }) => {
-    await page.goto("/");
+    await open(page);
     const html = page.locator("html");
     const background = () => page.evaluate(() => getComputedStyle(document.body).backgroundColor);
     await expect(html).not.toHaveClass(/dark/);

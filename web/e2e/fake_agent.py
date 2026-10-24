@@ -92,6 +92,12 @@ def fmt(value, column):
     return str(value)
 
 
+SUGGESTIONS = ("\n\n```suggestions\n- Which booking channels have the highest cancellation rates this year?\n"
+               "- Compare it with 2024\n```")
+SUGGESTIONS_ES = ("\n\n```suggestions\n- ¿Qué canales de reserva tienen las tasas de cancelación más altas este año?\n"
+                  "- Compáralo con 2024\n```")
+
+
 def answer_from(result: dict, spanish: bool = False) -> str:
     wanted = [c["name"] for c in result["columns"]
               if c["name"] in ("hotel_code", "period", "channel", "occupancy", "adr", "revpar",
@@ -103,9 +109,9 @@ def answer_from(result: dict, spanish: bool = False) -> str:
     if spanish:
         return ("Esto es lo que muestra la base de datos (respuesta simulada para pruebas, armada con el "
                 "resultado de la herramienta):\n\n" + "\n".join(lines)
-                + f"\n\nConjunto de datos: `{result['dataset_id']}`.")
+                + SUGGESTIONS_ES)
     return ("Here is what the database shows (stand-in answer for testing, built from the tool "
-            "result):\n\n" + "\n".join(lines) + f"\n\nSource dataset: `{result['dataset_id']}`.")
+            "result):\n\n" + "\n".join(lines) + SUGGESTIONS)
 
 
 MONTHLY = {"start": "2025-10-01", "end": "2026-09-30", "granularity": "month"}

@@ -16,6 +16,7 @@ async function signIn(page: Page, login: string, password: string) {
 }
 
 async function askForKpis(page: Page) {
+  await expect(page.getByTestId("kpis")).toBeVisible(); // interactive
   const box = page.getByLabel("Message");
   await box.fill("How did each hotel do last quarter?");
   await box.press("Enter");
