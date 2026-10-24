@@ -32,6 +32,7 @@ const PATHS = {
   area: "M3 20V14l6-5 4 3 8-7v15z",
   table: "M3 5h18v14H3zM3 10h18M9 10v9",
   clock: "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM12 7v5l3 2",
+  home: "M4 11l8-7 8 7M6 9.5V20h4.5v-6h3v6H18V9.5",
 } as const;
 
 export type IconName = keyof typeof PATHS;

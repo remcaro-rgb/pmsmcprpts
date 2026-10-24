@@ -315,6 +315,13 @@ export default function Chat({
     }).catch(() => {});
   }
 
+  /** Back to the start page: the key figures, recommendations and questions. */
+  function goHome() {
+    newChat();
+    scrollRef.current?.scrollTo({ top: 0 });
+    loadOverview();
+  }
+
   function newChat() {
     setMessages([]);
     setConversationId(null);
@@ -356,10 +363,27 @@ export default function Chat({
           >
             <Icon name="menu" className="size-5" />
           </button>
-          <div className="flex size-8 shrink-0 items-center justify-center rounded-[10px] bg-gradient-to-br from-blue-700 to-sky-500 text-[13px] font-extrabold tracking-tight text-white">
-            HS
-          </div>
-          <h1 className="hidden truncate text-[15px] font-semibold lg:block">{t.appName}</h1>
+          <button
+            onClick={goHome}
+            disabled={busy}
+            aria-label={`${t.appName}: ${t.home}`}
+            title={t.home}
+            className="flex min-w-0 shrink-0 items-center gap-2 rounded-xl disabled:cursor-default"
+          >
+            <span className="flex size-8 shrink-0 items-center justify-center rounded-[10px] bg-gradient-to-br from-blue-700 to-sky-500 text-[13px] font-extrabold tracking-tight text-white">
+              HS
+            </span>
+            <h1 className="hidden truncate text-[15px] font-semibold lg:block">{t.appName}</h1>
+          </button>
+          <button
+            onClick={goHome}
+            disabled={busy || messages.length === 0}
+            aria-current={messages.length === 0 ? "page" : undefined}
+            className="flex h-9 shrink-0 items-center gap-1.5 rounded-xl border border-stone-200 px-2.5 text-sm font-medium text-stone-700 hover:bg-stone-100 disabled:opacity-40 aria-[current]:opacity-100 aria-[current]:bg-stone-100 dark:border-stone-700 dark:text-stone-200 dark:hover:bg-stone-900 dark:aria-[current]:bg-stone-800"
+          >
+            <Icon name="home" />
+            <span className="hidden sm:inline">{t.home}</span>
+          </button>
           {overview && overview.length > 1 ? (
             <label className="flex min-w-0 items-center gap-1.5 rounded-xl border border-stone-200 bg-white py-1 pl-2.5 pr-1 text-sm font-medium dark:border-stone-700 dark:bg-stone-900">
               <Icon name="building" className="size-4 text-stone-500" />

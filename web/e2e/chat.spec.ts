@@ -190,6 +190,26 @@ test("a key figure asks about itself", async ({ page }) => {
   await expect(page.getByText(/Who arrives and who leaves .* today\?/).last()).toBeVisible();
 });
 
+test("the Home button goes back to the start page", async ({ page }) => {
+  await open(page);
+  const home = page.getByRole("button", { name: "Home", exact: true });
+  await expect(home).toHaveAttribute("aria-current", "page");
+  const box = page.getByLabel("Message");
+  await box.fill("How is occupancy for the home test?");
+  await box.press("Enter");
+  await expect(page.getByTestId("answer-actions")).toBeVisible();
+  await expect(page.getByTestId("kpis")).toHaveCount(0);
+  await home.click();
+  await expect(page.getByTestId("kpis")).toBeVisible();
+  await expect(page).toHaveURL(/\/$/);
+  // The logo goes there too.
+  await page.getByRole("complementary", { name: "Conversations" })
+    .getByRole("button", { name: /^How is occupancy for the home test\?/ }).click();
+  await expect(page.getByTestId("kpis")).toHaveCount(0);
+  await page.getByRole("button", { name: "Hotel Super Intelligence: Home" }).click();
+  await expect(page.getByTestId("kpis")).toBeVisible();
+});
+
 test("Stop cancels a streaming answer", async ({ page }) => {
   await open(page);
   const box = page.getByLabel("Message");
