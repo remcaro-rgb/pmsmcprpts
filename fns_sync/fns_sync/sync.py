@@ -159,7 +159,9 @@ class Sync:
             body = lambda a, b: self._filter(  # noqa: E731
                 central_id=self.cfg.central_id, start_date=iso(a), end_date=iso(b),
                 moneda_src_id=moneda_id, moneda_dst_id=target)
-            for a, b, payload in self._ranged("exchange", body, start, end, f"{moneda_id}->{target} ", optional=True):
+            # In 30-day parts: a whole year at once makes the API stop answering for minutes.
+            for a, b, payload in self._ranged("exchange", body, start, end, f"{moneda_id}->{target} ", optional=True,
+                                              max_days=CHUNK_DAYS):
                 if payload is not None:
                     self._stored(store.save(conn, "fns_exchange_rates", None, parse.exchange(payload, moneda_id, target),
                                             ("rate_date", "from_moneda_id", "to_moneda_id")))

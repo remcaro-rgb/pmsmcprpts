@@ -64,13 +64,14 @@ def test_first_import_calls_every_method_and_stores_it(owner):
     # Neither the master list the API refused nor the latest days without an exchange rate fail the run.
     failed = [c["window"] for c in result["calls"] if not c.get("ok")]
     assert failed == ["usuariosGastro"] + [f"{d}..{d}" for d in (TODAY - timedelta(days=1), TODAY)]
-    # One call per method for the whole history, except the API's 30-day searches and the recent
-    # days of the production report (one each, so they stay daily).
+    # One call per method for the whole history, except the API's 30-day searches, exchange rates
+    # (30-day parts: a year at once stalls the API) and the recent days of the production report
+    # (one each, so they stay daily).
     per_path = {}
     for path, _ in fake.calls:
         per_path[path] = per_path.get(path, 0) + 1
     assert per_path == {
-        "/v1/maestros/alojamiento.php": 20, "/v1/maestros/cambio.php": 1, "/v1/ventas/revenue.php": 1,
+        "/v1/maestros/alojamiento.php": 20, "/v1/maestros/cambio.php": 2, "/v1/ventas/revenue.php": 1,
         "/v1/ventas/produccion_cc.php": 1, "/v1/ventas/produccion.php": 1 + CFG.refresh_days + 1,
         "/v1/custom/ventas1.php": 1, "/v1/ventas/pos.php": 1, "/v1/contabilidad/cobros.php": 1,
         "/v1/contabilidad/facturacion.php": 1, "/v1/contabilidad/produccion.php": 1,
