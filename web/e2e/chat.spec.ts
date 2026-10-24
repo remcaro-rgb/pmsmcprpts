@@ -194,7 +194,7 @@ test.describe("in Latin American Spanish", () => {
     await expect(page.getByRole("heading", { name: "Recomendaciones del día:" })).toBeVisible();
     await expect(page.getByTestId("recommendations")).toContainText("Reducir las cancelaciones de OTA");
 
-    await page.getByRole("button", { name: /¿Qué canales de reserva/ }).click();
+    await page.getByRole("button", { name: /¿Qué canales le traen/ }).click();
     const answer = page.getByTestId("assistant-message");
     await expect(answer.locator("details", { hasText: "Ejecutó una consulta SQL" })).toContainText("7 filas");
     await expect(answer).toContainText("Esto es lo que muestra la base de datos");
