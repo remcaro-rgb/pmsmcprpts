@@ -14,6 +14,7 @@ import { isLocale } from "@/lib/i18n";
 import { readSse } from "@/lib/sse";
 import type { Theme } from "@/lib/theme";
 import AssistantMessageView from "./AssistantMessageView";
+import Recommendations from "./Recommendations";
 import { useI18n } from "./I18n";
 import Sidebar from "./Sidebar";
 import ThemeToggle from "./ThemeToggle";
@@ -176,7 +177,7 @@ export default function Chat({
               <path d="M2.5 4h11M2.5 8h11M2.5 12h11" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
             </svg>
           </button>
-          <div className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-accent text-sm font-bold text-white">P</div>
+          <div className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-accent text-sm font-bold text-white">H</div>
           <div className="min-w-0">
             <h1 className="truncate text-[15px] font-semibold leading-tight">{t.appName}</h1>
             <p className="hidden truncate text-xs text-stone-500 sm:block">{t.tagline}</p>
@@ -244,6 +245,7 @@ export default function Chat({
                     </button>
                   ))}
                 </div>
+                <Recommendations onAsk={send} />
               </div>
             ) : (
               <div className="space-y-6">

@@ -1,6 +1,7 @@
 """FastAPI service: POST /api/chat streams a Claude answer as server-sent events."""
 
 import json
+import logging
 import re
 import time
 from collections.abc import AsyncIterator
@@ -8,7 +9,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import anthropic
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field, field_validator
@@ -17,7 +18,10 @@ from .config import Settings
 from .conversations import ConversationStore
 from .prompts import MESSAGES
 from .loop import ChatAgent
+from .recommend import DailyRecommendations
 from .users import MIN_PASSWORD, User, UserDirectory, UserError
+
+log = logging.getLogger(__name__)
 
 FILE_ID = re.compile(r"^[0-9a-f]{32}$")
 
@@ -97,6 +101,7 @@ def create_app(settings: Settings | None = None, client: Any = None, mcp_target:
     settings = settings or Settings()
     agent = ChatAgent(settings, client or anthropic.AsyncAnthropic(), mcp_target)
     store = ConversationStore(settings.conversations_db)
+    daily = DailyRecommendations(agent, settings.timezone)
     directory = UserDirectory(settings.app_database_url) if settings.app_database_url else None
     failures: dict[str, list[float]] = {}  # sign-in failures per login, for a simple lockout
 
@@ -196,16 +201,31 @@ def create_app(settings: Settings | None = None, client: Any = None, mcp_target:
         except UserError as e:
             raise user_error(e) from None
 
-    @app.post("/api/chat")
-    async def chat(req: ChatRequest, x_pms_user: str | None = Header(default=None)) -> StreamingResponse:
-        user = _user(x_pms_user)
+    async def active_user(header: str | None, language: str) -> str | None:
+        """With accounts on, only active users get answers; the database limits them to their hotels."""
+        user = _user(header)
         if directory is not None:
-            # With accounts on, only active users chat; the database limits them to their hotels.
             if user is None:
-                raise HTTPException(401, MESSAGES[req.language]["sign_in"])
+                raise HTTPException(401, MESSAGES[language]["sign_in"])
             account = await directory.get_by_email(user)
             if account is None or not account.active:
-                raise HTTPException(403, MESSAGES[req.language]["no_account"])
+                raise HTTPException(403, MESSAGES[language]["no_account"])
+        return user
+
+    @app.get("/api/recommendations")
+    async def recommendations(language: Literal["en", "es"] = Query(default="en"),
+                              x_pms_user: str | None = Header(default=None)) -> dict[str, Any]:
+        """Today's three recommendations for the user's hotels (made on the first request of the day)."""
+        user = await active_user(x_pms_user, language)
+        try:
+            return await daily.get(user, language)
+        except Exception:
+            log.exception("recommendations failed")
+            raise HTTPException(503, MESSAGES[language]["no_recommendations"]) from None
+
+    @app.post("/api/chat")
+    async def chat(req: ChatRequest, x_pms_user: str | None = Header(default=None)) -> StreamingResponse:
+        user = await active_user(x_pms_user, req.language)
         try:
             conv = store.get_or_create(req.conversation_id, user)
         except LookupError:

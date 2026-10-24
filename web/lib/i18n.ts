@@ -8,8 +8,8 @@ export const LOCALE_COOKIE = "pms_lang";
 export const INTL_LOCALE: Record<Locale, string> = { en: "en-US", es: "es-419" };
 
 const en = {
-  appName: "PMS Reports",
-  tagline: "Ask about occupancy, rates, revenue, bookings and guests",
+  appName: "Hotel Super Intelligence",
+  tagline: "Get information on occupancy, rates, revenue, bookings, guests and more",
   newChat: "New chat",
   signOut: "Sign out",
   language: "Language",
@@ -31,6 +31,10 @@ const en = {
     "Show monthly room revenue for Lisbon over the last 12 months.",
     "Who are our top 10 guests by total spend?",
   ],
+  recommendationsTitle: "Today's recommendations:",
+  recommendationsLoading: "Analyzing your hotels' data…",
+  recommendationsFailed: "Today's recommendations aren't available right now.",
+  recommendationAsk: "See the analysis",
   placeholder: "Ask about your hotels…",
   message: "Message",
   send: "Send",
@@ -156,8 +160,8 @@ const en = {
 export type Messages = typeof en;
 
 const es: Messages = {
-  appName: "Reportes PMS",
-  tagline: "Pregunta sobre ocupación, tarifas, ingresos, reservas y huéspedes",
+  appName: "Hotel Super Intelligence",
+  tagline: "Obtén información sobre ocupación, tarifas, ingresos, reservas, huéspedes y más",
   newChat: "Nuevo chat",
   signOut: "Cerrar sesión",
   language: "Idioma",
@@ -180,6 +184,10 @@ const es: Messages = {
     "Muestra los ingresos mensuales por habitaciones de Lisboa en los últimos 12 meses.",
     "¿Quiénes son nuestros 10 principales huéspedes por gasto total?",
   ],
+  recommendationsTitle: "Recomendaciones del día:",
+  recommendationsLoading: "Analizando los datos de tus hoteles…",
+  recommendationsFailed: "Las recomendaciones de hoy no están disponibles en este momento.",
+  recommendationAsk: "Ver el análisis",
   placeholder: "Pregunta sobre tus hoteles…",
   message: "Mensaje",
   send: "Enviar",

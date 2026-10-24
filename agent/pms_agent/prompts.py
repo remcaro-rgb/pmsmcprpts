@@ -89,6 +89,26 @@ Language:
 """,
 }
 
+# The welcome screen's daily recommendations (recommend.py), appended to the system prompt.
+RECOMMEND_PROMPT = """
+Daily recommendations:
+- You are preparing the three recommendations shown on the welcome screen today, for the hotels
+  this user can see. Nobody is chatting: don't write prose, hand the result to give_recommendations.
+- Look at the recent data first (a few queries are enough): the last 30 days against the same days
+  a year earlier and against the previous 30 days, the next 30-90 days on the books (pace, pickup,
+  occupancy, ADR, cancellations), channel mix and costs, segments, and anything unusual.
+- Pick the three actions worth the most money or risk right now, most valuable first. Each must be
+  concrete (what to do, where, for which dates) and rest on figures you queried: quote them, in the
+  hotel's currency. No generic advice, no actions the data doesn't support.
+- Each title is a short imperative phrase; the detail is at most two sentences; the question is
+  what the user would ask you next to see the analysis behind it.
+"""
+
+RECOMMEND_ASK = {
+    "en": "What are today's three recommendations for my hotels?",
+    "es": "¿Cuáles son las tres recomendaciones de hoy para mis hoteles? Escríbelas en español.",
+}
+
 # Messages the agent itself shows (errors and refusals), per language.
 MESSAGES = {
     "en": {
@@ -100,6 +120,7 @@ MESSAGES = {
         "busy": "This conversation is already answering a message.",
         "sign_in": "Sign in to continue.",
         "no_account": "Your account isn't active. Ask an administrator.",
+        "no_recommendations": "Today's recommendations aren't available right now.",
     },
     "es": {
         "unreachable": "No se pudo conectar con el servicio de datos: {error}",
@@ -110,5 +131,6 @@ MESSAGES = {
         "busy": "Esta conversación todavía está respondiendo un mensaje.",
         "sign_in": "Inicia sesión para continuar.",
         "no_account": "Tu cuenta no está activa. Consulta a un administrador.",
+        "no_recommendations": "Las recomendaciones de hoy no están disponibles en este momento.",
     },
 }
