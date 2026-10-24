@@ -1,7 +1,7 @@
 """One import run: call every FNS method for the configured hotel and store the results.
 
-Each method asks for its whole date range in one call (reservations and blocks: 30 days, the API's
-limit); when the API rejects a long range or is too slow with it, that range is read again in 30-day
+Each method asks for its whole date range in one call (reservations, blocks and availability: 30
+days, the API's limit); when the API rejects a long range or is too slow with it, that range is read again in 30-day
 parts. Each answer is saved in its own transaction, so one failing call doesn't lose the others;
 the run is recorded in pms.fns_sync_runs with every call's window, row count and error."""
 
@@ -22,7 +22,7 @@ MASTER_KINDS = ("th", "th_completo", "habitaciones", "cc", "ofertas", "canales",
                 "agencias", "agentes", "empresas", "paises", "usuarios", "sucursales", "salones", "pv",
                 "servicios", "usuariosGastro", "alojamientos", "clientes")
 RESERVATION_STATES = ("Todas", "canceladas", "modificadas")
-# FNS limits reservation and block searches to 30 days; other ranges fall back to this size.
+# FNS limits reservation, block and availability searches to 30 days; other ranges fall back to this.
 CHUNK_DAYS = 30
 SALES_AHEAD_DAYS = 90
 BLOCKS_AHEAD_DAYS = 90
@@ -260,7 +260,7 @@ class Sync:
         body = lambda a, b: {"filter": {  # noqa: E731
             "start_date": iso(a), "end_date": iso(b), "central_id": self.cfg.central_id,
             "alojamiento_id": self.cfg.alojamiento_id}}
-        for a, b, payload in self._ranged("availability", body, start, end):
+        for a, b, payload in self._ranged("availability", body, start, end, max_days=CHUNK_DAYS):
             if payload is None:
                 continue
             avail, rates = parse.availability(payload)

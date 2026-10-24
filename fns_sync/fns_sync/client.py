@@ -46,6 +46,10 @@ class TooSlow(FNSError):
     """The API accepted the request but didn't finish the answer in time (e.g. a long date range)."""
 
 
+class RangeTooLong(FNSError):
+    """The API refuses the date range as too long (disponibilidad says so with a 403)."""
+
+
 class MissingRate(FNSError):
     """FNS has no exchange rate for the requested currency on a date (usually the latest days)."""
 
@@ -53,6 +57,7 @@ class MissingRate(FNSError):
 # Answers that mean "nothing to return" whatever their status (bloqueos.php says it with a 403).
 NO_DATA = re.compile(r"no se (han )?encontrad|sin (datos|resultados)|no hay (datos|resultados|registros)", re.I)
 MISSING_RATE = re.compile(r"no existe tipo de cambio", re.I)
+RANGE_TOO_LONG = re.compile(r"rango de fechas no puede|superior a \d+ d[ií]as|period not valid", re.I)
 
 
 def _message(payload: Any, fallback: str) -> str:
@@ -104,6 +109,8 @@ class FNSClient:
             return None
         if MISSING_RATE.search(message):
             raise MissingRate(f"{path}: {message} (HTTP {r.status_code})", r.status_code)
+        if r.status_code >= 400 and RANGE_TOO_LONG.search(message):
+            raise RangeTooLong(f"{path}: {message} (HTTP {r.status_code})", r.status_code)
         if r.status_code in (401, 403):
             raise AuthError(f"{path}: {_message(payload, 'access denied')} (HTTP {r.status_code}). "
                             "Check FNS_USER, FNS_PASSWORD, FNS_CENTRAL_ID and FNS_ALOJAMIENTO_ID.",
