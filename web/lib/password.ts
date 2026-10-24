@@ -49,6 +49,6 @@ export function passwordAccepted(gate: PasswordGate, authorization: string | nul
 export function passwordChallenge(): Response {
   return new Response("Sign in to continue.", {
     status: 401,
-    headers: { "www-authenticate": 'Basic realm="PMS Reports", charset="UTF-8"', "content-type": "text/plain; charset=utf-8" },
+    headers: { "www-authenticate": 'Basic realm="Hotel Super Intelligence", charset="UTF-8"', "content-type": "text/plain; charset=utf-8" },
   });
 }

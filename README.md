@@ -1,4 +1,4 @@
-# PMS Reports Chat
+# Hotel Super Intelligence
 
 A chatbot website that answers questions about a hotel property-management-system (PMS)
 database and generates spreadsheets, charts, PowerPoint decks and PDF/Word reports.
@@ -398,6 +398,15 @@ and a PNG download. Spreadsheets, decks and reports appear as download cards. Th
 starter questions, and it works at phone width. It starts in light colors; the sun/moon button in the header switches to dark (remembered in the `pms_theme` cookie). A sidebar (a drawer on
 phones) lists saved conversations to reopen or delete; the open one is kept in the address (`?c=…`). The browser only talks
 to the site's own `/api/chat` and `/api/files/{id}` routes, which proxy the agent (`AGENT_URL`).
+
+### Today's recommendations
+
+Under the starter questions, the welcome screen shows "Recomendaciones del día" ("Today's
+recommendations"): the three actions worth the most for the hotels the signed-in user can see,
+with the figures behind each. Choosing one asks the agent for the analysis. The agent makes them
+with the read-only tools on the first visit of the day (this takes a minute or so), then keeps
+them until midnight in `PMS_TIMEZONE` (default `FNS_TIMEZONE`), per user and language:
+`GET /api/recommendations?language=es`.
 
 ### Languages
 

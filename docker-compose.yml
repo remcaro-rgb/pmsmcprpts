@@ -74,6 +74,8 @@ services:
       PMS_CLAUDE_EFFORT: ${PMS_CLAUDE_EFFORT:-medium}
       PMS_ARTIFACTS_DIR: /artifacts
       PMS_CONVERSATIONS_DB: /data/conversations.sqlite
+      # The day's recommendations are made again at midnight here.
+      PMS_TIMEZONE: ${PMS_TIMEZONE:-${FNS_TIMEZONE:-Europe/Madrid}}
       # User accounts (sign-in, admin page); see .env.example.
       PMS_APP_DATABASE_URL: ${PMS_APP_DATABASE_URL:-}
     volumes:

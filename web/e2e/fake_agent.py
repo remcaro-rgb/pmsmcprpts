@@ -192,6 +192,24 @@ def turn_results(messages):
     return results
 
 
+RECOMMENDATIONS = {"recommendations": [
+    {"title": "Cut OTA cancellations", "detail": "Booking.com cancels 31% of its bookings this year.",
+     "hotel": "Lisbon", "question": "Which booking channels have the highest cancellation rates this year?"},
+    {"title": "Raise weekend rates", "detail": "Weekends are 94% full 30 days out.", "hotel": "Porto",
+     "question": "Show weekend occupancy on the books"},
+    {"title": "Fill midweek in March", "detail": "Tuesday to Thursday sit at 52%.", "hotel": "",
+     "question": "Show midweek occupancy in March"},
+]}
+RECOMMENDATIONS_ES = {"recommendations": [
+    {"title": "Reducir las cancelaciones de OTA", "detail": "Booking.com cancela el 31% de sus reservas este año.",
+     "hotel": "Lisboa", "question": "¿Qué canales de reserva tienen las tasas de cancelación más altas este año?"},
+    {"title": "Subir las tarifas de fin de semana", "detail": "Los fines de semana están al 94% a 30 días.",
+     "hotel": "Oporto", "question": "Muestra la ocupación de fin de semana"},
+    {"title": "Llenar entre semana en marzo", "detail": "De martes a jueves están al 52%.", "hotel": "",
+     "question": "Muestra la ocupación entre semana en marzo"},
+]}
+
+
 class ScriptedMessages:
     def stream(self, **params):
         messages = params["messages"]
@@ -202,6 +220,9 @@ class ScriptedMessages:
             return text_stream("The tool failed: " + last["content"][0]["content"])
         results = turn_results(messages)
         spanish = "Latin American Spanish" in params["system"]
+        if any(t["name"] == "give_recommendations" for t in params["tools"]):
+            return tool_stream("give_recommendations", RECOMMENDATIONS_ES if spanish else RECOMMENDATIONS,
+                               "Picking today's recommendations.")
 
         key = next((k for k in PLANS if k in question or (spanish and KEYWORDS_ES[k] in question)), None)
         if key:

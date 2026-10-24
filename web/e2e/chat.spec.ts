@@ -39,6 +39,18 @@ test("follow-up questions continue the conversation and show SQL", async ({ page
   await expect(page.getByText("What would you like to know?")).toBeVisible();
 });
 
+test("today's recommendations open their analysis", async ({ page }) => {
+  await page.goto("/");
+  const section = page.getByTestId("recommendations");
+  await expect(section.getByRole("heading", { name: "Today's recommendations:" })).toBeVisible();
+  const first = section.getByRole("button", { name: /Cut OTA cancellations/ });
+  await expect(first).toContainText("Lisbon");
+  await expect(section.getByRole("listitem")).toHaveCount(3);
+  await first.click();
+  await expect(page.getByText("Which booking channels have the highest cancellation rates this year?").last()).toBeVisible();
+  await expect(page.getByTestId("assistant-message")).toContainText("Ran a SQL query");
+});
+
 test("Stop cancels a streaming answer", async ({ page }) => {
   await page.goto("/");
   const box = page.getByLabel("Message");
@@ -179,6 +191,8 @@ test.describe("in Latin American Spanish", () => {
     await page.goto("/");
     await expect(page.locator("html")).toHaveAttribute("lang", "es-419");
     await expect(page.getByRole("heading", { name: "¿Qué te gustaría saber?" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Recomendaciones del día:" })).toBeVisible();
+    await expect(page.getByTestId("recommendations")).toContainText("Reducir las cancelaciones de OTA");
 
     await page.getByRole("button", { name: /¿Qué canales de reserva/ }).click();
     const answer = page.getByTestId("assistant-message");
