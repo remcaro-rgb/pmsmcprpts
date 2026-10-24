@@ -19,7 +19,7 @@ import vl_convert
 
 from .datasets import Dataset
 from .documents import pretty
-from .formats import Kind, date_labels, format_value, infer_kind
+from .formats import Kind, currency_prefix, date_labels, format_value, infer_kind
 from .i18n import Lang
 
 CHART_TYPES = ("line", "bar", "stacked_bar", "horizontal_bar", "area", "stacked_area", "scatter", "pie",
@@ -49,7 +49,6 @@ THEMES = {
     },
 }
 FONT = "system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif"
-CURRENCY_SYMBOLS = {"EUR": "€", "USD": "$", "GBP": "£"}
 # Numbers read 1,234.5 in both languages (see the agent's language rules).
 TIME_LOCALES = {"en": "en-US", "es": "es-MX"}
 # Keys a spec may not contain anywhere: data comes from the dataset, nothing loads from the network.
@@ -100,8 +99,7 @@ def theme_config(theme: str) -> dict[str, Any]:
 
 
 def format_locale(currency: str) -> dict[str, Any]:
-    symbol = CURRENCY_SYMBOLS.get(currency.upper(), f"{currency.upper()} ")
-    return {"decimal": ".", "thousands": ",", "grouping": [3], "currency": [symbol, ""]}
+    return {"decimal": ".", "thousands": ",", "grouping": [3], "currency": [currency_prefix(currency), ""]}
 
 
 def time_locale(lang: Lang) -> dict[str, Any]:
@@ -139,15 +137,15 @@ def _column(ds: Dataset, name: str | None, what: str) -> None:
         raise ChartError(f"Column {name!r} ({what}) is not in dataset {ds.id}. Columns: {names}")
 
 
-def _table(ds: Dataset, kinds: dict[str, Kind], columns: list[str], lang: Lang, x: str | None = None,
-           series: str | None = None, y: str | None = None) -> dict[str, Any]:
+def _table(ds: Dataset, kinds: dict[str, Kind], columns: list[str], lang: Lang, currency: str,
+           x: str | None = None, series: str | None = None, y: str | None = None) -> dict[str, Any]:
     """The 'Show data' table: x by series when the chart has both, else the columns it uses."""
     names = [c["name"] for c in ds.columns]
 
     def fmt(col: str, values: list[Any]) -> list[str]:
         if kinds[col] == "date":
             return date_labels([str(v) for v in values], lang)[1]
-        return [format_value(v, kinds[col], lang) for v in values]
+        return [format_value(v, kinds[col], lang, currency) for v in values]
 
     if x and series and y:
         xi, si, yi = names.index(x), names.index(series), names.index(y)
@@ -155,7 +153,7 @@ def _table(ds: Dataset, kinds: dict[str, Kind], columns: list[str], lang: Lang, 
         groups: list[str] = list(dict.fromkeys(str(r[si]) for r in ds.rows))
         cells = {(r[xi], str(r[si])): r[yi] for r in ds.rows}
         labels = fmt(x, cats)
-        rows = [[labels[i]] + [format_value(cells.get((c, g)), kinds[y], lang) for g in groups]
+        rows = [[labels[i]] + [format_value(cells.get((c, g)), kinds[y], lang, currency) for g in groups]
                 for i, c in enumerate(cats)]
         return {"columns": [pretty(x, lang)] + groups, "rows": rows[:TABLE_ROWS], "numeric": [False] + [True] * len(groups)}
     cols = [c for c in dict.fromkeys(columns) if c in names]
@@ -326,8 +324,8 @@ def build_chart(ds: Dataset, chart_type: str, title: str, x: str | None = None, 
         spec.update(layers[0])
     else:
         spec["layer"] = layers
-    table = _table(ds, kinds, [x, series, y, y2], lang, x if chart_type not in ("scatter", "histogram") else None,
-                   series, y)
+    table = _table(ds, kinds, [x, series, y, y2], lang, currency,
+                   x if chart_type not in ("scatter", "histogram") else None, series, y)
     return Chart(spec=spec, rows=_rows(ds, kinds), title=title, lang=lang, currency=currency, table=table,
                  series=groups)
 
@@ -424,7 +422,7 @@ def build_custom(ds: Dataset, spec: dict[str, Any], title: str, subtitle: str | 
         spec["title"] = {"text": title, **({"subtitle": subtitle} if subtitle else {})}
     used = [v for _, k, v in _walk(spec) if k == "field" and isinstance(v, str) and v in columns]
     chart = Chart(spec=spec, rows=_rows(ds, kinds), title=title, lang=lang, currency=currency,
-                  table=_table(ds, kinds, used or [c["name"] for c in ds.columns], lang))
+                  table=_table(ds, kinds, used or [c["name"] for c in ds.columns], lang, currency))
     render_png(chart, scale=1)  # compile now, so mistakes come back as errors
     return chart
 

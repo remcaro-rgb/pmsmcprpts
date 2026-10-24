@@ -48,7 +48,10 @@ Charts and documents:
   a grid (e.g. month x hotel), histogram/boxplot for distributions. Add trend="linear" or
   "moving_average" for trend lines, and y2 for a second measure on its own axis (e.g. revenue bars
   with an occupancy line). For anything else (reference lines, annotations, small multiples,
-  waterfalls) pass a Vega-Lite spec. Pass currency= the hotel's currency for money charts.
+  waterfalls) pass a Vega-Lite spec.
+- Pass currency= the hotel's currency (hotels.currency, listed per hotel by describe_schema) to
+  make_chart, make_spreadsheet, make_presentation and make_report whenever they show money; it
+  defaults to EUR. Keep hotels with different currencies in separate files or tables.
   Never say a chart type isn't possible: make it with a spec.
 - Give categories readable labels in the query (e.g. "Direct web", not direct_web).
 - Ratio changes (e.g. occupancy this year minus last year) stay fractions; end the column name in

@@ -7,8 +7,8 @@ import pytest
 from mcp.client import Client
 
 from pms_mcp.artifacts import ArtifactStore, safe_filename
-from pms_mcp.documents import pretty
-from pms_mcp.formats import date_labels, format_value, infer_kind, nice_ticks
+from pms_mcp.documents import excel_currency_format, pretty
+from pms_mcp.formats import date_labels, format_headline, format_value, infer_kind, nice_ticks
 from pms_mcp.server import build_server
 
 DSN = os.environ.get("PMS_TEST_DATABASE_URL")
@@ -80,6 +80,18 @@ def test_formats():
     assert safe_filename("../../etc/passwd", "xlsx") == "etcpasswd.xlsx"
 
 
+def test_currency_formats():
+    assert format_value(275.314, "currency", currency="USD") == "$275.31"
+    assert format_value(4083708.89, "currency", currency="gbp") == "£4,083,709"
+    assert format_value(1234000, "currency", currency="COP") == "COP 1,234,000"
+    assert format_value(-850.5, "currency", "es", "COP") == "COP -850.50"
+    assert format_headline(11127338, "currency", currency="COP") == "COP 11.1M"
+    assert format_headline(11127338, "currency") == "€11.1M"
+    assert excel_currency_format("EUR") == "€#,##0.00"
+    assert excel_currency_format("USD") == "$#,##0.00"
+    assert excel_currency_format("COP") == '"COP "#,##0.00'
+
+
 def test_artifact_ids_are_validated(tmp_path):
     store = ArtifactStore(tmp_path)
     info = store.save(b"x", "a", "png")
@@ -126,6 +138,7 @@ async def test_make_chart(ctx):
     assert any(t.get("as") == "_trend" for layer in combo["spec"]["layer"][0]["layer"]
                for t in layer.get("transform", []))
     assert combo["locale"]["number"]["currency"] == ["COP ", ""]
+    assert combo["table"]["rows"][0][1].startswith("COP ")
 
     for kind in ("stacked_bar", "horizontal_bar", "area", "stacked_area", "boxplot", "heatmap"):
         await call(client, "make_chart", dataset_id=ds, x="month", y="occupancy", series="hotel_code",
@@ -255,6 +268,41 @@ async def test_make_report(ctx, fmt):
         texts = [p.text for p in doc.paragraphs]
         assert "Summary" in texts and "Lisbon led" in texts
         assert len(doc.inline_shapes) == 1 and len(doc.tables) == 2
+
+
+@needs_db
+@pytest.mark.anyio
+async def test_documents_in_another_currency(ctx):
+    from docx import Document
+    from openpyxl import load_workbook
+    from pptx import Presentation
+
+    client, files = ctx
+    ds = await monthly(client)
+    r = await call(client, "make_spreadsheet", title="Pesos", currency="COP",
+                   sheets=[{"name": "Monthly", "dataset_id": ds}])
+    ws = load_workbook(io.BytesIO(files.read(r.structured_content["file"]["file_id"])))["Monthly"]
+    assert ws["D2"].number_format == '"COP "#,##0.00' and ws["C2"].number_format == "0.0%"
+
+    kpi = {"label": "Room revenue", "dataset_id": ds, "column": "room_revenue"}
+    r = await call(client, "make_presentation", title="Pesos", currency="COP", slides=[
+        {"kind": "kpis", "title": "Revenue", "kpis": [kpi]},
+        {"kind": "table", "title": "Detail", "table": {"dataset_id": ds, "max_rows": 3}}])
+    prs = Presentation(io.BytesIO(files.read(r.structured_content["file"]["file_id"])))
+    tile = " ".join(sh.text_frame.text for sh in prs.slides[1].shapes if sh.has_text_frame)
+    assert "COP " in tile and "€" not in tile
+    table = next(sh for sh in prs.slides[2].shapes if sh.has_table).table
+    assert table.cell(1, 3).text.startswith("COP ")
+
+    r = await call(client, "make_report", title="Pesos", format="docx", currency="usd", sections=[
+        {"kpis": [kpi], "table": {"dataset_id": ds, "max_rows": 3}}])
+    doc = Document(io.BytesIO(files.read(r.structured_content["file"]["file_id"])))
+    kpis, detail = doc.tables
+    assert kpis.cell(1, 0).text.startswith("$") and detail.cell(1, 3).text.startswith("$")
+    await call(client, "make_report", title="Pesos", currency="COP", sections=[{"kpis": [kpi]}])
+
+    assert "3-letter ISO code" in await error(client, "make_spreadsheet", title="t", currency='"; DROP',
+                                              sheets=[{"name": "s", "dataset_id": ds}])
 
 
 # ---------- Latin American Spanish ----------
