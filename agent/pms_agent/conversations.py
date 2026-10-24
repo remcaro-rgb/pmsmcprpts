@@ -37,6 +37,14 @@ CREATE TABLE IF NOT EXISTS feedback (
     updated REAL NOT NULL,
     PRIMARY KEY (owner, kind, ref)
 );
+CREATE TABLE IF NOT EXISTS prefs (
+    owner TEXT PRIMARY KEY,       -- the signed-in user's email
+    digest INTEGER NOT NULL DEFAULT 0,  -- the daily email is on
+    language TEXT NOT NULL DEFAULT 'en',
+    hotel TEXT NOT NULL DEFAULT '',     -- hotel code; '' for the first one they see
+    last_sent TEXT NOT NULL DEFAULT '', -- the day the last daily email went out
+    updated REAL NOT NULL
+);
 """
 
 
@@ -180,3 +188,24 @@ class ConversationStore:
         if deleted:
             self._live.pop(conversation_id, None)
         return bool(deleted)
+
+    def prefs(self, owner: str) -> dict[str, Any]:
+        row = self.db.execute("SELECT digest, language, hotel, last_sent FROM prefs WHERE owner = ?", (owner,)).fetchone()
+        digest, language, hotel, last_sent = row or (0, "en", "", "")
+        return {"digest": bool(digest), "language": language, "hotel": hotel or None, "last_sent": last_sent or None}
+
+    def set_prefs(self, owner: str, **changes: Any) -> dict[str, Any]:
+        """Changes some of digest, language, hotel and last_sent."""
+        current = self.prefs(owner)
+        current.update({k: v for k, v in changes.items() if v is not None})
+        self.db.execute(
+            "INSERT INTO prefs (owner, digest, language, hotel, last_sent, updated) VALUES (?, ?, ?, ?, ?, ?)"
+            " ON CONFLICT (owner) DO UPDATE SET digest = excluded.digest, language = excluded.language,"
+            " hotel = excluded.hotel, last_sent = excluded.last_sent, updated = excluded.updated",
+            (owner, int(current["digest"]), current["language"], current["hotel"] or "", current["last_sent"] or "",
+             time.time()))
+        return current
+
+    def subscribers(self) -> "list[tuple[str, dict[str, Any]]]":
+        rows = self.db.execute("SELECT owner FROM prefs WHERE digest = 1 ORDER BY owner").fetchall()
+        return [(r[0], self.prefs(r[0])) for r in rows]

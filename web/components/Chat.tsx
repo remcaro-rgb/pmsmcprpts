@@ -313,7 +313,7 @@ export default function Chat({
           >
             <Icon name="edit" />
           </button>
-          <UserMenu name={name} user={user} isAdmin={isAdmin} theme={theme} />
+          <UserMenu name={name} user={user} isAdmin={isAdmin} hotel={hotel} theme={theme} />
         </header>
 
         <div

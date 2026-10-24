@@ -138,6 +138,8 @@ MESSAGES = {
         "sign_in": "Sign in to continue.",
         "no_account": "Your account isn't active. Ask an administrator.",
         "no_recommendations": "Today's recommendations aren't available right now.",
+        "no_digest": "The daily email isn't set up (SMTP_HOST), or you aren't signed in.",
+        "digest_failed": "The email couldn't be sent. Check the SMTP settings.",
     },
     "es": {
         "unreachable": "No se pudo conectar con el servicio de datos: {error}",
@@ -149,5 +151,7 @@ MESSAGES = {
         "sign_in": "Inicia sesión para continuar.",
         "no_account": "Tu cuenta no está activa. Consulta a un administrador.",
         "no_recommendations": "Las recomendaciones de hoy no están disponibles en este momento.",
+        "no_digest": "El correo diario no está configurado (SMTP_HOST) o no iniciaste sesión.",
+        "digest_failed": "No se pudo enviar el correo. Revisa la configuración SMTP.",
     },
 }

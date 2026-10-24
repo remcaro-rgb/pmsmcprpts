@@ -160,6 +160,7 @@ access to the database. Tools:
 | `run_sql(query, preview_rows=100)` | One read-only `SELECT`/`WITH` query. The full result (up to 50k rows) is stored as a dataset; returns its `dataset_id`, columns, row count and a preview. |
 | `get_kpis(start, end, hotels?, granularity, by_hotel)` | Occupancy, ADR, RevPAR and revenue by day/week/month/quarter/year, with ratios aggregated correctly. |
 | `get_dataset(dataset_id, offset, limit)` | Page through a stored result. |
+| `get_overview(hotel?)` | Today's key figures per hotel (the website's home screen): occupancy today, arrivals and departures, ADR, RevPAR and room revenue this month, the next 30 days on the books, each against the same days a year earlier. |
 | `make_chart(dataset_id, title, chart_type, x, y, series?, trend?, y2?, spec?, ...)` | Any analytic chart, drawn with [Vega-Lite](https://vega.github.io/vega-lite/): line, area, bar (grouped, stacked, horizontal), scatter, pie, donut, heatmap, histogram, box plot, with optional trend lines (linear, moving average) and a second measure on its own axis; anything else as a Vega-Lite spec over the dataset. Shown interactively in the chat and saved as a PNG; returns a `chart_id` for decks and reports. |
 | `make_spreadsheet(title, sheets)` | Excel workbook, one sheet per dataset, with number formats, frozen headers, filters and an About sheet listing each sheet's source query. |
 | `make_presentation(title, slides, subtitle?)` | 16:9 PowerPoint deck: title slide, then KPI tiles, charts (with optional takeaways), tables and bullet slides, each with a source footer. |
@@ -348,8 +349,8 @@ Security notes:
 
 `agent/` is a FastAPI service that runs Claude with the MCP server's tools.
 
-`POST /api/chat` with `{"message": "...", "conversation_id": "...", "language": "en"}` (omit the id
-to start a new conversation; `language` is `en` or `es` for Latin American Spanish) returns a
+`POST /api/chat` with `{"message": "...", "conversation_id": "...", "language": "en", "hotel": "FRA"}` (omit the id
+to start a new conversation; `language` is `en` or `es` for Latin American Spanish; `hotel` is the one picked in the header) returns a
 stream of server-sent events:
 
 | Event | Data |
@@ -380,9 +381,15 @@ Details:
 
 | Endpoint | |
 |---|---|
-| `GET /api/conversations` | `{conversations: [{id, title, updated}]}`, newest first |
-| `GET /api/conversations/{id}` | `{id, title, updated, turns: [{user, events}]}` |
+| `GET /api/conversations` | `{conversations: [{id, title, updated, pinned}]}`, pinned first, then newest |
+| `GET /api/conversations/{id}` | `{id, title, updated, turns: [{user, events, feedback}]}` |
+| `PATCH /api/conversations/{id}` | `{title?, pinned?}`: rename or pin |
 | `DELETE /api/conversations/{id}` | 204; 409 while it is answering |
+| `GET /api/overview?hotel=` | The home screen's key figures (MCP `get_overview`), kept 5 minutes per user |
+| `GET /api/recommendations?language=&hotel=` | Today's three recommendations, with the user's feedback |
+| `POST /api/feedback` | `{kind: "answer" \| "recommendation", ref, value: "up" \| "down" \| "done" \| null}` |
+| `GET`/`PUT /api/prefs` | The daily email: `{digest, language, hotel}`, and whether it's available |
+| `POST /api/digest/test` | Sends the signed-in user today's email now |
 | `GET /files/{file_id}` | Downloads a generated chart or document |
 
 Run it locally with `pip install -r agent/requirements.txt`, then `python -m pms_agent` from
@@ -399,14 +406,44 @@ starter questions, and it works at phone width. It starts in light colors; the s
 phones) lists saved conversations to reopen or delete; the open one is kept in the address (`?c=…`). The browser only talks
 to the site's own `/api/chat` and `/api/files/{id}` routes, which proxy the agent (`AGENT_URL`).
 
-### Today's recommendations
+### Home screen
 
-Under the starter questions, the welcome screen shows "Recomendaciones del día" ("Today's
-recommendations"): the three actions worth the most for the hotels the signed-in user can see,
-with the figures behind each. Choosing one asks the agent for the analysis. The agent makes them
-with the read-only tools on the first visit of the day (this takes a minute or so), then keeps
-them until midnight in `PMS_TIMEZONE` (default `FNS_TIMEZONE`), per user and language:
-`GET /api/recommendations?language=es`.
+The welcome screen is built for a quick morning look at one hotel (picked in the header and
+remembered; the questions you ask are about it unless you name others):
+
+- **Key figures**: occupancy today, arrivals and departures, ADR, RevPAR and room revenue this
+  month so far, and the next 30 days on the books, each against the same days a year earlier, with
+  a 14-day trend line (hidden on phones, where the six fit on one screen). Clicking one asks about
+  it. A line under the greeting says how fresh the data is (the last FNSrooms import).
+- **Recomendaciones del día** ("Today's recommendations"): the three actions worth the most right
+  now, each with what's at stake, the figures behind it, "See the analysis", "Done" and 👍/👎 (kept
+  per user). The agent makes them with the read-only tools on the first visit of the day (a minute
+  or so), then keeps them until midnight in `PMS_TIMEZONE` (default `FNS_TIMEZONE`), per user,
+  hotel and language: `GET /api/recommendations?language=es&hotel=FRA`.
+- **Questions to start from**, grouped by topic, including charts, Excel and presentations.
+
+The sidebar has search, pinned conversations and day groups (rename and pin from each row), and
+a short guide before the first conversation. The account menu holds colors, language, the daily
+email, administration and sign-out. The message box takes dictation where the browser supports it.
+
+### Answers
+
+While the assistant works, a progress card says what it's doing in plain words ("Querying the
+data…", "Drawing the chart…") and for how long. Finished answers show the text, charts and files;
+the reasoning, each query with its results, and the token count are folded under "How I worked it
+out". Each answer has Copy, Excel, PDF and 👍/👎, and the last one ends with follow-up questions to
+click (the model writes them in a `suggestions` block that the website turns into buttons). Charts
+open full screen.
+
+### Daily email
+
+With an SMTP server set in `.env` (`SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`,
+`SMTP_FROM`, `SMTP_SECURITY`), signed-in users can turn on "Daily email" in the account menu. Every
+morning at `PMS_DIGEST_TIME` (default 07:00, in `PMS_TIMEZONE`) each of them gets their hotel's key
+figures, alerts (occupancy 5 points or more below last year, ADR 5% or revenue 10% below) and the
+day's recommendations, with a button back to the site (`WEB_PUBLIC_URL`). "Send me one now" in the
+same menu sends it right away, to check the settings. Each user gets it at most once a day, also
+across restarts.
 
 ### Languages
 

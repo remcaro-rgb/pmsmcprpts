@@ -1,10 +1,12 @@
 """FastAPI service: POST /api/chat streams a Claude answer as server-sent events."""
 
+import asyncio
 import json
 import logging
 import re
 import time
 from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Literal
 
@@ -16,6 +18,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from .config import Settings
 from .conversations import ConversationStore
+from .digest import Digest
 from .prompts import MESSAGES
 from .loop import ChatAgent
 from .recommend import DailyRecommendations, Overviews
@@ -41,6 +44,17 @@ class ChatRequest(BaseModel):
 class ConversationChange(BaseModel):
     title: str | None = Field(default=None, max_length=200)
     pinned: bool | None = None
+
+
+class Prefs(BaseModel):
+    digest: bool | None = None
+    language: Literal["en", "es"] | None = None
+    hotel: str | None = Field(default=None, pattern=HOTEL_CODE)
+
+
+class DigestTest(BaseModel):
+    language: Literal["en", "es"] = "en"
+    hotel: str | None = Field(default=None, pattern=HOTEL_CODE)
 
 
 class Feedback(BaseModel):
@@ -140,9 +154,22 @@ def create_app(settings: Settings | None = None, client: Any = None, mcp_target:
     def user_error(e: UserError) -> HTTPException:
         return HTTPException(e.status, str(e))
 
-    app = FastAPI(title="PMS Reports agent")
+    async def display_name(email: str) -> str | None:
+        account = await directory.get_by_email(email) if directory else None
+        return account.name if account else None
+
+    digest = Digest(settings, store, overviews, daily, names=display_name)
+
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI):
+        task = asyncio.create_task(digest.run()) if digest.available else None
+        yield
+        if task:
+            task.cancel()
+
+    app = FastAPI(title="PMS Reports agent", lifespan=lifespan)
     app.add_middleware(CORSMiddleware, allow_origins=settings.cors_origins,
-                       allow_methods=["GET", "POST", "PATCH", "DELETE"], allow_headers=["*"])
+                       allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"], allow_headers=["*"])
 
     @app.get("/api/health")
     async def health() -> dict[str, str]:
@@ -260,6 +287,35 @@ def create_app(settings: Settings | None = None, client: Any = None, mcp_target:
         except Exception:
             log.exception("overview failed")
             raise HTTPException(503, "The key figures aren't available right now.") from None
+
+    @app.get("/api/prefs")
+    async def get_prefs(x_pms_user: str | None = Header(default=None)) -> dict[str, Any]:
+        """The signed-in user's settings: the daily email (available when SMTP is set up)."""
+        user = await active_user(x_pms_user, "en")
+        prefs = store.prefs(user) if user else {"digest": False, "language": "en", "hotel": None}
+        return {"digest": prefs["digest"], "language": prefs["language"], "hotel": prefs["hotel"],
+                "digest_available": digest.available and bool(user), "digest_time": settings.digest_time}
+
+    @app.put("/api/prefs")
+    async def put_prefs(body: Prefs, x_pms_user: str | None = Header(default=None)) -> dict[str, Any]:
+        user = await active_user(x_pms_user, body.language or "en")
+        if not user:
+            raise HTTPException(400, "Sign in to keep settings.")
+        store.set_prefs(user, digest=body.digest, language=body.language,
+                        hotel=body.hotel.upper() if body.hotel else None)
+        return await get_prefs(x_pms_user)
+
+    @app.post("/api/digest/test", status_code=204)
+    async def digest_test(body: DigestTest, x_pms_user: str | None = Header(default=None)) -> None:
+        """Sends the signed-in user today's email now, to check it arrives."""
+        user = await active_user(x_pms_user, body.language)
+        if not user or not digest.available:
+            raise HTTPException(503, MESSAGES[body.language]["no_digest"])
+        try:
+            await digest.send_to(user, body.language, body.hotel)
+        except Exception:
+            log.exception("test email failed")
+            raise HTTPException(502, MESSAGES[body.language]["digest_failed"]) from None
 
     @app.post("/api/feedback", status_code=204)
     async def feedback(body: Feedback, x_pms_user: str | None = Header(default=None)) -> None:

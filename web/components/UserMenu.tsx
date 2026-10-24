@@ -12,22 +12,57 @@ function initials(name: string): string {
 }
 
 /** The account menu in the header: colors, language, administration and sign-out. */
+type Prefs = { digest: boolean; digest_available: boolean; digest_time: string };
+
 export default function UserMenu({
   name,
   user,
   isAdmin,
+  hotel,
   theme: initialTheme,
 }: {
   name: string | null;
   user: string | null; // signed-in email; null when sign-in is off
   isAdmin: boolean;
+  hotel: string | null; // the hotel picked in the header, for the daily email
   theme: Theme;
 }) {
   const { locale, t, setLocale } = useI18n();
   const [open, setOpen] = useState(false);
+  const [prefs, setPrefs] = useState<Prefs | null>(null);
+  const [note, setNote] = useState<string | null>(null);
   const [theme, setTheme] = useState<Theme>(initialTheme);
   const ref = useRef<HTMLDivElement>(null);
   const label = name ?? user;
+
+  useEffect(() => {
+    if (!open || prefs || !user) return;
+    fetch("/api/prefs", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((p) => p && setPrefs(p))
+      .catch(() => {});
+  }, [open, prefs, user]);
+
+  async function setDigest(on: boolean) {
+    setNote(null);
+    const r = await fetch("/api/prefs", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ digest: on, language: locale, hotel }),
+    }).catch(() => null);
+    if (r?.ok) setPrefs(await r.json());
+  }
+
+  async function sendTest() {
+    setNote(t.loading);
+    const r = await fetch("/api/digest/test", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ language: locale, hotel }),
+    }).catch(() => null);
+    if (r?.ok) setNote(t.testSent);
+    else setNote((await r?.json().catch(() => null))?.detail ?? t.assistantUnreachable);
+  }
 
   useEffect(() => {
     if (!open) return;
@@ -82,6 +117,24 @@ export default function UserMenu({
               <option value="es">Español</option>
             </select>
           </label>
+          {prefs?.digest_available && (
+            <div className="my-1 border-y border-stone-100 py-1 dark:border-stone-800">
+              <label className={`${item} cursor-pointer`}>
+                <span>
+                  {t.dailyEmail(prefs.digest_time)}
+                  <span className="block text-xs text-stone-500">{t.dailyEmailHelp}</span>
+                </span>
+                <input
+                  type="checkbox"
+                  checked={prefs.digest}
+                  onChange={(e) => setDigest(e.target.checked)}
+                  className="size-4 shrink-0 accent-blue-600"
+                />
+              </label>
+              <button onClick={sendTest} className={`${item} text-blue-700 dark:text-blue-300`}>{t.sendTest}</button>
+              {note && <p className="px-3 pb-1 text-xs text-stone-500" role="status">{note}</p>}
+            </div>
+          )}
           {isAdmin && (
             <a href="/admin" className={item}>
               {t.admin}
