@@ -44,7 +44,7 @@ test("administrators manage users, and users see only their hotels", async ({ pa
   await page.getByLabel("Phone").fill("+351 912 345 678");
   await page.getByLabel("Unique ID").fill(`EMP-${Date.now()}`);
   await page.getByLabel("Notes").fill("Front office, Lisbon");
-  await page.getByLabel("Password", { exact: true }).fill(user.password);
+  await page.getByLabel("Password").fill(user.password);
   await page.getByRole("checkbox", { name: /^LIS/ }).check();
   await page.getByRole("button", { name: "Save" }).click();
   await expect(page.getByRole("status").filter({ hasText: "Saved." })).toBeVisible();
