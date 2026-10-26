@@ -16,7 +16,7 @@ export default async function Login({ searchParams }: { searchParams: Promise<Re
   const error = params.error ? t.signInErrors[params.error] ?? t.signInErrors.invalid : null;
   return (
     <main className="mx-auto mt-[12vh] w-full max-w-sm px-4">
-      <div className="flex justify-center rounded-2xl bg-[#0468BF] px-6 py-7 text-white">
+      <div className="flex justify-center rounded-2xl bg-accent px-6 py-7 text-white">
         <GoliattWordmark className="h-12" />
       </div>
       <h1 className="mt-6 text-xl font-semibold">{t.signInTitle}</h1>
