@@ -528,6 +528,26 @@ site; with user accounts on it is an extra password in front of the sign-in page
 empty unless you want both. Leave out `$ ' " \ #` and spaces, which `.env` treats specially. Behind a tunnel, set
 `WEB_TRUST_PROXY=true` (the script does) so the message limit counts each visitor.
 
+### Run it on an Ubuntu server
+
+`scripts/deploy_ubuntu.sh` sets up a copy on a fresh Ubuntu 22.04 or 24.04 server (2 vCPUs, 4 GB
+RAM and 25 GB disk are enough) behind a Cloudflare named tunnel, so the server opens no ports
+except SSH. On the server, as a user with sudo:
+
+```bash
+curl -fsSLO https://raw.githubusercontent.com/remcaro-rgb/pmsmcprpts/main/scripts/deploy_ubuntu.sh  # or scp it
+bash deploy_ubuntu.sh --hostname reports.yourdomain.com
+```
+
+It installs Docker and the firewall (SSH only), clones the repository into `/opt/pmsmcprpts`,
+writes `.env` with new database passwords and secrets, asks for the Anthropic API key and the
+tunnel token (hidden), loads the sample data, starts everything with automatic restarts, connects
+the tunnel and creates the first administrator (user accounts, `WEB_AUTH=password`). For a private
+repository pass `--repo git@github.com:remcaro-rgb/pmsmcprpts.git`: the script creates a read-only
+deploy key and shows where to add it. Run it again to update to the latest `main`; it keeps `.env`
+and the data. Create the tunnel and its public hostname (`http://web:5050`) as in "Named tunnel"
+above.
+
 ### Share it with ngrok
 
 To open your local copy from other devices, publish it on your free ngrok domain, behind a sign-in:
