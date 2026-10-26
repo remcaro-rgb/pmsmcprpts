@@ -20,7 +20,7 @@ import AssistantMessageView from "./AssistantMessageView";
 import ReportDialog, { type ReportDraft } from "./ReportDialog";
 import Home from "./Home";
 import { Icon } from "./Icons";
-import { GoliattMark } from "./Logo";
+import { GoliattWordmark } from "./Logo";
 import { useI18n } from "./I18n";
 import Sidebar from "./Sidebar";
 import UserMenu from "./UserMenu";
@@ -371,14 +371,14 @@ export default function Chat({
             title={t.home}
             className="flex min-w-0 shrink-0 items-center gap-2 rounded-xl disabled:cursor-default"
           >
-            <GoliattMark className="size-8" />
-            <h1 className="hidden truncate text-[15px] font-semibold lg:block">{t.appName}</h1>
+            <GoliattWordmark className="h-7 text-accent dark:text-sky-400" />
+            <h1 className="sr-only">{t.appName}</h1>
           </button>
           <button
             onClick={goHome}
             disabled={busy || messages.length === 0}
             aria-current={messages.length === 0 ? "page" : undefined}
-            className="flex h-9 shrink-0 items-center gap-1.5 rounded-xl border border-stone-200 px-2.5 text-sm font-medium text-stone-700 hover:bg-stone-100 disabled:opacity-40 aria-[current]:opacity-100 aria-[current]:bg-stone-100 dark:border-stone-700 dark:text-stone-200 dark:hover:bg-stone-900 dark:aria-[current]:bg-stone-800"
+            className="hidden h-9 shrink-0 items-center gap-1.5 rounded-xl border border-stone-200 px-2.5 text-sm font-medium text-stone-700 hover:bg-stone-100 disabled:opacity-40 sm:flex aria-[current]:opacity-100 aria-[current]:bg-stone-100 dark:border-stone-700 dark:text-stone-200 dark:hover:bg-stone-900 dark:aria-[current]:bg-stone-800"
           >
             <Icon name="home" />
             <span className="hidden sm:inline">{t.home}</span>
