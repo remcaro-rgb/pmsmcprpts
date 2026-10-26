@@ -14,34 +14,33 @@ export type TableResult = {
 
 export type FileInfo = { file_id: string; filename: string; mime: string; size: number };
 
-/** One rendered layout of a chart: SVGs for both themes plus the geometry hover needs. */
-export type ChartLayout = {
-  svg_light: string;
-  svg_dark: string;
-  width: number;
-  height: number;
-  plot: { left: number; right: number; top: number; bottom: number };
-  x_positions: number[];
+/** Chart payload from make_chart: a Vega-Lite spec with its data, light and dark themes, number
+ * and date locales, and the table behind "Show data". */
+export type ChartPayload = {
+  kind: "vega-lite";
+  title: string;
+  spec: Record<string, unknown>;
+  config: { light: Record<string, unknown>; dark: Record<string, unknown> };
+  locale: { number: Record<string, unknown>; time: Record<string, unknown> };
+  table: { columns: string[]; rows: string[][]; numeric: boolean[] };
+  // The type it was made as and the same chart as the other types it can switch to (no data).
+  type?: string;
+  variants?: Record<string, Record<string, unknown>>;
 };
 
-/** Chart payload from make_chart: a wide layout, an optional narrow (phone) layout, and the
- * formatted values shown on hover and in the data table. */
-export type ChartPayload = ChartLayout & {
-  kind: "line" | "bar";
-  title: string;
-  narrow?: ChartLayout;
-  x_labels: string[];
-  series: { name: string; color_light: string; color_dark: string; values: string[] }[];
-};
+/** Charts saved before the Vega-Lite charts: a static SVG per theme. */
+export type LegacyChart = { title: string; svg_light: string; svg_dark: string };
 
 export function fileOf(result: unknown): FileInfo | null {
   const f = (result as { file?: FileInfo } | null)?.file;
   return f && typeof f.file_id === "string" ? f : null;
 }
 
-export function chartOf(result: unknown): ChartPayload | null {
-  const c = (result as { chart?: ChartPayload } | null)?.chart;
-  return c && typeof c.svg_light === "string" ? c : null;
+export function chartOf(result: unknown): ChartPayload | LegacyChart | null {
+  const c = (result as { chart?: ChartPayload | LegacyChart } | null)?.chart;
+  if (!c) return null;
+  if ("kind" in c && c.kind === "vega-lite" && c.spec) return c;
+  return "svg_light" in c && typeof c.svg_light === "string" ? c : null;
 }
 
 export const fileUrl = (f: FileInfo) => `/api/files/${f.file_id}`;
@@ -71,6 +70,8 @@ export type AssistantMessage = {
   status: "streaming" | "done" | "error" | "refused" | "stopped";
   error?: string;
   usage?: Usage;
+  turn?: number; // the turn's position in its saved conversation, for feedback
+  feedback?: "up" | "down" | null;
 };
 
 export type UserMessage = { role: "user"; id: string; text: string };
@@ -124,6 +125,35 @@ export function applyEvent(msg: AssistantMessage, ev: SseEvent): AssistantMessag
   }
 }
 
+const FENCE = "```suggestions";
+
+/** Splits the follow-up questions the model ends an answer with (a ```suggestions block of
+ * "- question" lines) from the answer's text. While streaming, a block (or the start of its
+ * fence) that isn't finished yet is hidden too. */
+export function splitSuggestions(text: string): { text: string; suggestions: string[] } {
+  const at = text.lastIndexOf(FENCE);
+  if (at < 0) {
+    // A fence still arriving: "`", "``", "```sugg"...
+    const tail = text.match(/\n?`{1,3}[a-z]*$/);
+    if (tail && FENCE.startsWith(tail[0].trim())) return { text: text.slice(0, tail.index).trimEnd(), suggestions: [] };
+    return { text, suggestions: [] };
+  }
+  const block = text.slice(at + FENCE.length).replace(/```[\s\S]*$/, "");
+  const suggestions = block
+    .split("\n")
+    .map((l) => l.replace(/^\s*(?:[-*•]|\d+[.)])\s*/, "").trim())
+    .filter((l) => l.length > 2)
+    .slice(0, 4);
+  return { text: text.slice(0, at).trimEnd(), suggestions };
+}
+
+/** The answer's text without its follow-up questions, for copying. */
+export function answerText(msg: AssistantMessage): string {
+  return splitSuggestions(
+    msg.parts.filter((p): p is { kind: "text"; text: string } => p.kind === "text").map((p) => p.text).join("\n\n"),
+  ).text;
+}
+
 /** Turns a non-2xx response from /api/chat into a readable message. */
 export function httpErrorMessage(status: number, body: string, t: Messages = messages("en")): string {
   try {
@@ -136,15 +166,43 @@ export function httpErrorMessage(status: number, body: string, t: Messages = mes
   return t.requestFailed(status);
 }
 
-export type ConversationSummary = { id: string; title: string; updated: number };
+export type ConversationSummary = { id: string; title: string; updated: number; pinned?: boolean };
+
+export type GroupKey = "pinned" | "today" | "yesterday" | "week" | "earlier";
+
+/** Pinned conversations first, then the rest by when they were last updated (local days). */
+export function groupConversations(
+  list: ConversationSummary[],
+  now = new Date(),
+): { key: GroupKey; items: ConversationSummary[] }[] {
+  const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime() / 1000;
+  const groups: Record<GroupKey, ConversationSummary[]> = { pinned: [], today: [], yesterday: [], week: [], earlier: [] };
+  for (const c of list) {
+    const key: GroupKey = c.pinned
+      ? "pinned"
+      : c.updated >= startOfDay
+        ? "today"
+        : c.updated >= startOfDay - 86400
+          ? "yesterday"
+          : c.updated >= startOfDay - 6 * 86400
+            ? "week"
+            : "earlier";
+    groups[key].push(c);
+  }
+  return (Object.keys(groups) as GroupKey[]).filter((k) => groups[k].length).map((key) => ({ key, items: groups[key] }));
+}
 
 /** A saved conversation: each turn's question and the events its answer streamed. */
-export type SavedConversation = ConversationSummary & { turns: { user: string; events: SseEvent[] }[] };
+export type SavedConversation = ConversationSummary & {
+  turns: { user: string; events: SseEvent[]; feedback?: "up" | "down" | null }[];
+};
 
 /** Rebuilds the messages of a saved conversation by replaying each answer's events. */
 export function messagesFromSaved(saved: SavedConversation): Message[] {
   return saved.turns.flatMap((turn, i): Message[] => {
-    const start: AssistantMessage = { role: "assistant", id: `${saved.id}-${i}-a`, parts: [], status: "streaming" };
+    const start: AssistantMessage = {
+      role: "assistant", id: `${saved.id}-${i}-a`, parts: [], status: "streaming", turn: i, feedback: turn.feedback ?? null,
+    };
     const answer = turn.events.reduce(applyEvent, start);
     return [
       { role: "user", id: `${saved.id}-${i}-u`, text: turn.user },

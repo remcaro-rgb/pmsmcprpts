@@ -14,7 +14,7 @@ from mcp.shared._httpx_utils import create_mcp_http_client
 
 from .config import Settings
 from .conversations import Conversation
-from .prompts import LANGUAGE_PROMPTS, MESSAGES, SYSTEM_PROMPT
+from .prompts import HOTEL_PROMPT, LANGUAGE_PROMPTS, MESSAGES, PERIOD_PROMPT, PERIODS, SYSTEM_PROMPT
 
 log = logging.getLogger(__name__)
 
@@ -115,7 +115,8 @@ class ChatAgent:
         return params
 
     async def run_turn(self, conv: Conversation, user_text: str, user: str | None = None,
-                       language: str = "en") -> AsyncIterator[Event]:
+                       language: str = "en", hotel: str | None = None,
+                       period: str | None = None) -> AsyncIterator[Event]:
         """Run one user turn, yielding UI events. The caller must hold conv.lock.
 
         History is only kept when the turn completes; on refusal, error or disconnect it is
@@ -131,7 +132,9 @@ class ChatAgent:
                 try:
                     tools = tool_definitions((await mcp.list_tools()).tools)
                     system = (SYSTEM_PROMPT + LANGUAGE_PROMPTS[language]
-                              + ("\n" + mcp.instructions if mcp.instructions else ""))
+                              + ("\n" + mcp.instructions if mcp.instructions else "")
+                              + (HOTEL_PROMPT.format(hotel=hotel.upper()) if hotel else "")
+                              + (PERIOD_PROMPT.format(period=PERIODS.get(period, period)) if period else ""))
                     async for event in self._loop(conv, mcp, system, tools, MESSAGES[language]):
                         if event["event"] == "done":
                             completed = True

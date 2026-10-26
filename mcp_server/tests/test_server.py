@@ -40,12 +40,35 @@ async def call_error(client, tool, **args) -> str:
 
 async def test_lists_read_only_tools(client):
     tools = {t.name: t for t in (await client.list_tools()).tools}
-    read_only = {"describe_schema", "run_sql", "get_kpis", "get_dataset"}
+    read_only = {"describe_schema", "run_sql", "get_kpis", "get_dataset", "get_overview"}
     creates_files = {"make_chart", "make_spreadsheet", "make_presentation", "make_report"}
     assert set(tools) == read_only | creates_files
     assert all(tools[n].annotations.read_only_hint for n in read_only)
     assert not any(tools[n].annotations.read_only_hint or tools[n].annotations.destructive_hint
                    for n in creates_files)
+
+
+async def test_overview(client):
+    hotels = {h["hotel_code"]: h for h in (await call(client, "get_overview"))["hotels"]}
+    assert set(hotels) == {"LIS", "BCN", "OPO"}
+    lis = hotels["LIS"]
+    schema = await call(client, "describe_schema")
+    assert lis["today"] == str(schema["business_date"]) and lis["currency"] == "EUR"
+    assert 0 < lis["occupancy_today"] <= 1 and lis["arrivals_today"] > 0
+    assert lis["adr_period"] > 0 and lis["revenue_period"] > 0 and lis["occupancy_next_30"] > 0
+    assert lis["period"]["key"] == "mtd" and isinstance(lis["alerts"], list)
+    assert len(lis["series"]["occupancy"]) == 14 and len(lis["series"]["occupancy_next_30"]) == 30
+    # The month-to-date revenue matches get_kpis for the same days.
+    kpis = await call(client, "get_kpis", start=lis["period"]["start"], end=lis["period"]["end"],
+                      hotels=["LIS"], granularity="year")
+    assert abs(float(kpis["rows"][0][7]) - lis["revenue_period"]) < 0.01
+    # This year so far, against the same days of last year.
+    ytd = (await call(client, "get_overview", hotel="LIS", period="ytd"))["hotels"][0]
+    assert ytd["period"]["start"].endswith("-01-01") and ytd["revenue_period"] > lis["revenue_period"]
+    assert ytd["revenue_period_change"] is not None
+    one = await call(client, "get_overview", hotel="opo")
+    assert [h["hotel_code"] for h in one["hotels"]] == ["OPO"]
+    assert "Unknown hotel" in await call_error(client, "get_overview", hotel="XXX")
 
 
 async def test_describe_schema(client):

@@ -40,11 +40,12 @@ class Database:
         self.statement_timeout_ms = statement_timeout_ms
 
     async def query(self, query: str | pgsql.Composable, params: dict | None = None,
-                    max_rows: int = 50_000, hotels: str = "*") -> QueryResult:
+                    max_rows: int = 50_000, hotels: str = "", user: str = "") -> QueryResult:
         """Run one query in a READ ONLY transaction and return at most max_rows rows.
 
-        `hotels` ("*", "LIS,OPO" or "" for none) limits which hotels' rows the query can see;
-        the database enforces it with row-level security."""
+        The database limits which hotels' rows the query can see (row-level security):
+        `user` is a user-directory email, whose assigned hotels (all for an administrator) apply;
+        otherwise `hotels` ("*", "LIS,OPO", or "" for none, the default) does."""
         try:
             async with await psycopg.AsyncConnection.connect(self.dsn) as conn:
                 async with conn.transaction():
@@ -54,6 +55,8 @@ class Database:
                         pgsql.Literal(self.statement_timeout_ms)))
                     await conn.execute(pgsql.SQL("SET LOCAL pms.allowed_hotels = {}").format(
                         pgsql.Literal(hotels)))
+                    await conn.execute(pgsql.SQL("SET LOCAL pms.user_email = {}").format(
+                        pgsql.Literal(user)))
                     async with conn.cursor() as cur:
                         # Prepared, so exactly one statement runs: a second one could change settings.
                         await cur.execute(query, params, prepare=True)

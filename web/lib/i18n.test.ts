@@ -26,7 +26,8 @@ describe("messages", () => {
     const es = messages("es");
     expect(Object.keys(es).sort()).toEqual(Object.keys(en).sort());
     expect(Object.keys(es.tools).sort()).toEqual(Object.keys(en.tools).sort());
-    expect(es.starters).toHaveLength(en.starters.length);
+    expect(es.starters("Fragata")).toHaveLength(en.starters("Fragata").length);
+    expect(Object.keys(es.kpiAsk).sort()).toEqual(Object.keys(en.kpiAsk).sort());
     expect(es.rows("1", true)).toBe("1 fila");
     expect(es.showingRows("50", "1,234")).toBe("Mostrando 50 de 1,234 filas");
   });

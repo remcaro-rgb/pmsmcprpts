@@ -1,6 +1,6 @@
 import * as client from "openid-client";
 import { NextResponse, type NextRequest } from "next/server";
-import { LOGIN_COOKIE, authConfig, cookieOptions, loginTtl, safeReturnTo, seal } from "@/lib/auth";
+import { LOGIN_COOKIE, authConfig, cookieOptions, loginTtl, safeReturnTo, seal, siteOrigin } from "@/lib/auth";
 import { oidcClient, redirectUri } from "@/lib/oidc";
 import { messages, requestLocale } from "@/lib/i18n";
 import { messagePage } from "@/lib/pages";
@@ -11,6 +11,11 @@ export const dynamic = "force-dynamic";
 export async function GET(req: NextRequest): Promise<Response> {
   const auth = authConfig();
   if (!auth) return NextResponse.redirect(new URL("/", req.url));
+  if (auth.mode === "password") {
+    const login = new URL("/login", siteOrigin(auth, req));
+    login.searchParams.set("returnTo", safeReturnTo(req.nextUrl.searchParams.get("returnTo")));
+    return NextResponse.redirect(login);
+  }
   let oidc: client.Configuration;
   try {
     oidc = await oidcClient(auth);

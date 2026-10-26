@@ -32,6 +32,7 @@ jobs:
       PMS_TEST_ADMIN_URL: postgresql://pms:pms@localhost:5432/postgres
       PMS_TEST_DATABASE_URL: postgresql://pms_readonly:pms_readonly@localhost:5432/pms
       PMS_DATABASE_URL: postgresql://pms_readonly:pms_readonly@localhost:5432/pms
+      PMS_TEST_APP_DATABASE_URL: postgresql://pms_app:pms_app@localhost:5432/pms
       NEXT_TELEMETRY_DISABLED: "1"
     steps:
       - uses: actions/checkout@v5
@@ -50,17 +51,19 @@ jobs:
 
       - name: Install Python dependencies
         run: |
-          pip install -r db/requirements-dev.txt -r mcp_server/requirements-dev.txt -r agent/requirements-dev.txt pyflakes
+          pip install -r db/requirements-dev.txt -r mcp_server/requirements-dev.txt -r agent/requirements-dev.txt -r fns_sync/requirements-dev.txt pyflakes
           sudo apt-get update && sudo apt-get install -y --no-install-recommends postgresql-client
 
       - name: Lint Python
-        run: python -m pyflakes db mcp_server agent web/e2e scripts
+        run: python -m pyflakes db mcp_server agent fns_sync web/e2e scripts
 
       - name: Create schema and seed the sample data
         run: |
           psql -d pms -v ON_ERROR_STOP=1 -q -f db/init/01_schema.sql -f db/init/02_views.sql
           POSTGRES_USER=pms POSTGRES_DB=pms PMS_READONLY_PASSWORD=pms_readonly bash db/init/03_readonly_role.sh
           psql -d pms -v ON_ERROR_STOP=1 -q -f db/init/04_hotel_access.sql
+          POSTGRES_USER=pms POSTGRES_DB=pms PMS_APP_PASSWORD=pms_app bash db/init/05_users.sh
+          psql -d pms -v ON_ERROR_STOP=1 -q -f db/init/06_fns.sql
           python db/seed.py
 
       - name: Python tests
@@ -106,5 +109,6 @@ jobs:
         run: |
           docker compose config -q
           docker compose --profile public config -q
+          docker compose --profile fns config -q
       - name: Build images
-        run: docker compose build
+        run: docker compose --profile fns build

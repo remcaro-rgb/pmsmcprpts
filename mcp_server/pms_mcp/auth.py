@@ -50,10 +50,19 @@ LOCAL_USER = "local"  # stdio / unauthenticated deployments
 SERVICE_USER = "website"  # the website's agent, via the service token
 
 
+_local_identity = LOCAL_USER
+
+
+def set_local_identity(email: str) -> None:
+    """Who local (stdio) use acts as, e.g. an administrator in the user directory."""
+    global _local_identity
+    _local_identity = email.strip().lower() or LOCAL_USER
+
+
 def current_user() -> str:
     """Who is calling the current tool: the signed-in user's email, or a fixed owner."""
     token = get_access_token()
-    return token.subject if token and token.subject else LOCAL_USER
+    return token.subject if token and token.subject else _local_identity
 
 
 def service_token_user(token: str, service_token: str) -> str | None:

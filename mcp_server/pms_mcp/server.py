@@ -4,6 +4,7 @@ import base64
 import json
 import os
 import tempfile
+import time
 from datetime import date
 from typing import Any, Literal
 from urllib.parse import quote
@@ -15,14 +16,15 @@ from mcp_types import CallToolResult, ContentBlock, ImageContent, TextContent, T
 from starlette.requests import Request
 from starlette.responses import Response
 
-from .access import HotelAccess
+from .access import HotelAccess, Scope
 from .artifacts import ArtifactStore, FileInfo
 from .auth import SCOPE, AuthConfig, OIDCAuthProvider, current_user
-from .charts import ChartError, build_chart_data, chart_payload, render_png, render_svg
+from .charts import CHART_TYPES, ChartError, build_chart, build_custom, chart_payload, chart_variants, render_png
 from .datasets import Dataset, DatasetStore
 from .db import Database, QueryError
 from .documents import DocError, Section, SheetSpec, Slide, build_docx, build_pdf, build_pptx, build_xlsx
 from .formats import KINDS
+from .overview import DAILY, MOVES, MOVES_FNS, build as build_overview
 from .sql_guard import UnsafeQueryError, check_read_only, strip_stray_quote
 
 INSTRUCTIONS = """\
@@ -30,8 +32,11 @@ Read-only access to a hotel property-management-system (PMS) database (PostgreSQ
 - Call describe_schema first to see tables, views, column meanings, hotels and the business date.
 - Use get_kpis for occupancy, ADR, RevPAR and revenue over time; use run_sql for anything else,
   preferring the v_* reporting views over re-deriving metrics from base tables.
-- Money is in EUR, net of tax. Stay dates before the business date are actuals; later dates are
-  on-the-books (future) bookings.
+- Money is in each hotel's currency (hotels.currency), net of tax. Stay dates before the business
+  date are actuals; later dates are on-the-books (future) bookings.
+- Hotels with `fns_data_as_of` set (e.g. Fragata) are imported daily from the FNSrooms PMS into the
+  fns_* tables; the sample tables (reservations, guests, folios...) have no rows for them. For them,
+  "today" is the calendar date in the hotel's time zone, and their KPIs are in get_kpis too.
 - For ratios over a period (occupancy, ADR, RevPAR) sum numerators and denominators;
   never average daily ratios.
 - Results are stored under a dataset_id; page through them with get_dataset.
@@ -63,13 +68,14 @@ ORDER BY c.relkind DESC, c.relname
 KPI_GRANULARITIES = ("day", "week", "month", "quarter", "year")
 MAX_STORED_ROWS = 50_000
 MAX_PREVIEW_ROWS = 1000
+SCHEMA_TTL_SECONDS = 600
 
 
 def _ok(payload: dict[str, Any], for_model: dict[str, Any] | None = None,
         extra_content: list[ContentBlock] | None = None) -> CallToolResult:
     """Structured result plus compact JSON text (the default text rendering is indented,
     which roughly doubles the tokens a model spends reading tables). `for_model` replaces
-    the text when the structured payload carries UI-only data (e.g. chart SVGs)."""
+    the text when the structured payload carries UI-only data (e.g. a chart's spec and data)."""
     text = json.dumps(for_model or payload, separators=(",", ":"), ensure_ascii=False, default=str)
     return CallToolResult(content=[TextContent(type="text", text=text), *(extra_content or [])],
                           structured_content=payload)
@@ -119,13 +125,14 @@ def build_server(dsn: str, statement_timeout_ms: int = 15000, artifacts_dir: str
         mcp = MCPServer("pms-reports", instructions=INSTRUCTIONS)
     access = access or HotelAccess.from_env(os.environ)
     schema_cache: dict[str, Any] = {}  # the same for everyone: dates and relations, not hotels
+    schema_read_at = [0.0]  # re-read now and then: the business date and the tables can change
 
-    def my_hotels() -> str:
-        hotels = access.hotels_for(current_user())
-        if not hotels:
+    def my_scope() -> Scope:
+        scope = access.scope(current_user())
+        if not access.directory and not scope.hotels:
             raise ToolError("Your account has no hotels assigned. Ask the administrator to add you "
                             "to PMS_HOTEL_ACCESS.")
-        return hotels
+        return scope
 
     def my_store():
         return store.scoped(current_user())
@@ -142,28 +149,38 @@ def build_server(dsn: str, statement_timeout_ms: int = 15000, artifacts_dir: str
 
     async def load_schema(with_hotels: bool = True) -> dict[str, Any]:
         """Business date, data range, the caller's hotels, and the tables and views."""
-        hotels = my_hotels()
+        scope = my_scope()
         try:
-            if not schema_cache:
+            if not schema_cache or time.monotonic() - schema_read_at[0] > SCHEMA_TTL_SECONDS:
                 schema_cache.update(await _read_schema())
+                schema_read_at[0] = time.monotonic()
             if not with_hotels:
                 return schema_cache
+            fns_as_of = ("(SELECT max(f.fetched_at) FROM pms.fns_revenue_daily f WHERE f.hotel_id = h.id)"
+                         if schema_cache["fns"] else "NULL::timestamptz")
             rows = await db.query(
-                "SELECT code, name, city, country, star_rating, total_rooms, currency "
-                "FROM pms.hotels ORDER BY id", hotels=hotels)
+                "SELECT code, name, city, country, star_rating, total_rooms, currency, timezone, alojamiento_id, "
+                f"pms_id, {fns_as_of} AS fns_data_as_of FROM pms.hotels h ORDER BY id",
+                hotels=scope.hotels, user=scope.user)
         except QueryError as e:
             raise ToolError(str(e)) from e
         visible = [dict(zip([c["name"] for c in rows.columns], r)) for r in rows.rows]
-        shared = {k: v for k, v in schema_cache.items() if k != "relations"}
+        if not visible:
+            raise ToolError("Your account has no hotels assigned, or isn't active. Ask an administrator "
+                            "to assign you hotels.")
+        shared = {k: v for k, v in schema_cache.items() if k not in ("relations", "fns")}
         return {**shared, "hotels": visible, "relations": schema_cache["relations"]}
 
     async def _read_schema() -> dict[str, Any]:
+        # Shared by every caller: dates and catalog only, read across all hotels.
         settings = await db.query(
             "SELECT business_date, data_start, (SELECT max(stay_date) FROM pms.reservation_nights) "
-            "FROM pms.system_settings")
-        relations = await db.query(SCHEMA_SQL)
+            "FROM pms.system_settings", hotels="*")
+        relations = await db.query(SCHEMA_SQL, hotels="*")
         business_date, data_start, data_end = settings.rows[0]
         return {
+            # The FNSrooms import's tables (db/init/06_fns.sql) exist.
+            "fns": any(name == "fns_revenue_daily" for name, *_ in relations.rows),
             "business_date": business_date,
             "data_start": data_start,
             "data_end": data_end,
@@ -175,7 +192,9 @@ def build_server(dsn: str, statement_timeout_ms: int = 15000, artifacts_dir: str
 
     async def run(query, params, source) -> Dataset:
         try:
-            res = await db.query(query, params, max_rows=MAX_STORED_ROWS, hotels=my_hotels())
+            scope = my_scope()
+            res = await db.query(query, params, max_rows=MAX_STORED_ROWS,
+                                 hotels=scope.hotels, user=scope.user)
         except QueryError as e:
             raise ToolError(str(e)) from e
         return my_store().put(res.columns, res.rows, res.truncated, source)
@@ -228,9 +247,11 @@ def build_server(dsn: str, statement_timeout_ms: int = 15000, artifacts_dir: str
         preview_rows: int = 200,
     ) -> CallToolResult:
         """Hotel KPIs per period from v_daily_kpis, aggregated correctly: rooms available and
-        sold, occupancy (0-1), ADR, RevPAR, and room, F&B, spa, other and total revenue (EUR,
-        net of tax). Periods on or after the business date contain on-the-books business
-        (`fully_actual` is false).
+        sold, occupancy (0-1), ADR, RevPAR, and room, F&B, spa, other and total revenue (each
+        hotel's currency, net of tax). Periods on or after the business date contain on-the-books
+        business (`fully_actual` is false). Hotels imported from FNSrooms have room revenue only
+        (F&B, spa, other and total are null: use fns_production_cc). Don't combine hotels with
+        different currencies (by_hotel=false).
 
         Args:
             start: First stay date (inclusive), YYYY-MM-DD.
@@ -297,69 +318,144 @@ def build_server(dsn: str, statement_timeout_ms: int = 15000, artifacts_dir: str
             "source": ds.source,
         })
 
+    @mcp.tool(annotations=READ_ONLY)
+    async def get_overview(hotel: str | None = None,
+                           period: Literal["mtd", "last_month", "last_7", "last_30", "ytd"] = "mtd") -> CallToolResult:
+        """Today's key figures per hotel, as on the website's home screen: occupancy today,
+        arrivals and departures today, ADR, RevPAR and room revenue for a period of actuals, and
+        occupancy and room revenue on the books for the next 30 days, plus alerts for figures well
+        below last year's. Changes compare with the same days a year earlier (occupancy in points,
+        the others relative: 0.08 = +8%). "Today" is each hotel's first date that isn't an actual yet.
+
+        Args:
+            hotel: A hotel code such as "FRA"; omit for every hotel you can see.
+            period: mtd (this month so far), last_month, last_7 or last_30 days, ytd (this year so far).
+        """
+        schema = await load_schema()
+        hotels = {h["code"]: h for h in schema["hotels"]}
+        if hotel and hotel.upper() not in hotels:
+            raise ToolError(f"Unknown hotel code {hotel!r}. Available: {sorted(hotels)}")
+        scope = my_scope()
+        where = "WHERE hotel_code = %(hotel)s" if hotel else ""
+        try:
+            daily = await db.query(DAILY.format(where=where), {"hotel": hotel.upper() if hotel else None},
+                                   hotels=scope.hotels, user=scope.user)
+            codes = sorted({r[0] for r in daily.rows})
+            days = [next(r[1] for r in daily.rows if r[0] == c) for c in codes]
+            moves: dict[str, tuple[int, int]] = {}
+            for sql in [MOVES] + ([MOVES_FNS] if schema_cache.get("fns") else []):
+                res = await db.query(sql, {"codes": codes, "days": days}, hotels=scope.hotels, user=scope.user)
+                for code, arrivals, departures in res.rows:
+                    a, d = moves.get(code, (0, 0))
+                    moves[code] = (a + arrivals, d + departures)
+        except QueryError as e:
+            raise ToolError(str(e)) from e
+        figures = build_overview(daily.rows, {c: moves.get(c, (0, 0)) for c in codes}, period)
+        out = []
+        for code, h in hotels.items():
+            if code in figures:
+                out.append({"hotel_code": code, "name": h["name"], "currency": h["currency"].strip(),
+                            "data_as_of": h.get("fns_data_as_of"), **figures[code]})
+        return _ok({"hotels": out})
+
     def doc_error(e: Exception) -> ToolError:
         return ToolError(str(e))
 
     @mcp.tool(annotations=CREATES_FILE)
     async def make_chart(
         dataset_id: str,
-        x: str,
-        y: str,
         title: str,
-        chart_type: Literal["line", "bar"] = "line",
+        chart_type: Literal[CHART_TYPES] = "line",
+        x: str | None = None,
+        y: str | None = None,
         series: str | None = None,
         subtitle: str | None = None,
+        trend: Literal["linear", "moving_average"] | None = None,
+        trend_window: int = 3,
+        y2: str | None = None,
+        y2_type: Literal["line", "bar"] = "line",
         y_format: Literal[KINDS] | None = None,
+        y2_format: Literal[KINDS] | None = None,
+        currency: str = "EUR",
+        spec: dict[str, Any] | None = None,
         language: Literal["en", "es"] = "en",
     ) -> CallToolResult:
-        """Chart one numeric measure from a stored dataset. The chart is shown to the user in
-        the chat (interactive) and saved as a PNG; pass the returned chart_id to
-        make_presentation or make_report to embed it.
+        """Chart a stored dataset. The chart is shown to the user in the chat (interactive, with
+        tooltips) and saved as a PNG; pass the returned chart_id to make_presentation or
+        make_report to embed it. Every value comes from the dataset.
 
-        Use line for trends over time, bar for comparing categories or a few periods. One measure
-        per chart (never two y-axes): to compare occupancy and ADR, make two charts. At most 8
-        series; bar charts at most 60 bars.
+        Pick a chart_type with x, y and series:
+        - line (trends over time), area, stacked_area (parts of a total over time)
+        - bar (compare periods or categories; with series: grouped bars), stacked_bar,
+          horizontal_bar (ranking categories with long names)
+        - scatter (two measures: x and y numeric), pie / donut (shares: x = category, y = value;
+          at most ~6 slices), heatmap (x = columns, series = rows, y = value as color),
+          histogram (distribution of numeric x), boxplot (distribution of y per x category)
+        Add trend="linear" or "moving_average" (trend_window periods) for a dashed trend line on
+        line, bar, area or scatter charts. Add y2 for a second measure on its own right-hand axis
+        (e.g. bars of revenue with a line of occupancy; y2_type "line" or "bar").
+
+        For anything else (layers, reference lines, annotations, small multiples, waterfalls,
+        custom transforms) pass `spec`: a Vega-Lite v6 specification WITHOUT data (no "data",
+        "datasets" or URLs); the dataset's rows are its data and fields are its column names.
+        Date columns are ISO dates: use "type": "temporal" (timeUnit "yearmonth" for months).
+        With spec, chart_type/x/y/series/trend/y2 are ignored.
 
         Args:
             dataset_id: From run_sql or get_kpis. Rows should be ordered by x.
-            x: Column for the x-axis (dates or categories).
-            y: Numeric column to plot.
             title: Chart title, e.g. "Occupancy by hotel".
-            chart_type: "line" or "bar".
-            series: Column whose values become separate lines/bar colors, e.g. "hotel_code".
+            chart_type: One of the types above.
+            x: Column for the x-axis (dates or categories; the categories of a pie).
+            y: Numeric column to plot (not needed for histogram).
+            series: Column whose values become separate colors (lines, bars, slices of a stack).
             subtitle: Period and scope, e.g. "Monthly, Oct 2025 - Sep 2026".
-            y_format: Override the value format inferred from the column name; percent and points
-                take fractions (0.034 shows as 3.4%).
-            language: Language of the text the tool adds (dates, column headers, source line):
-                "en", or "es" for Latin American Spanish. Write titles and text in the same language.
+            trend: Dashed trend line: "linear" (least squares) or "moving_average".
+            trend_window: Periods in the moving average.
+            y2: Second numeric column, drawn on a right-hand axis.
+            y2_type: "line" or "bar" for y2.
+            y_format, y2_format: Override the value format inferred from the column name; percent
+                and points take fractions (0.034 shows as 3.4%).
+            currency: ISO code of the amounts (the hotel's hotels.currency), e.g. EUR or COP.
+            spec: A Vega-Lite spec for charts the types above don't cover.
+            language: Language of the dates and labels the tool adds: "en", or "es" for Latin
+                American Spanish. Write titles in the same language.
         """
         try:
-            chart = build_chart_data(_get(dataset_id), chart_type, x, y, series, title, subtitle, y_format,
-                                     language)
+            ds = _get(dataset_id)
+            variants: dict[str, Any] = {}
+            if spec:
+                chart = build_custom(ds, spec, title, subtitle, language, currency)
+            else:
+                def build(kind):
+                    return build_chart(ds, kind, title, x, y, series, subtitle, y_format, language, currency,
+                                       trend, trend_window, y2, y2_type, y2_format)
+                chart = build(chart_type)
+                variants = chart_variants(chart_type, build)
+            png = render_png(chart)
         except ChartError as e:
             raise doc_error(e) from e
-        svg, _ = render_svg(chart, "light")
-        png = render_png(svg)
         info = artifacts.save(png, title, "png")
         charts[info.file_id] = (current_user(), png)
         summary = {
             "chart_id": info.file_id,
             "file": file_ref(info),
-            "series": [name for name, _ in chart.series],
-            "points": len(chart.categories),
+            "type": "custom" if spec else chart_type,
+            "rows": len(chart.rows),
+            "series": chart.series,
             "note": "The chart image is attached and shown to the user.",
         }
-        # A 1x image for clients that display tool images (e.g. Claude apps); the website uses
-        # the interactive payload instead.
-        image = ImageContent(type="image", data=base64.b64encode(render_png(svg, scale=1)).decode(),
+        # A 1x image for clients that display tool images (e.g. Claude apps) and for the model to
+        # check its work; the website draws the interactive chart from the payload instead.
+        image = ImageContent(type="image", data=base64.b64encode(render_png(chart, scale=1)).decode(),
                              mime_type="image/png")
-        return _ok({**summary, "chart": chart_payload(chart)}, for_model=summary, extra_content=[image])
+        payload = chart_payload(chart, None if spec else chart_type, variants)
+        return _ok({**summary, "chart": payload}, for_model=summary, extra_content=[image])
 
     @mcp.tool(annotations=CREATES_FILE)
     async def make_spreadsheet(title: str, sheets: list[SheetSpec], filename: str | None = None,
-                               language: Literal["en", "es"] = "en") -> CallToolResult:
+                               currency: str = "EUR", language: Literal["en", "es"] = "en") -> CallToolResult:
         """Create an Excel workbook with one sheet per dataset: formatted header, number formats
-        (percent, EUR, integers, dates) inferred from column names, frozen header row, filters,
+        (percent, money, integers, dates) inferred from column names, frozen header row, filters,
         plus an About sheet listing each sheet's source query. All rows of each dataset are
         included. The file is offered to the user for download.
 
@@ -367,12 +463,15 @@ def build_server(dsn: str, statement_timeout_ms: int = 15000, artifacts_dir: str
             title: Workbook title (also the default file name).
             sheets: One entry per sheet.
             filename: Optional file name without extension.
+            currency: ISO code of the amounts (the hotel's hotels.currency, listed per hotel by
+                describe_schema), e.g. EUR or COP. Money shows as €1,234, $1,234, £1,234, or the
+                code for other currencies (COP 1,234,000).
             language: Language of the text the tool adds (dates, column headers, source line):
                 "en", or "es" for Latin American Spanish. Write titles and text in the same language.
         """
         schema = await load_schema(with_hotels=False)
         try:
-            data = build_xlsx(my_store(), title, sheets, schema["business_date"], language)
+            data = build_xlsx(my_store(), title, sheets, schema["business_date"], language, currency)
         except DocError as e:
             raise doc_error(e) from e
         info = artifacts.save(data, filename or title, "xlsx")
@@ -380,7 +479,7 @@ def build_server(dsn: str, statement_timeout_ms: int = 15000, artifacts_dir: str
 
     @mcp.tool(annotations=CREATES_FILE)
     async def make_presentation(title: str, slides: list[Slide], subtitle: str | None = None,
-                                filename: str | None = None,
+                                filename: str | None = None, currency: str = "EUR",
                                 language: Literal["en", "es"] = "en") -> CallToolResult:
         """Create a 16:9 PowerPoint deck: a title slide, then one slide per entry. Slide kinds:
         kpis (1-4 headline tiles, values read from datasets), chart (a chart_id from make_chart,
@@ -393,12 +492,16 @@ def build_server(dsn: str, statement_timeout_ms: int = 15000, artifacts_dir: str
             slides: Content slides in order (max 25).
             subtitle: E.g. period and scope.
             filename: Optional file name without extension.
+            currency: ISO code of the amounts (the hotel's hotels.currency, listed per hotel by
+                describe_schema), e.g. EUR or COP. Money shows as €1,234, $1,234, £1,234, or the
+                code for other currencies (COP 1,234,000).
             language: Language of the text the tool adds (dates, column headers, source line):
                 "en", or "es" for Latin American Spanish. Write titles and text in the same language.
         """
         schema = await load_schema(with_hotels=False)
         try:
-            data = build_pptx(my_store(), my_charts(), title, subtitle, slides, schema["business_date"], language)
+            data = build_pptx(my_store(), my_charts(), title, subtitle, slides, schema["business_date"], language,
+                              currency)
         except DocError as e:
             raise doc_error(e) from e
         info = artifacts.save(data, filename or title, "pptx")
@@ -406,7 +509,7 @@ def build_server(dsn: str, statement_timeout_ms: int = 15000, artifacts_dir: str
 
     @mcp.tool(annotations=CREATES_FILE)
     async def make_report(title: str, sections: list[Section], format: Literal["pdf", "docx"] = "pdf",
-                          subtitle: str | None = None, filename: str | None = None,
+                          subtitle: str | None = None, filename: str | None = None, currency: str = "EUR",
                           language: Literal["en", "es"] = "en") -> CallToolResult:
         """Create a written report as PDF or Word (.docx). Each section can have a heading,
         narrative text (paragraphs; lines starting with '- ' become bullets), KPI tiles, a chart
@@ -418,6 +521,9 @@ def build_server(dsn: str, statement_timeout_ms: int = 15000, artifacts_dir: str
             format: "pdf" or "docx".
             subtitle: E.g. period and scope.
             filename: Optional file name without extension.
+            currency: ISO code of the amounts (the hotel's hotels.currency, listed per hotel by
+                describe_schema), e.g. EUR or COP. Money shows as €1,234, $1,234, £1,234, or the
+                code for other currencies (COP 1,234,000).
             language: Language of the text the tool adds (dates, column headers, source line):
                 "en", or "es" for Latin American Spanish. Write titles and text in the same language.
         """
@@ -426,7 +532,8 @@ def build_server(dsn: str, statement_timeout_ms: int = 15000, artifacts_dir: str
         schema = await load_schema(with_hotels=False)
         build = build_pdf if format == "pdf" else build_docx
         try:
-            data = build(my_store(), my_charts(), title, subtitle, sections, schema["business_date"], language)
+            data = build(my_store(), my_charts(), title, subtitle, sections, schema["business_date"], language,
+                         currency)
         except DocError as e:
             raise doc_error(e) from e
         info = artifacts.save(data, filename or title, format)

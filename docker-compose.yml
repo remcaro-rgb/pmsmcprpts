@@ -6,6 +6,8 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-pms}
       POSTGRES_DB: ${POSTGRES_DB:-pms}
       PMS_READONLY_PASSWORD: ${PMS_READONLY_PASSWORD:-pms_readonly}
+      # Login the agent uses to manage user accounts (db/init/05_users.sh).
+      PMS_APP_PASSWORD: ${PMS_APP_PASSWORD:-pms_app}
     ports:
       - "${PMS_DB_PORT:-5432}:5432"
     volumes:
@@ -33,19 +35,25 @@ services:
     environment:
       PMS_DATABASE_URL: postgresql://pms_readonly:${PMS_READONLY_PASSWORD:-pms_readonly}@db:5432/${POSTGRES_DB:-pms}
       PMS_ARTIFACTS_DIR: /artifacts
-      # Remote sign-in for Claude custom connectors: on when PMS_PUBLIC_URL is set (see README).
+      # Remote sign-in for ChatGPT, Claude and other MCP apps: on when PMS_PUBLIC_URL is set (see README).
       PMS_PUBLIC_URL: ${PMS_PUBLIC_URL:-}
       PMS_OIDC_ISSUER: ${PMS_OIDC_ISSUER:-}
       PMS_OIDC_CLIENT_ID: ${PMS_OIDC_CLIENT_ID:-}
       PMS_OIDC_CLIENT_SECRET: ${PMS_OIDC_CLIENT_SECRET:-}
       PMS_ALLOWED_EMAILS: ${PMS_ALLOWED_EMAILS:-}
       PMS_ALLOWED_DOMAINS: ${PMS_ALLOWED_DOMAINS:-}
+      PMS_ALLOW_ANY_USER: ${PMS_ALLOW_ANY_USER:-}
       PMS_MCP_SERVICE_TOKEN: ${PMS_MCP_SERVICE_TOKEN:-}
       # Which hotels each user sees (row-level security); see .env.example.
       PMS_HOTEL_ACCESS: ${PMS_HOTEL_ACCESS:-}
+      # "true": the website's user accounts decide instead (each user's assigned hotels; all for admins).
+      PMS_USER_DIRECTORY: ${PMS_USER_DIRECTORY:-}
       PMS_AUTH_DB: /data/auth.sqlite
-      # Public traffic arrives through Caddy, which sets X-Forwarded-For (used for rate limits).
+      # Public traffic arrives through Caddy or the Cloudflare tunnel, which set X-Forwarded-For
+      # (used for rate limits).
       PMS_TRUST_PROXY: "true"
+      # "off" turns the per-IP rate limits off (see README).
+      PMS_RATE_LIMIT: ${PMS_RATE_LIMIT:-on}
     volumes:
       - artifacts:/artifacts
       - mcpdata:/data
@@ -67,6 +75,21 @@ services:
       PMS_SERVER_FALLBACKS: ${PMS_SERVER_FALLBACKS:-true}
       PMS_ARTIFACTS_DIR: /artifacts
       PMS_CONVERSATIONS_DB: /data/conversations.sqlite
+      # The day's recommendations are made again at midnight here.
+      PMS_TIMEZONE: ${PMS_TIMEZONE:-${FNS_TIMEZONE:-Europe/Madrid}}
+      # User accounts (sign-in, admin page); see .env.example.
+      PMS_APP_DATABASE_URL: ${PMS_APP_DATABASE_URL:-}
+      # The daily email (off without SMTP_HOST); see .env.example.
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM: ${SMTP_FROM:-}
+      SMTP_SECURITY: ${SMTP_SECURITY:-starttls}
+      PMS_DIGEST_TIME: ${PMS_DIGEST_TIME:-07:00}
+      # The day's recommendations are prepared then (after the nightly FNSrooms import).
+      PMS_PREPARE_TIME: ${PMS_PREPARE_TIME:-05:00}
+      PMS_SITE_URL: ${WEB_PUBLIC_URL:-http://localhost:5050}
     volumes:
       - artifacts:/artifacts:ro
       - agentdata:/data
@@ -81,7 +104,7 @@ services:
     environment:
       AGENT_URL: http://agent:7001
       CHAT_RATE_LIMIT: ${CHAT_RATE_LIMIT:-20/600}
-      # Website sign-in (off unless WEB_AUTH=oidc); see .env.example.
+      # Website sign-in (off unless WEB_AUTH=password or oidc); see .env.example.
       WEB_AUTH: ${WEB_AUTH:-}
       # Optional site-wide password ("user:password"), e.g. for a Cloudflare quick tunnel.
       WEB_PASSWORD: ${WEB_PASSWORD:-}
@@ -100,6 +123,34 @@ services:
       - "127.0.0.1:${PMS_WEB_PORT:-5050}:5050"
     depends_on:
       - agent
+
+  # Daily import from the FNSrooms PMS API (FNS_* in .env; on with COMPOSE_PROFILES=fns).
+  # Run by hand: docker compose run --rm fns-sync python -m fns_sync check|run|status
+  fns-sync:
+    build: ./fns_sync
+    profiles: ["fns"]
+    environment:
+      FNS_DATABASE_URL: postgresql://${POSTGRES_USER:-pms}:${POSTGRES_PASSWORD:-pms}@db:5432/${POSTGRES_DB:-pms}
+      FNS_USER: ${FNS_USER:-}
+      FNS_PASSWORD: ${FNS_PASSWORD:-}
+      FNS_CENTRAL_ID: ${FNS_CENTRAL_ID:-}
+      FNS_ALOJAMIENTO_ID: ${FNS_ALOJAMIENTO_ID:-}
+      FNS_PMS_ID: ${FNS_PMS_ID:-}
+      FNS_HOTEL_NAME: ${FNS_HOTEL_NAME:-Fragata}
+      FNS_HOTEL_CODE: ${FNS_HOTEL_CODE:-FRA}
+      FNS_HOTEL_CITY: ${FNS_HOTEL_CITY:-}
+      FNS_HOTEL_COUNTRY: ${FNS_HOTEL_COUNTRY:-}
+      FNS_TIMEZONE: ${FNS_TIMEZONE:-Europe/Madrid}
+      FNS_MONEDA_ID: ${FNS_MONEDA_ID:-}
+      FNS_CURRENCY: ${FNS_CURRENCY:-}
+      FNS_SYNC_TIME: ${FNS_SYNC_TIME:-03:00}
+      FNS_BACKFILL_DAYS: ${FNS_BACKFILL_DAYS:-365}
+    volumes:
+      - ./db/init/06_fns.sql:/app/schema.sql:ro
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
 
   # Public HTTPS for the MCP server: docker compose --profile public up -d
   caddy:

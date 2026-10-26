@@ -3,6 +3,9 @@ without an API key. Tools run for real against the PMS MCP server and database.
 
     PMS_DATABASE_URL=postgresql://pms_readonly:...@localhost:5432/pms python web/e2e/fake_agent.py --port 8101
 
+With PMS_MCP_URL (and PMS_MCP_TOKEN) set it uses that MCP server instead of one in-process;
+PMS_APP_DATABASE_URL turns on user accounts, as in the real agent.
+
 The stand-in picks a plan from keywords in the question, runs its tool steps (each step's input
 is built from earlier real results), then answers. Keywords: "refuse" -> refusal, "slow" -> a
 slowly streamed answer (to test Stop), "chart", "excel", "deck", "report" -> document flows,
@@ -89,6 +92,12 @@ def fmt(value, column):
     return str(value)
 
 
+SUGGESTIONS = ("\n\n```suggestions\n- Which booking channels have the highest cancellation rates this year?\n"
+               "- Compare it with 2024\n```")
+SUGGESTIONS_ES = ("\n\n```suggestions\n- ¿Qué canales de reserva tienen las tasas de cancelación más altas este año?\n"
+                  "- Compáralo con 2024\n```")
+
+
 def answer_from(result: dict, spanish: bool = False) -> str:
     wanted = [c["name"] for c in result["columns"]
               if c["name"] in ("hotel_code", "period", "channel", "occupancy", "adr", "revpar",
@@ -100,9 +109,9 @@ def answer_from(result: dict, spanish: bool = False) -> str:
     if spanish:
         return ("Esto es lo que muestra la base de datos (respuesta simulada para pruebas, armada con el "
                 "resultado de la herramienta):\n\n" + "\n".join(lines)
-                + f"\n\nConjunto de datos: `{result['dataset_id']}`.")
+                + SUGGESTIONS_ES)
     return ("Here is what the database shows (stand-in answer for testing, built from the tool "
-            "result):\n\n" + "\n".join(lines) + f"\n\nSource dataset: `{result['dataset_id']}`.")
+            "result):\n\n" + "\n".join(lines) + SUGGESTIONS)
 
 
 MONTHLY = {"start": "2025-10-01", "end": "2026-09-30", "granularity": "month"}
@@ -110,6 +119,12 @@ Q3 = {"start": "2026-07-01", "end": "2026-09-30", "granularity": "quarter"}
 
 # Each plan: tool steps (functions of earlier results -> (tool, input)), then a closing text.
 PLANS = {
+    "trend": ([
+        lambda r: ("get_kpis", {**MONTHLY, "by_hotel": False}),
+        lambda r: ("make_chart", {"dataset_id": r[0]["dataset_id"], "chart_type": "bar", "x": "period",
+                                  "y": "occupancy", "trend": "linear", "y2": "adr", "title": "Occupancy and ADR",
+                                  "subtitle": "All hotels, Oct 2025 – Sep 2026"}),
+    ], "Occupancy by month with its trend line, and ADR on the right-hand axis."),
     "chart": ([
         lambda r: ("get_kpis", MONTHLY),
         lambda r: ("make_chart", {"dataset_id": r[0]["dataset_id"], "x": "period", "y": "occupancy",
@@ -147,8 +162,9 @@ PLANS = {
 
 # Spanish versions for when the system prompt asks for Latin American Spanish: keywords that pick
 # each plan, closing texts, and the titles the plans give their documents.
-KEYWORDS_ES = {"chart": "gráfico", "excel": "hoja de cálculo", "deck": "presentación", "report": "reporte"}
+KEYWORDS_ES = {"trend": "tendencia", "chart": "gráfico", "excel": "hoja de cálculo", "deck": "presentación", "report": "reporte"}
 CLOSINGS_ES = {
+    "trend": "Ocupación mensual con su línea de tendencia y el ADR en el eje derecho.",
     "chart": "Esta es la ocupación mensual por hotel de los últimos 12 meses. Los tres hoteles tuvieron su pico en verano.",
     "excel": "Puse los KPI mensuales por hotel en una hoja de cálculo.",
     "deck": "La presentación del T3 2026 está lista: KPI principales, RevPAR por hotel y una tabla de KPI.",
@@ -182,6 +198,24 @@ def turn_results(messages):
     return results
 
 
+RECOMMENDATIONS = {"recommendations": [
+    {"title": "Cut OTA cancellations", "detail": "Booking.com cancels 31% of its bookings this year.",
+     "hotel": "Lisbon", "impact": "€18,400 at risk", "kind": "risk", "question": "Which booking channels have the highest cancellation rates this year?"},
+    {"title": "Raise weekend rates", "detail": "Weekends are 94% full 30 days out.", "hotel": "Porto",
+     "impact": "+€6,200 estimated", "kind": "money", "question": "Show weekend occupancy on the books"},
+    {"title": "Fill midweek in March", "detail": "Tuesday to Thursday sit at 52%.", "hotel": "",
+     "impact": "−12 pp vs 2025", "kind": "risk", "question": "Show midweek occupancy in March"},
+]}
+RECOMMENDATIONS_ES = {"recommendations": [
+    {"title": "Reducir las cancelaciones de OTA", "detail": "Booking.com cancela el 31% de sus reservas este año.",
+     "hotel": "Lisboa", "impact": "€18,400 en riesgo", "kind": "risk", "question": "¿Qué canales de reserva tienen las tasas de cancelación más altas este año?"},
+    {"title": "Subir las tarifas de fin de semana", "detail": "Los fines de semana están al 94% a 30 días.",
+     "hotel": "Oporto", "impact": "+€6,200 estimados", "kind": "money", "question": "Muestra la ocupación de fin de semana"},
+    {"title": "Llenar entre semana en marzo", "detail": "De martes a jueves están al 52%.", "hotel": "",
+     "impact": "−12 pp vs 2025", "kind": "risk", "question": "Muestra la ocupación entre semana en marzo"},
+]}
+
+
 class ScriptedMessages:
     def stream(self, **params):
         messages = params["messages"]
@@ -192,6 +226,9 @@ class ScriptedMessages:
             return text_stream("The tool failed: " + last["content"][0]["content"])
         results = turn_results(messages)
         spanish = "Latin American Spanish" in params["system"]
+        if any(t["name"] == "give_recommendations" for t in params["tools"]):
+            return tool_stream("give_recommendations", RECOMMENDATIONS_ES if spanish else RECOMMENDATIONS,
+                               "Picking today's recommendations.")
 
         key = next((k for k in PLANS if k in question or (spanish and KEYWORDS_ES[k] in question)), None)
         if key:
@@ -221,8 +258,12 @@ def main():
     args = p.parse_args()
     client = SimpleNamespace(beta=SimpleNamespace(messages=ScriptedMessages()))
     artifacts = os.environ.get("PMS_ARTIFACTS_DIR", "/tmp/pms-artifacts-e2e")
-    app = create_app(Settings(mcp_url="unused", cors_origins=[], artifacts_dir=artifacts, conversations_db=":memory:"), client,
-                     build_server(os.environ["PMS_DATABASE_URL"], artifacts_dir=artifacts))
+    settings = Settings(cors_origins=[], artifacts_dir=artifacts, conversations_db=":memory:")
+    if os.environ.get("PMS_MCP_URL"):
+        # A separate MCP server (PMS_MCP_URL, PMS_MCP_TOKEN), e.g. with the user directory on.
+        app = create_app(settings, client)
+    else:
+        app = create_app(settings, client, build_server(os.environ["PMS_DATABASE_URL"], artifacts_dir=artifacts))
     uvicorn.run(app, host="127.0.0.1", port=args.port, log_level="warning")
 
 

@@ -10,16 +10,55 @@ import {
   type Message,
   type SavedConversation,
 } from "@/lib/chat";
-import { isLocale } from "@/lib/i18n";
+import { PERIODS, type HotelOverview, type Period } from "@/lib/home";
+import { INTL_LOCALE } from "@/lib/i18n";
+import type { Report, ReportList } from "@/lib/reports";
 import { readSse } from "@/lib/sse";
 import type { Theme } from "@/lib/theme";
+import AlertsBell from "./AlertsBell";
 import AssistantMessageView from "./AssistantMessageView";
+import ReportDialog, { type ReportDraft } from "./ReportDialog";
+import Home from "./Home";
+import { Icon } from "./Icons";
 import { useI18n } from "./I18n";
 import Sidebar from "./Sidebar";
-import ThemeToggle from "./ThemeToggle";
+import UserMenu from "./UserMenu";
 
-export default function Chat({ user = null, theme = "light" }: { user?: string | null; theme?: Theme }) {
-  const { locale, t, setLocale } = useI18n();
+const HOTEL_KEY = "pms_hotel";
+const PERIOD_KEY = "pms_period";
+
+type Recognition = { lang: string; interimResults: boolean; start: () => void; stop: () => void;
+  onresult: ((e: { results: ArrayLike<ArrayLike<{ transcript: string }>> }) => void) | null; onend: (() => void) | null };
+type RecognitionCtor = new () => Recognition;
+
+function speechRecognition(): RecognitionCtor | null {
+  if (typeof window === "undefined") return null;
+  const w = window as unknown as { SpeechRecognition?: RecognitionCtor; webkitSpeechRecognition?: RecognitionCtor };
+  return w.SpeechRecognition ?? w.webkitSpeechRecognition ?? null;
+}
+
+export default function Chat({
+  user = null,
+  name = null,
+  isAdmin = false,
+  theme = "light",
+}: {
+  user?: string | null;
+  name?: string | null; // the account's name, for the greeting
+  isAdmin?: boolean;
+  theme?: Theme;
+}) {
+  const { locale, t } = useI18n();
+  const [overview, setOverview] = useState<HotelOverview[] | null>(null);
+  const [overviewFailed, setOverviewFailed] = useState(false);
+  const [hotel, setHotel] = useState<string | null>(null);
+  const [period, setPeriod] = useState<Period>("mtd");
+  const [listening, setListening] = useState(false);
+  const [canDictate, setCanDictate] = useState(false);
+  const recognitionRef = useRef<Recognition | null>(null);
+  const [reportList, setReportList] = useState<ReportList | null>(null);
+  const [dialog, setDialog] = useState<{ report: Report | null; draft: ReportDraft } | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [input, setInput] = useState("");
@@ -76,25 +115,110 @@ export default function Chat({ user = null, theme = "light" }: { user?: string |
     }
   }
 
+  async function loadOverview(forPeriod: Period = period) {
+    setOverviewFailed(false);
+    try {
+      const res = await fetch(`/api/overview?period=${forPeriod}`, { cache: "no-store" });
+      if (!res.ok) throw new Error(String(res.status));
+      const hotels: HotelOverview[] = (await res.json()).hotels ?? [];
+      let saved: string | null = null;
+      try {
+        saved = localStorage.getItem(HOTEL_KEY);
+      } catch {}
+      setOverview(hotels);
+      setHotel(hotels.find((h) => h.hotel_code === saved)?.hotel_code ?? hotels[0]?.hotel_code ?? null);
+    } catch {
+      setOverviewFailed(true);
+    }
+  }
+
+  function pickPeriod(next: Period) {
+    setPeriod(next);
+    try {
+      localStorage.setItem(PERIOD_KEY, next);
+    } catch {}
+    loadOverview(next);
+  }
+
+  function pickHotel(code: string) {
+    setHotel(code);
+    try {
+      localStorage.setItem(HOTEL_KEY, code);
+    } catch {}
+  }
+
+  function dictate() {
+    const Ctor = speechRecognition();
+    if (!Ctor) return;
+    if (listening) {
+      recognitionRef.current?.stop();
+      return;
+    }
+    const rec = new Ctor();
+    rec.lang = INTL_LOCALE[locale];
+    rec.interimResults = false;
+    rec.onresult = (e) => {
+      const said = Array.from(e.results).map((r) => r[0].transcript).join(" ").trim();
+      if (said) setInput((v) => (v.trim() ? `${v.trim()} ${said}` : said));
+    };
+    rec.onend = () => setListening(false);
+    recognitionRef.current = rec;
+    setListening(true);
+    rec.start();
+  }
+
   useEffect(() => {
+    setCanDictate(!!speechRecognition());
+    let saved: Period = "mtd";
+    try {
+      const p = localStorage.getItem(PERIOD_KEY);
+      if (p && (PERIODS as readonly string[]).includes(p)) saved = p as Period;
+    } catch {}
+    setPeriod(saved);
+    loadOverview(saved);
+    loadReports();
     refreshConversations();
     const id = new URL(window.location.href).searchParams.get("c");
     if (id) openConversation(id);
   }, []);
+
+  async function changeConversation(c: ConversationSummary, change: { title?: string; pinned?: boolean }) {
+    const res = await fetch(`/api/conversations/${c.id}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(change),
+    }).catch(() => null);
+    if (res?.ok) refreshConversations();
+  }
+
+  function renameConversation(c: ConversationSummary) {
+    const title = window.prompt(t.renamePrompt, c.title)?.trim();
+    if (title && title !== c.title) changeConversation(c, { title });
+  }
 
   useEffect(() => {
     const el = scrollRef.current;
     if (el && stickToBottom.current) el.scrollTop = el.scrollHeight;
   }, [messages]);
 
-  async function send(text: string) {
+  /** Asks a question; `fresh` starts a new conversation (a saved report), `forHotel` overrides the
+   * hotel picked in the header. */
+  async function send(text: string, { fresh = false, forHotel }: { fresh?: boolean; forHotel?: string | null } = {}) {
     text = text.trim();
     if (!text || busy) return;
     const assistantId = crypto.randomUUID();
+    // Saved turns are numbered from 0; failed turns aren't saved.
+    const turn = fresh ? 0 : messages.filter((m) => m.role === "assistant" && m.status === "done").length;
+    const askConversation = fresh ? null : conversationId;
+    if (fresh) {
+      setConversationId(null);
+      showInAddressBar(null);
+      setSidebarOpen(false);
+    }
     setMessages((m) => [
-      ...m,
+      ...(fresh ? [] : m),
       { role: "user", id: crypto.randomUUID(), text },
-      { role: "assistant", id: assistantId, parts: [], status: "streaming" },
+      { role: "assistant", id: assistantId, parts: [], status: "streaming", turn, feedback: null },
     ]);
     setInput("");
     setBusy(true);
@@ -108,7 +232,9 @@ export default function Chat({ user = null, theme = "light" }: { user?: string |
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ message: text, conversation_id: conversationId, language: locale }),
+        body: JSON.stringify({
+          message: text, conversation_id: askConversation, language: locale, hotel: forHotel ?? hotel, period,
+        }),
         signal: controller.signal,
       });
       if (!res.ok || !res.body) {
@@ -139,12 +265,72 @@ export default function Chat({ user = null, theme = "light" }: { user?: string |
     }
   }
 
+  async function loadReports() {
+    try {
+      const r = await fetch("/api/reports", { cache: "no-store" });
+      if (r.ok) setReportList(await r.json());
+    } catch {}
+  }
+
+  function flash(text: string) {
+    setNotice(text);
+    setTimeout(() => setNotice((n) => (n === text ? null : n)), 5000);
+  }
+
+  async function saveReport(draft: ReportDraft): Promise<string | null> {
+    const editing = dialog?.report;
+    const r = await fetch(editing ? `/api/reports/${editing.id}` : "/api/reports", {
+      method: editing ? "PATCH" : "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(
+        editing
+          ? { title: draft.title, schedule: draft.schedule, weekday: draft.weekday }
+          : { ...draft, hotel, language: locale },
+      ),
+    }).catch(() => null);
+    if (!r?.ok) return r ? httpErrorMessage(r.status, await r.text(), t) : t.assistantUnreachable;
+    setDialog(null);
+    loadReports();
+    return null;
+  }
+
+  async function emailReport(report: Report) {
+    const r = await fetch(`/api/reports/${report.id}/send`, { method: "POST" }).catch(() => null);
+    flash(r?.ok ? t.reportSending : r ? httpErrorMessage(r.status, await r.text(), t) : t.assistantUnreachable);
+  }
+
+  async function deleteReport(report: Report) {
+    if (!window.confirm(t.confirmDeleteReport(report.title))) return;
+    const r = await fetch(`/api/reports/${report.id}`, { method: "DELETE" }).catch(() => null);
+    if (r?.ok || r?.status === 404) loadReports();
+  }
+
+  function answerFeedback(message: AssistantMessage, value: "up" | "down" | null) {
+    if (!conversationId || message.turn == null) return;
+    setMessages((ms) => ms.map((m) => (m.id === message.id ? { ...(m as AssistantMessage), feedback: value } : m)));
+    fetch("/api/feedback", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ kind: "answer", ref: `${conversationId}:${message.turn}`, value }),
+    }).catch(() => {});
+  }
+
+  /** Back to the start page: the key figures, recommendations and questions. */
+  function goHome() {
+    newChat();
+    scrollRef.current?.scrollTo({ top: 0 });
+    loadOverview();
+  }
+
   function newChat() {
     setMessages([]);
     setConversationId(null);
     setSidebarOpen(false);
     showInAddressBar(null);
   }
+
+  const current = overview?.find((h) => h.hotel_code === hotel) ?? null;
+  const placeholder = current ? t.placeholderHotel(current.name) : t.placeholder;
 
   return (
     <div className="flex h-dvh">
@@ -154,52 +340,101 @@ export default function Chat({ user = null, theme = "light" }: { user?: string |
         disabled={busy}
         open={sidebarOpen}
         onSelect={openConversation}
+        onNewChat={newChat}
         onDelete={deleteConversation}
+        onPin={(c) => changeConversation(c, { pinned: !c.pinned })}
+        onRename={renameConversation}
         onClose={() => setSidebarOpen(false)}
+        reports={reportList?.reports ?? []}
+        canEmailReports={!!reportList?.scheduling_available}
+        onRunReport={(r) => send(r.question, { fresh: true, forHotel: r.hotel })}
+        onEditReport={(r) =>
+          setDialog({ report: r, draft: { title: r.title, question: r.question, schedule: r.schedule, weekday: r.weekday } })
+        }
+        onEmailReport={emailReport}
+        onDeleteReport={deleteReport}
       />
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex items-center gap-2 sm:gap-3 border-b border-stone-200 bg-white/80 px-4 py-3 backdrop-blur dark:border-stone-800 dark:bg-stone-950/80">
+        <header className="flex h-14 shrink-0 items-center gap-2 border-b border-stone-200 bg-white/80 px-3 backdrop-blur sm:gap-3 sm:px-4 dark:border-stone-800 dark:bg-stone-950/80">
           <button
             onClick={() => setSidebarOpen(true)}
             aria-label={t.showConversations}
-            className="-ml-1 flex size-8 shrink-0 items-center justify-center rounded-lg text-stone-600 hover:bg-stone-100 md:hidden dark:text-stone-300 dark:hover:bg-stone-900"
+            className="flex size-8 shrink-0 items-center justify-center rounded-lg text-stone-600 hover:bg-stone-100 md:hidden dark:text-stone-300 dark:hover:bg-stone-900"
           >
-            <svg viewBox="0 0 16 16" aria-hidden="true" className="size-4">
-              <path d="M2.5 4h11M2.5 8h11M2.5 12h11" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-            </svg>
+            <Icon name="menu" className="size-5" />
           </button>
-          <div className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-accent text-sm font-bold text-white">P</div>
-          <div className="min-w-0">
-            <h1 className="truncate text-[15px] font-semibold leading-tight">{t.appName}</h1>
-            <p className="hidden truncate text-xs text-stone-500 sm:block">{t.tagline}</p>
-          </div>
-          <div className="ml-auto" />
-          <ThemeToggle initial={theme} />
-          <select
-            value={locale}
-            onChange={(e) => isLocale(e.target.value) && setLocale(e.target.value)}
-            aria-label={t.language}
-            title={t.language}
-            className="shrink-0 cursor-pointer rounded-lg border border-stone-200 bg-transparent px-1.5 py-1.5 text-sm hover:bg-stone-100 dark:border-stone-700 dark:hover:bg-stone-900"
+          <button
+            onClick={goHome}
+            disabled={busy}
+            aria-label={`${t.appName}: ${t.home}`}
+            title={t.home}
+            className="flex min-w-0 shrink-0 items-center gap-2 rounded-xl disabled:cursor-default"
           >
-            <option value="en">EN</option>
-            <option value="es">ES</option>
-          </select>
+            <span className="flex size-8 shrink-0 items-center justify-center rounded-[10px] bg-gradient-to-br from-blue-700 to-sky-500 text-[13px] font-extrabold tracking-tight text-white">
+              HS
+            </span>
+            <h1 className="hidden truncate text-[15px] font-semibold lg:block">{t.appName}</h1>
+          </button>
+          <button
+            onClick={goHome}
+            disabled={busy || messages.length === 0}
+            aria-current={messages.length === 0 ? "page" : undefined}
+            className="flex h-9 shrink-0 items-center gap-1.5 rounded-xl border border-stone-200 px-2.5 text-sm font-medium text-stone-700 hover:bg-stone-100 disabled:opacity-40 aria-[current]:opacity-100 aria-[current]:bg-stone-100 dark:border-stone-700 dark:text-stone-200 dark:hover:bg-stone-900 dark:aria-[current]:bg-stone-800"
+          >
+            <Icon name="home" />
+            <span className="hidden sm:inline">{t.home}</span>
+          </button>
+          {overview && overview.length > 1 ? (
+            <label className="flex min-w-0 items-center gap-1.5 rounded-xl border border-stone-200 bg-white py-1 pl-2.5 pr-1 text-sm font-medium dark:border-stone-700 dark:bg-stone-900">
+              <Icon name="building" className="size-4 text-stone-500" />
+              <select
+                value={hotel ?? ""}
+                onChange={(e) => pickHotel(e.target.value)}
+                aria-label={t.hotel}
+                className="min-w-0 max-w-44 cursor-pointer truncate bg-transparent py-0.5 outline-none"
+              >
+                {overview.map((h) => (
+                  <option key={h.hotel_code} value={h.hotel_code}>
+                    {h.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : (
+            current && (
+              <span className="flex min-w-0 items-center gap-1.5 truncate rounded-xl border border-stone-200 px-2.5 py-1 text-sm font-medium dark:border-stone-700">
+                <Icon name="building" className="size-4 text-stone-500" />
+                {current.name}
+              </span>
+            )
+          )}
+          <label className="hidden items-center gap-1.5 rounded-xl border border-stone-200 bg-white py-1 pl-2.5 pr-1 text-sm font-medium sm:flex dark:border-stone-700 dark:bg-stone-900">
+            <Icon name="calendar" className="size-4 text-stone-500" />
+            <select
+              value={period}
+              onChange={(e) => pickPeriod(e.target.value as Period)}
+              aria-label={t.period}
+              className="cursor-pointer bg-transparent py-0.5 outline-none"
+            >
+              {PERIODS.map((p) => (
+                <option key={p} value={p}>
+                  {t.periods[p]}
+                </option>
+              ))}
+            </select>
+          </label>
+          <div className="ml-auto" />
+          <AlertsBell hotel={current} onAsk={send} />
           <button
             onClick={newChat}
             disabled={busy || messages.length === 0}
-            className="shrink-0 whitespace-nowrap rounded-lg border border-stone-200 px-3 py-1.5 text-sm hover:bg-stone-100 disabled:opacity-40 dark:border-stone-700 dark:hover:bg-stone-900"
+            aria-label={t.newChat}
+            title={t.newChat}
+            className="flex size-9 shrink-0 items-center justify-center rounded-xl border border-stone-200 text-stone-600 hover:bg-stone-100 disabled:opacity-40 md:hidden dark:border-stone-700 dark:text-stone-300 dark:hover:bg-stone-900"
           >
-            {t.newChat}
+            <Icon name="edit" />
           </button>
-          {user && (
-            <form action="/auth/logout" method="post" className="flex shrink-0 items-center gap-2">
-              <span className="hidden max-w-48 truncate text-xs text-stone-500 sm:inline" title={user}>{user}</span>
-              <button className="whitespace-nowrap rounded-lg px-2 py-1.5 text-sm text-stone-600 hover:bg-stone-100 dark:text-stone-300 dark:hover:bg-stone-900">
-                {t.signOut}
-              </button>
-            </form>
-          )}
+          <UserMenu name={name} user={user} isAdmin={isAdmin} hotel={hotel} theme={theme} />
         </header>
 
         <div
@@ -210,41 +445,37 @@ export default function Chat({ user = null, theme = "light" }: { user?: string |
           }}
           className="flex-1 overflow-y-auto"
         >
-          <div className="mx-auto max-w-3xl px-4 py-6">
-            {messages.length === 0 ? (
-              <div className="pt-[12vh]">
-                <h2 className="text-2xl font-semibold tracking-tight">{t.emptyTitle}</h2>
-                <p className="mt-2 text-stone-500">
-                  {t.emptyBody}
-                </p>
-                <div className="mt-6 grid gap-2 sm:grid-cols-2">
-                  {t.starters.map((s) => (
-                    <button
-                      key={s}
-                      onClick={() => send(s)}
-                      className="rounded-xl border border-stone-200 bg-white p-3 text-left text-sm hover:border-stone-300 hover:bg-stone-50 dark:border-stone-800 dark:bg-stone-900 dark:hover:bg-stone-800"
-                    >
-                      {s}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            ) : (
-              <div className="space-y-6">
-                {messages.map((m) =>
-                  m.role === "user" ? (
-                    <div key={m.id} className="flex justify-end">
-                      <p className="max-w-[85%] whitespace-pre-wrap rounded-2xl bg-stone-200/80 px-4 py-2 text-[15px] dark:bg-stone-800">
-                        {m.text}
-                      </p>
-                    </div>
-                  ) : (
-                    <AssistantMessageView key={m.id} message={m} />
-                  ),
-                )}
-              </div>
-            )}
-          </div>
+          {messages.length === 0 ? (
+            <Home name={name} hotel={current} failed={overviewFailed} period={period} onPeriod={pickPeriod} onAsk={send} onRetry={() => loadOverview()} />
+          ) : (
+            <div className="mx-auto max-w-3xl space-y-6 px-4 py-6">
+              {messages.map((m, i) =>
+                m.role === "user" ? (
+                  <div key={m.id} className="flex justify-end">
+                    <p className="max-w-[85%] whitespace-pre-wrap rounded-2xl bg-stone-200/80 px-4 py-2 text-[15px] dark:bg-stone-800">
+                      {m.text}
+                    </p>
+                  </div>
+                ) : (
+                  <AssistantMessageView
+                    key={m.id}
+                    message={m}
+                    isLast={i === messages.length - 1 && !busy}
+                    onAsk={send}
+                    onFeedback={conversationId ? (v) => answerFeedback(m, v) : undefined}
+                    onSave={
+                      messages[i - 1]?.role === "user"
+                        ? () => {
+                            const question = (messages[i - 1] as { text: string }).text;
+                            setDialog({ report: null, draft: { title: question, question, schedule: "none", weekday: 0 } });
+                          }
+                        : undefined
+                    }
+                  />
+                ),
+              )}
+            </div>
+          )}
         </div>
 
         <form
@@ -252,9 +483,9 @@ export default function Chat({ user = null, theme = "light" }: { user?: string |
             e.preventDefault();
             send(input);
           }}
-          className="border-t border-stone-200 bg-white px-4 py-3 dark:border-stone-800 dark:bg-stone-950"
+          className="border-t border-stone-200 bg-white px-3 pb-2 pt-3 sm:px-4 dark:border-stone-800 dark:bg-stone-950"
         >
-          <div className="mx-auto flex max-w-3xl items-end gap-2">
+          <div className="mx-auto flex max-w-3xl items-end gap-1.5 rounded-2xl border border-stone-300 bg-white py-1.5 pl-3.5 pr-1.5 shadow-sm focus-within:border-accent dark:border-stone-700 dark:bg-stone-900">
             <textarea
               value={input}
               onChange={(e) => setInput(e.target.value)}
@@ -265,30 +496,63 @@ export default function Chat({ user = null, theme = "light" }: { user?: string |
                 }
               }}
               rows={1}
-              placeholder={t.placeholder}
+              placeholder={listening ? t.listening : placeholder}
               aria-label={t.message}
-              className="field-sizing-content max-h-40 min-h-11 flex-1 resize-none rounded-xl border border-stone-300 bg-white px-3.5 py-2.5 text-[15px] outline-none focus:border-accent dark:border-stone-700 dark:bg-stone-900"
+              className="field-sizing-content max-h-40 min-h-9 flex-1 resize-none bg-transparent py-1.5 text-[15px] outline-none placeholder:text-stone-400"
             />
+            {canDictate && !busy && (
+              <button
+                type="button"
+                onClick={dictate}
+                aria-label={t.dictate}
+                title={t.dictate}
+                aria-pressed={listening}
+                className="flex size-9 shrink-0 items-center justify-center rounded-xl text-stone-500 hover:bg-stone-100 aria-pressed:bg-red-50 aria-pressed:text-red-600 dark:hover:bg-stone-800"
+              >
+                <Icon name="mic" className="size-5" />
+              </button>
+            )}
             {busy ? (
               <button
                 type="button"
                 onClick={() => abortRef.current?.abort()}
-                className="h-11 rounded-xl border border-stone-300 px-4 text-sm font-medium hover:bg-stone-100 dark:border-stone-700 dark:hover:bg-stone-900"
+                className="flex h-9 shrink-0 items-center gap-1.5 rounded-xl border border-stone-300 px-3 text-sm font-medium hover:bg-stone-100 dark:border-stone-700 dark:hover:bg-stone-800"
               >
+                <Icon name="stop" className="size-3.5" />
                 {t.stop}
               </button>
             ) : (
               <button
                 type="submit"
                 disabled={!input.trim()}
-                className="h-11 rounded-xl bg-accent px-4 text-sm font-medium text-white disabled:opacity-40"
+                aria-label={t.send}
+                title={t.send}
+                className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-accent text-white disabled:bg-stone-300 disabled:text-stone-500 dark:disabled:bg-stone-700 dark:disabled:text-stone-400"
               >
-                {t.send}
+                <Icon name="send" className="size-5" />
               </button>
             )}
           </div>
+          <p className="mx-auto mt-1.5 hidden max-w-3xl gap-4 text-[11.5px] text-stone-500 sm:flex">
+            <span>{t.hintKeys}</span>
+            <span>{t.hintCan}</span>
+          </p>
         </form>
       </div>
+      {dialog && (
+        <ReportDialog
+          draft={dialog.draft}
+          schedulingAvailable={!!reportList?.scheduling_available}
+          sendTime={reportList?.send_time ?? "07:00"}
+          onSave={saveReport}
+          onClose={() => setDialog(null)}
+        />
+      )}
+      {notice && (
+        <p role="status" className="fixed bottom-24 left-1/2 z-50 -translate-x-1/2 rounded-xl bg-stone-900 px-4 py-2 text-sm text-white shadow-lg dark:bg-stone-100 dark:text-stone-900">
+          {notice}
+        </p>
+      )}
     </div>
   );
 }
