@@ -11,7 +11,7 @@ async function signIn(page: Page, login: string, password: string) {
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "Sign in" })).toBeVisible();
   await page.getByLabel("Email or ID").fill(login);
-  await page.getByLabel("Password").fill(password);
+  await page.getByLabel("Password", { exact: true }).fill(password);
   await page.getByRole("button", { name: "Sign in" }).click();
 }
 
@@ -44,7 +44,7 @@ test("administrators manage users, and users see only their hotels", async ({ pa
   await page.getByLabel("Phone").fill("+351 912 345 678");
   await page.getByLabel("Unique ID").fill(`EMP-${Date.now()}`);
   await page.getByLabel("Notes").fill("Front office, Lisbon");
-  await page.getByLabel("Password").fill(user.password);
+  await page.getByLabel("Password", { exact: true }).fill(user.password);
   await page.getByRole("checkbox", { name: /^LIS/ }).check();
   await page.getByRole("button", { name: "Save" }).click();
   await expect(page.getByRole("status").filter({ hasText: "Saved." })).toBeVisible();

@@ -20,6 +20,7 @@ import AssistantMessageView from "./AssistantMessageView";
 import ReportDialog, { type ReportDraft } from "./ReportDialog";
 import Home from "./Home";
 import { Icon } from "./Icons";
+import { GoliattMark } from "./Logo";
 import { useI18n } from "./I18n";
 import Sidebar from "./Sidebar";
 import UserMenu from "./UserMenu";
@@ -355,7 +356,7 @@ export default function Chat({
         onDeleteReport={deleteReport}
       />
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex h-14 shrink-0 items-center gap-2 border-b border-stone-200 bg-white/80 px-3 backdrop-blur sm:gap-3 sm:px-4 dark:border-stone-800 dark:bg-stone-950/80">
+        <header className="flex shrink-0 flex-wrap items-center gap-2 border-b border-stone-200 bg-white/80 px-3 py-2.5 backdrop-blur sm:h-14 sm:flex-nowrap sm:gap-3 sm:px-4 sm:py-0 dark:border-stone-800 dark:bg-stone-950/80">
           <button
             onClick={() => setSidebarOpen(true)}
             aria-label={t.showConversations}
@@ -370,9 +371,7 @@ export default function Chat({
             title={t.home}
             className="flex min-w-0 shrink-0 items-center gap-2 rounded-xl disabled:cursor-default"
           >
-            <span className="flex size-8 shrink-0 items-center justify-center rounded-[10px] bg-gradient-to-br from-blue-700 to-sky-500 text-[13px] font-extrabold tracking-tight text-white">
-              HS
-            </span>
+            <GoliattMark className="size-8" />
             <h1 className="hidden truncate text-[15px] font-semibold lg:block">{t.appName}</h1>
           </button>
           <button
@@ -385,13 +384,13 @@ export default function Chat({
             <span className="hidden sm:inline">{t.home}</span>
           </button>
           {overview && overview.length > 1 ? (
-            <label className="flex min-w-0 items-center gap-1.5 rounded-xl border border-stone-200 bg-white py-1 pl-2.5 pr-1 text-sm font-medium dark:border-stone-700 dark:bg-stone-900">
+            <label className="order-last flex w-full min-w-0 items-center gap-1.5 rounded-xl border border-stone-200 bg-white py-1 pl-2.5 pr-1 text-sm font-medium sm:order-none sm:w-auto dark:border-stone-700 dark:bg-stone-900">
               <Icon name="building" className="size-4 text-stone-500" />
               <select
                 value={hotel ?? ""}
                 onChange={(e) => pickHotel(e.target.value)}
                 aria-label={t.hotel}
-                className="min-w-0 max-w-44 cursor-pointer truncate bg-transparent py-0.5 outline-none"
+                className="min-w-0 flex-1 cursor-pointer truncate bg-transparent py-0.5 outline-none sm:max-w-44"
               >
                 {overview.map((h) => (
                   <option key={h.hotel_code} value={h.hotel_code}>
@@ -402,7 +401,7 @@ export default function Chat({
             </label>
           ) : (
             current && (
-              <span className="flex min-w-0 items-center gap-1.5 truncate rounded-xl border border-stone-200 px-2.5 py-1 text-sm font-medium dark:border-stone-700">
+              <span className="order-last flex w-full min-w-0 items-center gap-1.5 truncate rounded-xl border border-stone-200 px-2.5 py-1 text-sm font-medium sm:order-none sm:w-auto dark:border-stone-700">
                 <Icon name="building" className="size-4 text-stone-500" />
                 {current.name}
               </span>
