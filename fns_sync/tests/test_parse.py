@@ -118,3 +118,27 @@ def test_answers_that_mean_no_data():
         client.call("revenue", {})
     with pytest.raises(RangeTooLong):  # a 403 that isn't about access
         client.call("availability", {})
+
+
+def test_daemon_waits_for_the_database(monkeypatch, caplog):
+    import psycopg
+
+    from fns_sync import __main__ as cli
+
+    calls = []
+
+    def state(cfg):
+        calls.append(1)
+        if len(calls) == 1:
+            raise psycopg.OperationalError("failed to resolve host 'db'")
+        return set(), None
+
+    def run_once(cfg, backfill):
+        raise KeyboardInterrupt  # ends the test once the daemon gets past start-up
+
+    monkeypatch.setattr(cli, "_state", state)
+    monkeypatch.setattr(cli, "run_once", run_once)
+    monkeypatch.setattr(cli, "DB_RETRY_SECONDS", 0)
+    with pytest.raises(KeyboardInterrupt):
+        cli.daemon(Config.from_env(ENV))
+    assert len(calls) == 2 and "database not reachable" in caplog.text
