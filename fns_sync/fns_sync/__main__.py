@@ -28,6 +28,7 @@ from .config import Config
 from .sync import HISTORY_STEPS, STEPS, Sync
 
 log = logging.getLogger("fns_sync")
+DB_RETRY_SECONDS = 30
 FIELD_NAME = re.compile(r"[A-Za-z_@ ]{1,30}")
 
 
@@ -133,12 +134,8 @@ def next_run(cfg: Config, now: datetime) -> datetime:
     return at if at > now else at + timedelta(days=1)
 
 
-def daemon(cfg: Config) -> None:
-    """Import now unless today's import already ran (and loaded all the history), then every day at
-    FNS_SYNC_TIME. A run the API cut short is retried after FNS_RETRY_MINUTES."""
-    stop = {"now": False}
-    signal.signal(signal.SIGTERM, lambda *_: stop.update(now=True))
-    signal.signal(signal.SIGINT, lambda *_: stop.update(now=True))
+def _state(cfg: Config) -> tuple[set[str], datetime | None]:
+    """The history steps still to load, and when the last import that stored data started."""
     with _connect(cfg) as conn:
         store.ensure_schema(conn)
         row = conn.execute(
@@ -146,7 +143,27 @@ def daemon(cfg: Config) -> None:
             "AND r.status IN ('ok', 'partial')) FROM pms.hotels h WHERE h.alojamiento_id = %s",
             (cfg.alojamiento_id,)).fetchone()
         pending = set(HISTORY_STEPS) - (store.loaded_steps(conn, row[0]) if row else set())
-    last = row[1] if row else None
+    return pending, row[1] if row else None
+
+
+def daemon(cfg: Config) -> None:
+    """Import now unless today's import already ran (and loaded all the history), then every day at
+    FNS_SYNC_TIME. A run the API cut short is retried after FNS_RETRY_MINUTES."""
+    stop = {"now": False}
+    signal.signal(signal.SIGTERM, lambda *_: stop.update(now=True))
+    signal.signal(signal.SIGINT, lambda *_: stop.update(now=True))
+    while True:
+        try:
+            pending, last = _state(cfg)
+            break
+        except psycopg.OperationalError as e:
+            # The database container may still be starting (or restarting): wait for it quietly.
+            log.warning("database not reachable (%s); retrying in %d s", str(e).strip(), DB_RETRY_SECONDS)
+            end = time.monotonic() + DB_RETRY_SECONDS
+            while not stop["now"] and time.monotonic() < end:
+                time.sleep(1)
+            if stop["now"]:
+                return
     due = bool(pending) or last is None or last.astimezone(cfg.tz).date() < datetime.now(cfg.tz).date()
     while not stop["now"]:
         retry = False
