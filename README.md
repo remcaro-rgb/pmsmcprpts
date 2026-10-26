@@ -548,6 +548,20 @@ deploy key and shows where to add it. Run it again to update to the latest `main
 and the data. Create the tunnel and its public hostname (`http://web:5050`) as in "Named tunnel"
 above.
 
+To copy the FNSrooms data already imported elsewhere (e.g. a year of history on your computer)
+instead of downloading it from the FNS API again, export it there and import it on the server:
+
+```bash
+scripts/fns_transfer.sh export                      # on your computer: fns-export-<date>.tar.gz
+scp fns-export-*.tar.gz you@server:/opt/pmsmcprpts/
+cd /opt/pmsmcprpts && scripts/fns_transfer.sh import fns-export-<date>.tar.gz   # on the server
+```
+
+The import matches each FNS hotel by its alojamiento ID (creating it if needed), replaces that
+hotel's FNS rows in one transaction, checks the row counts, and keeps the sync history so the daily
+import continues from there. Then copy the `FNS_*` settings into the server's `.env` and run the
+deploy script again (it starts the daily import), and give people the hotel under Admin.
+
 ### Share it with ngrok
 
 To open your local copy from other devices, publish it on your free ngrok domain, behind a sign-in:

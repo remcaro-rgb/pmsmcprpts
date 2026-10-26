@@ -182,6 +182,10 @@ compose run --rm seed
 step "Building and starting the MCP server, agent, website and tunnel (a few minutes the first time)"
 compose up -d --build mcp agent web
 compose up -d tunnel
+if [ -n "$(env_get FNS_USER)" ]; then
+  echo "FNS settings found: starting the daily FNSrooms import"
+  compose --profile fns up -d --build fns-sync
+fi
 
 # --- 5. First administrator ----------------------------------------------------------------------
 for _ in $(seq 60); do
