@@ -15,6 +15,8 @@
 #   --dir PATH           where to put the code (default: /opt/pmsmcprpts)
 #   --admin-email EMAIL  first administrator (asked for on a new install if not given)
 #   --admin-name NAME
+#   --no-seed            skip the sample data (e.g. when you restore a database copy afterwards)
+#   --no-admin           don't create an administrator (e.g. the restored copy has its accounts)
 #
 # Secrets are read from the environment if set (ANTHROPIC_API_KEY, CLOUDFLARE_TUNNEL_TOKEN) or asked
 # for without echoing; they go only into <dir>/.env (mode 600). Safe to run again to update: it pulls
@@ -29,10 +31,12 @@ BRANCH="main"
 DIR="/opt/pmsmcprpts"
 ADMIN_EMAIL=""
 ADMIN_NAME=""
+SEED=1
+ADMIN=1
 
 die() { echo "error: $*" >&2; exit 1; }
 step() { echo; echo "==> $*"; }
-usage() { sed -n '2,22p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
+usage() { sed -n '2,24p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -42,6 +46,8 @@ while [ $# -gt 0 ]; do
     --dir) DIR="${2:-}"; shift 2 ;;
     --admin-email) ADMIN_EMAIL="${2:-}"; shift 2 ;;
     --admin-name) ADMIN_NAME="${2:-}"; shift 2 ;;
+    --no-seed) SEED=0; shift ;;
+    --no-admin) ADMIN=0; shift ;;
     -h|--help) usage 0 ;;
     *) echo "unknown option: $1" >&2; usage 1 ;;
   esac
@@ -176,8 +182,10 @@ for _ in $(seq 60); do
 done
 compose exec -T db pg_isready -q -U "${db_user:-pms}" >/dev/null 2>&1 || die "the database didn't start; see: $DOCKER compose logs db"
 
-step "Loading the sample data (first run only, about a minute)"
-compose run --rm seed
+if [ "$SEED" -eq 1 ]; then
+  step "Loading the sample data (first run only, about a minute)"
+  compose run --rm seed
+fi
 
 step "Building and starting the MCP server, agent, website and tunnel (a few minutes the first time)"
 compose up -d --build mcp agent web
@@ -192,7 +200,9 @@ for _ in $(seq 60); do
   compose exec -T agent python -m pms_agent.admin list >/dev/null 2>&1 && break
   sleep 2
 done
-if ! compose exec -T agent python -m pms_agent.admin list 2>/dev/null | grep -q " admin "; then
+if [ "$ADMIN" -eq 0 ]; then
+  :
+elif ! compose exec -T agent python -m pms_agent.admin list 2>/dev/null | grep -q " admin "; then
   step "Creating the first administrator"
   [ -n "$ADMIN_EMAIL" ] || read -r -p "Administrator email: " ADMIN_EMAIL
   [ -n "$ADMIN_NAME" ] || read -r -p "Administrator name: " ADMIN_NAME
