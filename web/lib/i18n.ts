@@ -243,6 +243,9 @@ const en = {
   signInIntro: "Use the email or ID and the password your administrator gave you.",
   loginLabel: "Email or ID",
   passwordLabel: "Password",
+  showPassword: "Show password",
+  hidePassword: "Hide password",
+  rememberMe: "Remember me",
   signInButton: "Sign in",
   signInErrors: {
     invalid: "Wrong email or password.",
@@ -526,6 +529,9 @@ const es: Messages = {
   signInIntro: "Usa el correo o ID y la contraseña que te dio tu administrador.",
   loginLabel: "Correo o ID",
   passwordLabel: "Contraseña",
+  showPassword: "Mostrar contraseña",
+  hidePassword: "Ocultar contraseña",
+  rememberMe: "Recordarme",
   signInButton: "Entrar",
   signInErrors: {
     invalid: "Correo o contraseña incorrectos.",
