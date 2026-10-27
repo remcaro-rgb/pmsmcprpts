@@ -144,6 +144,10 @@ resuming with the steps whose history isn't loaded yet; `fns_sync status` lists 
 
 4. In the website's **Admin** page, tick Fragata (code `FRA`) for the users who should see it.
 
+To move the nightly import (e.g. to 03:30): `scripts/set_sync_time.sh 03:30` (Windows:
+`.\scripts\set_sync_time.ps1 -Time 03:30`). It updates `FNS_SYNC_TIME` in `.env` and recreates
+the fns-sync service.
+
 To import again now: `docker compose run --rm fns-sync python -m fns_sync run` (`--backfill` reloads
 the history; `--only revenue,reservations` limits the steps). Don't reseed the sample data with
 `db/seed.py --reset` afterwards: it empties all hotels, Fragata included (the next import reloads
