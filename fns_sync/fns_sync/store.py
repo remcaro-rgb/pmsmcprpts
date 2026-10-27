@@ -101,6 +101,20 @@ def mark_loaded(conn: psycopg.Connection, hotel_id: int, step: str, history_from
                      "loaded_at = now()", (hotel_id, step, history_from))
 
 
+def extend_history(conn: psycopg.Connection, hotel_id: int, step: str, history_from) -> None:
+    """Move a loaded step's history start back to history_from (a step not loaded yet is left for the
+    daily import's first load)."""
+    with conn.transaction():
+        conn.execute("UPDATE pms.fns_sync_steps SET history_from = LEAST(history_from, %s) "
+                     "WHERE hotel_id = %s AND step = %s", (history_from, hotel_id, step))
+
+
+def history_start(conn: psycopg.Connection, hotel_id: int):
+    """The earliest day the loaded history steps cover, or None before the first import."""
+    return conn.execute("SELECT min(history_from) FROM pms.fns_sync_steps WHERE hotel_id = %s",
+                        (hotel_id,)).fetchone()[0]
+
+
 def has_accounting(conn: psycopg.Connection, hotel_id: int) -> bool:
     return conn.execute("SELECT EXISTS (SELECT 1 FROM pms.fns_accounting_entries WHERE hotel_id = %s)",
                         (hotel_id,)).fetchone()[0]

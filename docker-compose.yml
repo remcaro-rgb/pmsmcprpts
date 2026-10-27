@@ -150,6 +150,7 @@ services:
       FNS_CURRENCY: ${FNS_CURRENCY:-}
       FNS_SYNC_TIME: ${FNS_SYNC_TIME:-03:00}
       FNS_BACKFILL_DAYS: ${FNS_BACKFILL_DAYS:-365}
+      FNS_PAUSE: ${FNS_PAUSE:-1}
     volumes:
       - ./db/init/06_fns.sql:/app/schema.sql:ro
     depends_on:

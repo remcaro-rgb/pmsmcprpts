@@ -201,7 +201,7 @@ class Sync:
                                     delete=("prod_date BETWEEN %s AND %s", (a, b))))
 
         daily_from = max(start, today - timedelta(days=self.cfg.refresh_days))
-        for a, b, payload in self._ranged("production", body, start, daily_from - timedelta(days=1)):
+        for a, b, payload in self._ranged("production", body, start, min(end, daily_from - timedelta(days=1))):
             save(payload, a, b)
         for d, _, payload in self._ranged("production", body, daily_from, end, max_days=1):
             save(payload, d, d)
@@ -273,6 +273,78 @@ class Sync:
             store.save(conn, "fns_rates", hotel_id, [{**r, "fetched_at": now} for r in rates],
                        ("hotel_id", "stay_date", "room_type_id", "rate_id", "occupancy"), delete=window)
             self._stored(n)
+
+    # --- an earlier range ---------------------------------------------------------------------------
+
+    def plan(self, start: date, end: date, only: set[str] | None = None) -> dict[str, int]:
+        """API calls `history` makes for start..end, per step, if the API accepts each range (a long
+        range it rejects is read again in 30-day parts)."""
+        parts = len(list(windows(start, end)))
+        targets = len([t for t in self.cfg.exchange_to if t != self.cfg.moneda_id]) if self.cfg.moneda_id \
+            else max(len(self.cfg.exchange_to) - 1, 1)
+        calls = {"revenue": 1, "production_cc": 1, "sales_reservations": 1,
+                 "reservations": len(RESERVATION_STATES) * parts, "pos": 1, "accounting": 3,
+                 "exchange": targets * parts, "production": 1}
+        return {s: n for s, n in calls.items() if not only or s in only}
+
+    def history(self, conn: psycopg.Connection, start: date, end: date, today: date | None = None,
+                only: set[str] | None = None) -> dict:
+        """Load the history steps for an earlier range start..end (e.g. the rest of a year before the
+        first import's history), each method in as few calls as the API allows. Recorded as a run;
+        returns {"run_id", "status", "calls", "rows", "loaded", "failed_steps"}."""
+        cfg = self.cfg
+        today = today or datetime.now(cfg.tz).date()
+        if end < start:
+            raise ValueError("the range ends before it starts")
+        if end >= today:
+            raise ValueError("an earlier range must end before today; the daily import covers the recent days")
+        store.ensure_schema(conn)
+        hotel_id = store.ensure_hotel(conn, cfg)
+        wanted = [s for s in HISTORY_STEPS if not only or s in only]
+        run_id = store.start_run(conn, hotel_id, True)
+        self.calls, self.unreachable = [], 0
+        log.info("FNS import for %s (alojamiento %s): history %s..%s for %s", cfg.hotel_code, cfg.alojamiento_id,
+                 start, end, ", ".join(wanted))
+        ctx: dict[str, Any] = {}
+        steps = {
+            "revenue": lambda: self.revenue(conn, hotel_id, ctx["moneda_id"], start, end),
+            "production_cc": lambda: self.production_cc(conn, hotel_id, ctx["moneda_id"], start, end),
+            "sales_reservations": lambda: self.sales_reservations(conn, hotel_id, start, end),
+            "reservations": lambda: self.reservations(conn, hotel_id, start, end),
+            "pos": lambda: self.pos(conn, hotel_id, start, end),
+            "accounting": lambda: self.accounting(conn, hotel_id, start, end),
+            "exchange": lambda: self.exchange(conn, ctx["moneda_id"], start, end),
+            "production": lambda: self.production(conn, hotel_id, ctx["moneda_id"], start, end, today),
+        }
+        order = [s for s in STEPS if s in steps and s in wanted]
+        if "accounting" in order and not cfg.moneda_id and not store.has_accounting(conn, hotel_id):
+            order.remove("accounting")  # the hotel's currency comes from the accounting entries
+            order.insert(0, "accounting")
+        status, loaded = "ok", []
+        try:
+            for name in order:
+                if name != "accounting" and "moneda_id" not in ctx:  # amounts need the currency
+                    ctx["moneda_id"], _ = store.hotel_currency(conn, hotel_id, cfg)
+                first = len(self.calls)
+                try:
+                    steps[name]()
+                except (psycopg.Error, ValueError, TypeError, KeyError) as e:
+                    self.calls.append({"method": name, "ok": False, "error": f"{e.__class__.__name__}: {e}"})
+                    log.exception("storing %s failed", name)
+                if not any(not c.get("ok") and not c.get("optional") for c in self.calls[first:]):
+                    store.extend_history(conn, hotel_id, name, start)
+                    loaded.append(name)
+                    log.info("%s: %s..%s loaded", name, start, end)
+        except (AuthError, StopRun) as e:
+            log.error("%s", e)
+            status = "failed"
+        if status == "ok" and len(loaded) < len(order):
+            status = "partial"
+        store.finish_run(conn, run_id, status, self.calls)
+        rows = sum(c.get("rows", 0) for c in self.calls)
+        log.info("FNS history import %s: %s calls, %s rows stored", status, len(self.calls), rows)
+        return {"run_id": run_id, "status": status, "calls": self.calls, "rows": rows, "loaded": loaded,
+                "failed_steps": [s for s in order if s not in loaded]}
 
     # --- the run ----------------------------------------------------------------------------------
 

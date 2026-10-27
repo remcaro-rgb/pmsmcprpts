@@ -149,6 +149,19 @@ the history; `--only revenue,reservations` limits the steps). Don't reseed the s
 `db/seed.py --reset` afterwards: it empties all hotels, Fragata included (the next import reloads
 it).
 
+**Load an earlier period** (e.g. the rest of a year before the loaded history) with `history`. It
+reads each method's whole range in one call where the API allows it (reservations and exchange
+rates in 30-day parts), and `--pause` sets the seconds between calls (default `FNS_PAUSE`, 1).
+`--plan` only lists the calls and the estimated time. `--to` defaults to the day before the loaded
+history; rows already there are updated, not duplicated. Stop the daily import while it runs:
+
+```bash
+docker compose --profile fns stop fns-sync
+docker compose --profile fns run --rm fns-sync python -m fns_sync history --from 2025-01-01 --plan
+docker compose --profile fns run --rm fns-sync python -m fns_sync history --from 2025-01-01 --pause 30
+docker compose --profile fns start fns-sync
+```
+
 ## MCP server
 
 `mcp_server/` is an [MCP](https://modelcontextprotocol.io) server that gives an LLM read-only

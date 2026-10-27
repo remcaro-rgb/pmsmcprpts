@@ -23,6 +23,19 @@ def _int(env, name, default=None, positive=True):
     return value
 
 
+def _seconds(env, name, default):
+    raw = (env.get(name) or "").strip()
+    if not raw:
+        return default
+    try:
+        value = float(raw)
+    except ValueError:
+        raise ValueError(f"{name} must be a number of seconds (it is {raw!r}).") from None
+    if value < 0:
+        raise ValueError(f"{name} can't be negative.")
+    return value
+
+
 @dataclass(frozen=True)
 class Config:
     user: str
@@ -50,7 +63,7 @@ class Config:
     refresh_days: int = 7
     forward_days: int = 365
     backfill_days: int = 365
-    # Seconds between API calls, to be gentle with the API.
+    # Seconds between API calls, to be gentle with the API (FNS_PAUSE).
     pause: float = 1.0
     # After a run the API cut short, try again this many minutes later instead of the next night.
     retry_minutes: int = 60
@@ -104,4 +117,5 @@ class Config:
             forward_days=_int(env, "FNS_FORWARD_DAYS", 365),
             backfill_days=_int(env, "FNS_BACKFILL_DAYS", 365),
             retry_minutes=_int(env, "FNS_RETRY_MINUTES", 60),
+            pause=_seconds(env, "FNS_PAUSE", 1.0),
         )
