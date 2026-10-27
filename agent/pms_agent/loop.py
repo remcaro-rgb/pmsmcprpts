@@ -108,7 +108,8 @@ class ChatAgent:
             "output_config": {"effort": self.settings.effort},
             "cache_control": {"type": "ephemeral"},
         }
-        if self.settings.server_fallbacks:
+        # Haiku models have no server-side refusal fallback; the parameter would be rejected.
+        if self.settings.server_fallbacks and not self.settings.model.startswith("claude-haiku"):
             params["betas"] = ["server-side-fallback-2026-07-01"]
             params["fallbacks"] = "default"
         return params
@@ -197,7 +198,7 @@ class ChatAgent:
                 return
             if message.stop_reason == "max_tokens":
                 # A truncated tool input can parse as a valid partial object; don't run it.
-                yield _event("error", message=text["max_tokens"])
+                yield _event("error", message=text["max_tokens"], usage=totals, requests=requests)
                 return
 
             for b in tool_uses:
@@ -210,7 +211,9 @@ class ChatAgent:
             conv.messages.append({"role": "user", "content": [r for r, _ in results]})
             step += 1
 
-        yield _event("error", message=text["max_steps"].format(steps=self.settings.max_tool_steps))
+        # The turn failed, but its requests were billed: report them like done does.
+        yield _event("error", message=text["max_steps"].format(steps=self.settings.max_tool_steps),
+                     usage=totals, requests=requests)
 
     async def _call_tool(self, mcp: Client, block: dict[str, Any]) -> tuple[dict[str, Any], Any]:
         args = block["input"]

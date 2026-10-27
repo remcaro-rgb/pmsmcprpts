@@ -13,8 +13,8 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 from .datasets import Dataset, DatasetStore
-from .formats import (CURRENCY_CODE, KINDS, Kind, currency_prefix, format_headline, format_value, infer_kind,
-                      points_unit, to_date)
+from .formats import (CURRENCY_CODE, KINDS, Kind, check_scale, currency_prefix, format_headline, format_value,
+                      infer_kind, points_unit, to_date)
 from .i18n import ACCENTS_ES, COLUMNS_ES, Lang, fmt_date
 from .i18n import text as i18n_text
 
@@ -36,7 +36,7 @@ class KpiSpec(BaseModel):
     dataset_id: str
     column: str = Field(description="Column holding the value.")
     row: int = Field(0, description="0-based row index in the dataset.")
-    format: Literal[KINDS] | None = Field(None, description="Override the inferred format.")
+    format: Literal[KINDS] | None = Field(None, description="Override the inferred format; percent and points take fractions (0.034 shows as 3.4%).")
     note: str | None = Field(None, description="Short context under the value, e.g. 'Q3 2026, all hotels'.")
 
 
@@ -44,7 +44,8 @@ class TableSpec(BaseModel):
     dataset_id: str
     columns: list[str] | None = Field(None, description="Columns to include, in order. Default: all.")
     max_rows: int = Field(12, ge=1, le=50)
-    formats: dict[str, Literal[KINDS]] | None = Field(None, description="Per-column format overrides.")
+    formats: dict[str, Literal[KINDS]] | None = Field(
+        None, description="Per-column format overrides; percent and points take fractions (0.034 shows as 3.4%).")
 
 
 class Slide(BaseModel):
@@ -132,6 +133,11 @@ def select_table(store: DatasetStore, dataset_id: str, columns: list[str] | None
     idx = [names.index(c) for c in columns]
     rows = [[r[i] for i in idx] for r in (ds.rows[:max_rows] if max_rows else ds.rows)]
     formats = formats or {}
+    for c, i in zip(columns, idx):
+        try:
+            check_scale(c, formats.get(c), [r[i] for r in ds.rows])
+        except ValueError as e:
+            raise DocError(str(e)) from None
     kinds = [formats.get(c) or infer_kind(c, ds.columns[i]["type"], [r[i] for r in ds.rows])
              for c, i in zip(columns, idx)]
     return Table([pretty(c, lang) for c in columns], kinds, rows, len(ds.rows), ds.source, lang, currency)
@@ -146,6 +152,10 @@ def kpi_value(store: DatasetStore, k: KpiSpec, lang: Lang = "en", currency: str 
         raise DocError(f"Row {k.row} is out of range; dataset {k.dataset_id} has {len(ds.rows)} rows.")
     i = names.index(k.column)
     value = ds.rows[k.row][i]
+    try:
+        check_scale(k.column, k.format, [value])
+    except ValueError as e:
+        raise DocError(str(e)) from None
     kind = k.format or infer_kind(k.column, ds.columns[i]["type"], [r[i] for r in ds.rows])
     return format_headline(value, kind, lang, currency)
 

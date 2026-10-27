@@ -373,7 +373,7 @@ Details:
   Histories are append-only so the cache stays warm.
 - **Refusal fallbacks:** if Claude's safety filters decline a request, the API retries it on a
   recommended fallback model (`fallbacks: "default"`; set `PMS_SERVER_FALLBACKS=false` on
-  platforms other than the Claude API).
+  platforms other than the Claude API). Haiku models have no fallback, so it is off for them.
 - **Saved conversations:** completed turns are saved in SQLite (`PMS_CONVERSATIONS_DB`; the
   `agentdata` volume in compose): the Messages API history that continues the conversation, and
   each answer's events so the website can show it again as it was streamed. Conversations belong
@@ -527,6 +527,43 @@ Without the script: `docker compose --profile tunnel up -d tunnel`.
 site; with user accounts on it is an extra password in front of the sign-in page, so leave it
 empty unless you want both. Leave out `$ ' " \ #` and spaces, which `.env` treats specially. Behind a tunnel, set
 `WEB_TRUST_PROXY=true` (the script does) so the message limit counts each visitor.
+
+### Run it on an Ubuntu server
+
+`scripts/deploy_ubuntu.sh` sets up a copy on a fresh Ubuntu 22.04 or 24.04 server (2 vCPUs, 4 GB
+RAM and 25 GB disk are enough) behind a Cloudflare named tunnel, so the server opens no ports
+except SSH. On the server, as a user with sudo:
+
+```bash
+curl -fsSLO https://raw.githubusercontent.com/remcaro-rgb/pmsmcprpts/main/scripts/deploy_ubuntu.sh  # or scp it
+bash deploy_ubuntu.sh --hostname reports.yourdomain.com
+```
+
+It installs Docker and the firewall (SSH only), clones the repository into `/opt/pmsmcprpts`,
+writes `.env` with new database passwords and secrets, asks for the Anthropic API key and the
+tunnel token (hidden), loads the sample data, starts everything with automatic restarts, connects
+the tunnel and creates the first administrator (user accounts, `WEB_AUTH=password`). For a private
+repository pass `--repo git@github.com:remcaro-rgb/pmsmcprpts.git`: the script creates a read-only
+deploy key and shows where to add it. Run it again to update to the latest `main`; it keeps `.env`
+and the data. Create the tunnel and its public hostname (`http://web:5050`) as in "Named tunnel"
+above.
+
+To clone a running installation (all data, accounts, conversations and settings) to a server in
+one go, give Claude Code on that computer the prompt in [docs/clone-to-server-prompt.md](docs/clone-to-server-prompt.md).
+
+To copy the FNSrooms data already imported elsewhere (e.g. a year of history on your computer)
+instead of downloading it from the FNS API again, export it there and import it on the server:
+
+```bash
+scripts/fns_transfer.sh export                      # on your computer: fns-export-<date>.tar.gz
+scp fns-export-*.tar.gz you@server:/opt/pmsmcprpts/
+cd /opt/pmsmcprpts && scripts/fns_transfer.sh import fns-export-<date>.tar.gz   # on the server
+```
+
+The import matches each FNS hotel by its alojamiento ID (creating it if needed), replaces that
+hotel's FNS rows in one transaction, checks the row counts, and keeps the sync history so the daily
+import continues from there. Then copy the `FNS_*` settings into the server's `.env` and run the
+deploy script again (it starts the daily import), and give people the hotel under Admin.
 
 ### Share it with ngrok
 
@@ -692,6 +729,13 @@ question's token usage and cost. It needs only the Python standard library:
 ```bash
 python scripts/live_check.py                                 # the agent's model
 PMS_CLAUDE_MODEL=claude-sonnet-5-5 docker compose up -d agent  # then run it again to compare
+```
+
+Or let `scripts/run_live_check.sh <model>` do it: it restarts the stack on that model, runs the
+check, zips the results to `live-check-<model>.zip` and switches the agent back:
+
+```bash
+scripts/run_live_check.sh claude-haiku-5-5
 ```
 
 Measured on the sample data (14 questions; costs at list prices):

@@ -8,8 +8,10 @@ services:
       PMS_READONLY_PASSWORD: ${PMS_READONLY_PASSWORD:-pms_readonly}
       # Login the agent uses to manage user accounts (db/init/05_users.sh).
       PMS_APP_PASSWORD: ${PMS_APP_PASSWORD:-pms_app}
+    # Local connections only (psql, the seeder on the host); the other services use the Docker network.
     ports:
-      - "${PMS_DB_PORT:-5432}:5432"
+      - "127.0.0.1:${PMS_DB_PORT:-5432}:5432"
+    restart: unless-stopped  # back up after a reboot or crash
     volumes:
       - ./db/init:/docker-entrypoint-initdb.d:ro
       - pgdata:/var/lib/postgresql/data
@@ -59,6 +61,7 @@ services:
       - mcpdata:/data
     ports:
       - "127.0.0.1:${PMS_MCP_PORT:-7070}:7070"
+    restart: unless-stopped  # back up after a reboot or crash
     depends_on:
       db:
         condition: service_healthy
@@ -72,6 +75,7 @@ services:
       PMS_MCP_TOKEN: ${PMS_MCP_SERVICE_TOKEN:-}
       PMS_CLAUDE_MODEL: ${PMS_CLAUDE_MODEL:-claude-sonnet-5-5}
       PMS_CLAUDE_EFFORT: ${PMS_CLAUDE_EFFORT:-medium}
+      PMS_SERVER_FALLBACKS: ${PMS_SERVER_FALLBACKS:-true}
       PMS_ARTIFACTS_DIR: /artifacts
       PMS_CONVERSATIONS_DB: /data/conversations.sqlite
       # The day's recommendations are made again at midnight here.
@@ -94,6 +98,7 @@ services:
       - agentdata:/data
     ports:
       - "127.0.0.1:${PMS_AGENT_PORT:-7001}:7001"
+    restart: unless-stopped  # back up after a reboot or crash
     depends_on:
       - mcp
 
@@ -120,6 +125,7 @@ services:
       TRUST_PROXY: ${WEB_TRUST_PROXY:-false}
     ports:
       - "127.0.0.1:${PMS_WEB_PORT:-5050}:5050"
+    restart: unless-stopped  # back up after a reboot or crash
     depends_on:
       - agent
 

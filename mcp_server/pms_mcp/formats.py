@@ -42,6 +42,8 @@ def infer_kind(name: str, pg_type: str, values: list[Any]) -> Kind:
         lname = name.lower()
         if POINTS_NAMES.search(lname) and all(-1.5 <= v <= 1.5 for v in sample):
             return "points"
+        if (POINTS_NAMES.search(lname) or lname.endswith("_pct")) and not all(-1.5 <= v <= 1.5 for v in sample):
+            return "decimal"  # a change already in percent (3.4), not a fraction or money
         if PERCENT_NAMES.search(lname) and all(-1.5 <= v <= 1.5 for v in sample):
             return "percent"
         if CURRENCY_NAMES.search(lname):
@@ -50,6 +52,18 @@ def infer_kind(name: str, pg_type: str, values: list[Any]) -> Kind:
             return "integer"
         return "decimal"
     return "text"
+
+
+def check_scale(column: str, kind: str | None, values: list[Any]) -> None:
+    """Reject an explicit percent or points format on values that are already in percent: both
+    take fractions (0.034 shows as 3.4%), so 3.4 would show as 340%."""
+    nums = [float(v) for v in values if isinstance(v, (int, float)) and not isinstance(v, bool)]
+    if not nums or kind not in ("percent", "points"):
+        return
+    if (kind == "points" and any(abs(v) > 1 for v in nums)) or (kind == "percent" and all(abs(v) > 1.5 for v in nums)):
+        example = "0.034 for 3.4%" if kind == "percent" else "-0.015 for -1.5 pts"
+        raise ValueError(f"Column {column!r} looks like it is already in percent (e.g. {nums[0]:g}); the {kind} "
+                         f"format takes fractions ({example}). Divide by 100 in the query.")
 
 
 def to_date(value: Any) -> date | None:

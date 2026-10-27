@@ -25,7 +25,7 @@ from .db import Database, QueryError
 from .documents import DocError, Section, SheetSpec, Slide, build_docx, build_pdf, build_pptx, build_xlsx
 from .formats import KINDS
 from .overview import DAILY, MOVES, MOVES_FNS, build as build_overview
-from .sql_guard import UnsafeQueryError, check_read_only
+from .sql_guard import UnsafeQueryError, check_read_only, strip_stray_quote
 
 INSTRUCTIONS = """\
 Read-only access to a hotel property-management-system (PMS) database (PostgreSQL, schema `pms`).
@@ -229,6 +229,7 @@ def build_server(dsn: str, statement_timeout_ms: int = 15000, artifacts_dir: str
             query: A single SELECT statement. Tables can be referenced without the `pms.` prefix.
             preview_rows: How many rows to return inline.
         """
+        query = strip_stray_quote(query)
         try:
             check_read_only(query)
         except UnsafeQueryError as e:
@@ -412,7 +413,8 @@ def build_server(dsn: str, statement_timeout_ms: int = 15000, artifacts_dir: str
             trend_window: Periods in the moving average.
             y2: Second numeric column, drawn on a right-hand axis.
             y2_type: "line" or "bar" for y2.
-            y_format, y2_format: Override the value format inferred from the column name.
+            y_format, y2_format: Override the value format inferred from the column name; percent
+                and points take fractions (0.034 shows as 3.4%).
             currency: ISO code of the amounts (the hotel's hotels.currency), e.g. EUR or COP.
             spec: A Vega-Lite spec for charts the types above don't cover.
             language: Language of the dates and labels the tool adds: "en", or "es" for Latin

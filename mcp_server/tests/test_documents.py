@@ -73,6 +73,21 @@ def test_formats():
     assert infer_kind("ingresos_totales", "numeric", [11127338]) == "currency"
     assert infer_kind("var_ocupacion_pp", "numeric", [-0.0047]) == "points"
     assert pretty("ocupacion", "es") == "Ocupación" and pretty("var_ocupacion_pp", "es") == "Var ocupación pp"
+    # Changes already in percent (3.45 for +3.45%) are not fractions: shown as numbers, not money.
+    assert infer_kind("var_adr_pct", "numeric", [3.45, 3.25]) == "decimal"
+    assert infer_kind("occupancy_change_pp", "numeric", [-1.54, 0.71]) == "decimal"
+
+
+def test_percent_formats_reject_values_already_in_percent():
+    from pms_mcp.formats import check_scale
+
+    check_scale("adr_change_pct", "percent", [0.0345, 0.0325])  # fractions: fine
+    check_scale("occ_change_pp", "points", [-0.0154, 0.0071])
+    check_scale("growth_pct", "percent", [2.5, 0.3])  # one value above 150% is plausible
+    with pytest.raises(ValueError, match="already in percent"):
+        check_scale("adr_change_pct", "percent", [3.45, 3.25, 3.76])
+    with pytest.raises(ValueError, match="already in percent"):
+        check_scale("occ_change_pp", "points", [-1.54, -0.65, 0.71])
     assert nice_ticks(0.55, 0.93) == [0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
     assert date_labels(["2026-07-01", "2026-10-01"])[0] == ["Q3 2026", "Q4 2026"]
     assert date_labels(["2025-12-01", "2026-01-01"])[0] == ["Dec '25", "Jan '26"]

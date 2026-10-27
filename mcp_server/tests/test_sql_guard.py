@@ -1,6 +1,6 @@
 import pytest
 
-from pms_mcp.sql_guard import UnsafeQueryError, check_read_only
+from pms_mcp.sql_guard import UnsafeQueryError, check_read_only, strip_stray_quote
 
 
 @pytest.mark.parametrize("sql", [
@@ -40,3 +40,17 @@ def test_allows_read_queries(sql):
 def test_rejects_unsafe_queries(sql, reason):
     with pytest.raises(UnsafeQueryError, match=reason):
         check_read_only(sql)
+
+
+def test_tokenizer_errors_are_reported():
+    # sqlglot raises TokenError (not ParseError) for an unmatched quote; it must come back as a
+    # readable message, not an unexpected tool error.
+    with pytest.raises(UnsafeQueryError, match="Could not parse SQL"):
+        check_read_only('SELECT 1 AS "x')
+
+
+def test_stray_trailing_quote_is_dropped():
+    assert strip_stray_quote('SELECT hotel_code FROM hotels ORDER BY 1"') == "SELECT hotel_code FROM hotels ORDER BY 1"
+    assert strip_stray_quote('SELECT 1 AS "x"') == 'SELECT 1 AS "x"'  # balanced: unchanged
+    assert strip_stray_quote("SELECT 1") == "SELECT 1"
+    check_read_only(strip_stray_quote('SELECT 1 AS n\nORDER BY n"\n'))

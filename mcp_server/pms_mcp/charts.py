@@ -19,7 +19,7 @@ import vl_convert
 
 from .datasets import Dataset
 from .documents import pretty
-from .formats import Kind, currency_prefix, date_labels, format_value, infer_kind
+from .formats import Kind, check_scale, currency_prefix, date_labels, format_value, infer_kind
 from .i18n import Lang
 
 CHART_TYPES = ("line", "bar", "stacked_bar", "horizontal_bar", "area", "stacked_area", "scatter", "pie",
@@ -215,6 +215,13 @@ def build_chart(ds: Dataset, chart_type: str, title: str, x: str | None = None, 
     if y is None and chart_type != "histogram":
         raise ChartError("Pass y (the numeric column to plot).")
     kinds = _kinds(ds)
+    names = [c["name"] for c in ds.columns]
+    for col, fmt in ((y, y_format), (y2, y2_format)):
+        if fmt and col in names:
+            try:
+                check_scale(col, fmt, [r[names.index(col)] for r in ds.rows])
+            except ValueError as e:
+                raise ChartError(str(e)) from None
     if y_format and y:
         kinds[y] = y_format
     if y2_format and y2:

@@ -6,7 +6,7 @@ as the pms_readonly role, which only has SELECT privileges.
 
 import sqlglot
 from sqlglot import exp
-from sqlglot.errors import ParseError
+from sqlglot.errors import SqlglotError
 
 FORBIDDEN_NODES = (
     exp.Insert, exp.Update, exp.Delete, exp.Merge, exp.Create, exp.Drop, exp.Alter,
@@ -32,12 +32,21 @@ class UnsafeQueryError(ValueError):
     pass
 
 
+def strip_stray_quote(sql: str) -> str:
+    """Drop a lone double quote after the end of the query (some models append one), which
+    leaves the identifier quotes unbalanced, so the query could not run as written anyway."""
+    stripped = sql.rstrip()
+    if stripped.endswith('"') and sql.count('"') % 2 == 1:
+        return stripped[:-1]
+    return sql
+
+
 def check_read_only(sql: str) -> None:
     """Raise UnsafeQueryError unless `sql` is exactly one SELECT / WITH ... SELECT query."""
     try:
         statements = [s for s in sqlglot.parse(sql, read="postgres") if s is not None]
-    except ParseError as e:
-        raise UnsafeQueryError(f"Could not parse SQL: {e}") from e
+    except SqlglotError as e:  # parse and tokenizer errors (e.g. an unmatched quote)
+        raise UnsafeQueryError(f"Could not parse SQL (check quotes and parentheses): {e}") from e
     if len(statements) != 1:
         raise UnsafeQueryError(f"Expected exactly one statement, got {len(statements)}.")
     tree = statements[0]
