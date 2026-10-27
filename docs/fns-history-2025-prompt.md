@@ -10,8 +10,10 @@ first (`export SERVER_PASSWORD='...'`) so it never appears in the chat.
 ```text
 On my server (aia-demo-cld.goliatt.co, IP <SERVER_IP>, SSH user <SSH_USER>, key
 ~/.ssh/aia_demo_ed25519, app in /opt/pmsmcprpts, run with docker compose), import from the FNSrooms
-API the 2025 data that is still missing for the Fragata hotel. Make as few API calls as possible
-(date ranges, using the app's `fns_sync history` command) and wait 30 seconds between API calls.
+API the 2025 data that is still missing for the Fragata hotel, one calendar month per API call:
+each call asks for a whole month (January to September 2025, and October 2025 from the 1st up to
+the day before the history already loaded), using the app's `fns_sync history` command once per
+month. Wait 30 seconds between API calls.
 If sudo needs a password, it is in the environment variable SERVER_PASSWORD; pass it to `sudo -S` on
 standard input. Never print, log or commit any secret or any value from .env. If anything unexpected
 happens, stop and tell me instead of improvising anything destructive.
@@ -34,22 +36,36 @@ happens, stop and tell me instead of improvising anything destructive.
    - The earliest `history_from` is where the loaded history starts. If it is already on or before
      2025-01-01, tell me there is nothing to import and stop.
 
-3. Plan
+3. Plan the months
    - Stop the daily import so it doesn't run at the same time: `docker compose --profile fns stop
      fns-sync`.
-   - Run `docker compose --profile fns run --rm fns-sync python -m fns_sync history --from
-     2025-01-01 --pause 30 --plan`. It makes no API calls. `--to` defaults to the day before the
-     loaded history. Show me the calls per step, the total and the estimated time, and continue.
+   - Let H be the earliest `history_from` from the baseline (expected in October 2025). The months
+     to load, newest first: the month of H, from its 1st to H minus one day (skip it if H is the 1st),
+     then each earlier month down to January 2025, from its 1st to its last day.
+     Go newest first on purpose: each finished month moves `history_from` back, so if the import
+     stops halfway the loaded history stays one unbroken range and you can continue from there.
+   - For each month run `docker compose --profile fns run --rm fns-sync python -m fns_sync history
+     --from <first day> --to <last day> --pause 30 --plan` (no API calls) and show me a table:
+     month, calls per step, total, estimated minutes, plus the grand total. Expect one call per
+     method for the month (revenue, production_cc, sales_reservations, pos, production; accounting
+     3, one per report). The API allows at most 30 days per reservation and exchange-rate search, so
+     in 31-day months those are read as days 1-30 plus day 31 (one extra call per reservation state
+     and per currency); tell me that number too. Then continue.
 
-4. Import
-   - Run the same command without `--plan`, in the background on the server so a dropped SSH
-     connection doesn't stop it: `nohup docker compose --profile fns run --rm -T fns-sync python -m
-     fns_sync history --from 2025-01-01 --pause 30 > ~/fns-history-2025.log 2>&1 &`.
-   - Watch the log every few minutes (tail, not the whole file) until it finishes, and tell me the
-     progress. Don't start a second run while one is running.
-   - If it ends with failed steps, show me which steps and errors from the log or `fns_sync status`
-     (no guest data). Re-run only those steps once with `--only <steps>`, same `--from`, `--pause 30`
-     (and the same `--to` the plan showed). If they fail again, stop and tell me.
+4. Import, one month at a time
+   - Write a small script on the server (~/fns-history-2025.sh) that runs, for each month in the
+     order above, `docker compose --profile fns run --rm -T fns-sync python -m fns_sync history
+     --from <first day> --to <last day> --pause 30`, appends its output to ~/fns-history-2025.log
+     with a header line per month, and stops at the first month that exits with an error. The command
+     already waits 30 seconds after every API call, the last one included, so consecutive months stay
+     at least 30 seconds apart. Show me the script, then start it in the background so a dropped SSH
+     connection doesn't stop it: `nohup bash ~/fns-history-2025.sh >/dev/null 2>&1 &`.
+   - Check the log every few minutes (tail, not the whole file) and tell me which month it is on.
+     Don't start a second run while one is running.
+   - If a month ends with failed steps, show me the steps and errors (from the log or `fns_sync
+     status`; no guest data). Re-run only those steps for that month once with `--only <steps>`, the
+     same `--from`/`--to` and `--pause 30`, then continue with the remaining months. If they fail again,
+     stop and tell me.
 
 5. Verify and restart
    - Repeat the baseline queries and show a before/after table by month for 2025: every month from
@@ -61,6 +77,6 @@ happens, stop and tell me instead of improvising anything destructive.
      revenue in March 2025?" (curl http://127.0.0.1:7001/api/chat on the server with a user that can
      see Fragata), and check the numbers against SQL.
 
-6. Report: the number of API calls made, the time taken, the before/after table, any steps that
+6. Report: the number of API calls made per month and in total, the time taken, the before/after table, any steps that
    failed, and the path of the log. Delete the temporary folder on the Mac except the baseline file.
 ```
