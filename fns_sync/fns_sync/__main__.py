@@ -4,6 +4,9 @@
     python -m fns_sync check --date 2026-09-15   # the same for an earlier day
     python -m fns_sync run              # import now (the first run also loads FNS_BACKFILL_DAYS of history)
     python -m fns_sync run --backfill   # reload the full history
+    python -m fns_sync history --from 2025-01-01 --plan   # the calls an earlier range needs (none made)
+    python -m fns_sync history --from 2025-01-01          # load it (up to the day before the history
+                                                          # already loaded; --to to choose; --pause 30)
     python -m fns_sync status           # the last imports
     python -m fns_sync daemon           # import every day at FNS_SYNC_TIME (what the fns-sync service runs)
 
@@ -12,6 +15,7 @@ FNS_DATABASE_URL (the database owner); see .env.example for the optional ones.
 """
 
 import argparse
+import dataclasses
 import json
 import logging
 import re
@@ -109,6 +113,44 @@ def run_once(cfg: Config, backfill: bool | None, only: set[str] | None = None) -
             sync.client.close()
 
 
+def history(cfg: Config, start: date, end: date | None, only: set[str] | None, plan_only: bool) -> int:
+    """Load an earlier range of history (by default up to the day before the history already loaded)."""
+    with _connect(cfg) as conn:
+        if end is None:
+            row = conn.execute("SELECT id FROM pms.hotels WHERE alojamiento_id = %s", (cfg.alojamiento_id,)).fetchone() \
+                if conn.execute("SELECT to_regclass('pms.fns_sync_steps')").fetchone()[0] else None
+            first = store.history_start(conn, row[0]) if row else None
+            if first is None:
+                print("fns_sync: no history loaded yet; pass --to, or let the first import run", file=sys.stderr)
+                return 2
+            end = first - timedelta(days=1)
+        if end < start:
+            print(f"fns_sync: nothing to load: the history already starts on {end + timedelta(days=1)}", file=sys.stderr)
+            return 0
+        sync = Sync(cfg)
+        calls = sync.plan(start, end, only)
+        total = sum(calls.values())
+        print(f"History {start}..{end} ({(end - start).days + 1} days): {total} API calls "
+              f"({', '.join(f'{s} {n}' for s, n in calls.items())}), {cfg.pause:g} s apart: "
+              f"about {max(1, round(total * (cfg.pause + 3) / 60))} minutes. A range the API rejects is read "
+              f"again in 30-day parts (more calls).")
+        if plan_only:
+            sync.client.close()
+            return 0
+        try:
+            result = sync.history(conn, start, end, only=only)
+        except ValueError as e:
+            print(f"fns_sync: {e}", file=sys.stderr)
+            return 2
+        finally:
+            sync.client.close()
+    failed = [c for c in result["calls"] if not c.get("ok") and not c.get("optional")]
+    print(json.dumps({"status": result["status"], "range": f"{start}..{end}", "calls": len(result["calls"]),
+                      "rows": result["rows"], "loaded": result["loaded"], "failed_steps": result["failed_steps"],
+                      "failed": failed[:10]}, indent=2, default=str))
+    return 0 if result["status"] == "ok" else 1
+
+
 def status(cfg: Config) -> None:
     with _connect(cfg) as conn:
         if not conn.execute("SELECT to_regclass('pms.fns_sync_runs')").fetchone()[0]:
@@ -193,6 +235,13 @@ def main(argv=None) -> int:
     r = sub.add_parser("run")
     r.add_argument("--backfill", action="store_true", help="reload FNS_BACKFILL_DAYS of history")
     r.add_argument("--only", help="comma-separated steps, e.g. revenue,reservations")
+    h = sub.add_parser("history", help="load an earlier range of history")
+    h.add_argument("--from", dest="start", type=date.fromisoformat, required=True, help="first day (YYYY-MM-DD)")
+    h.add_argument("--to", dest="end", type=date.fromisoformat,
+                   help="last day (default: the day before the history already loaded)")
+    h.add_argument("--only", help="comma-separated history steps, e.g. revenue,reservations")
+    h.add_argument("--pause", type=float, help="seconds between API calls (default FNS_PAUSE, 1)")
+    h.add_argument("--plan", action="store_true", help="show the calls it would make, without calling the API")
     sub.add_parser("status")
     sub.add_parser("daemon")
     args = p.parse_args(argv)
@@ -212,6 +261,15 @@ def main(argv=None) -> int:
     if args.command == "daemon":
         daemon(cfg)
         return 0
+    if args.command == "history":
+        if args.pause is not None:
+            cfg = dataclasses.replace(cfg, pause=max(0.0, args.pause))
+        steps = {s.strip() for s in args.only.split(",")} if args.only else None
+        if steps and steps - set(HISTORY_STEPS):
+            print(f"fns_sync: unknown steps {sorted(steps - set(HISTORY_STEPS))}; choose from "
+                  f"{', '.join(HISTORY_STEPS)}", file=sys.stderr)
+            return 2
+        return history(cfg, args.start, args.end, steps, args.plan)
     only = {s.strip() for s in args.only.split(",")} if args.only else None
     if only and only - set(STEPS):
         print(f"fns_sync: unknown steps {sorted(only - set(STEPS))}; choose from {', '.join(STEPS)}", file=sys.stderr)

@@ -202,3 +202,51 @@ def test_long_ranges_the_api_refuses_are_read_in_parts(owner):
     assert len(revenue) == 1 + 3  # the refused range, then 30-day parts
     payments = [c for c in result["calls"] if c["method"] == "payments"]
     assert "no answer within" in payments[0]["error"] and all(c["ok"] for c in payments[1:])
+
+
+def test_an_earlier_range_is_loaded_in_as_few_calls_as_the_api_allows(owner):
+    sync()[0].run(owner, today=TODAY)  # the first import: history from TODAY - 35
+    before = counts(owner)
+    start, end = TODAY - timedelta(days=100), TODAY - timedelta(days=CFG.backfill_days + 1)  # 65 days
+    pauses: list[float] = []
+    cfg = replace(CFG, pause=30)
+    fake = FakeFNS(ALOJ, TODAY)
+    s = Sync(cfg, FNSClient(cfg, transport=fake.transport(), sleep=lambda s: None), sleep=pauses.append)
+    try:
+        plan = s.plan(start, end)
+        result = s.history(owner, start, end, today=TODAY)
+        assert result["status"] == "ok" and result["failed_steps"] == [], result["calls"]
+        # One call per method for the whole range, except the 30-day reservation searches and exchange
+        # rates; exactly what the plan said, each followed by the pause.
+        per_path = {}
+        for path, _ in fake.calls:
+            per_path[path] = per_path.get(path, 0) + 1
+        assert per_path == {
+            "/v1/ventas/revenue.php": 1, "/v1/ventas/produccion_cc.php": 1, "/v1/ventas/produccion.php": 1,
+            "/v1/custom/ventas1.php": 1, "/v1/ventas/pos.php": 1, "/v1/contabilidad/cobros.php": 1,
+            "/v1/contabilidad/facturacion.php": 1, "/v1/contabilidad/produccion.php": 1,
+            "/v1/reservas/listado.php": 3 * 3, "/v1/maestros/cambio.php": 3}
+        assert len(fake.calls) == sum(plan.values()) == len(result["calls"])
+        assert pauses == [30] * len(fake.calls)
+        # Every day of the range is stored, next to the history that was there.
+        n = counts(owner)
+        assert n["fns_revenue_daily"] == before["fns_revenue_daily"] + 65
+        assert n["fns_production_cc"] == before["fns_production_cc"] + 2 * 65
+        assert n["fns_production"] == before["fns_production"] + 3  # one period, 3 channels
+        period = owner.execute("SELECT DISTINCT prod_date, period_end FROM pms.fns_production p JOIN pms.hotels h "
+                               "ON h.id = p.hotel_id WHERE h.alojamiento_id = %s AND prod_date = %s",
+                               (ALOJ, start)).fetchall()
+        assert period == [(start, end)]
+        rates = owner.execute("SELECT count(*) FROM pms.fns_exchange_rates WHERE rate_date BETWEEN %s AND %s",
+                              (start, end)).fetchone()[0]
+        assert rates == 65
+        steps = owner.execute("SELECT step, history_from FROM pms.fns_sync_steps s JOIN pms.hotels h "
+                              "ON h.id = s.hotel_id WHERE h.alojamiento_id = %s", (ALOJ,)).fetchall()
+        assert {d for _, d in steps} == {start} and len(steps) == 8
+        # Loading it again changes nothing; ranges that reach today are the daily import's.
+        s.history(owner, start, end, today=TODAY)
+        assert counts(owner) == n
+        with pytest.raises(ValueError):
+            s.history(owner, TODAY - timedelta(days=5), TODAY, today=TODAY)
+    finally:
+        owner.execute("DELETE FROM pms.fns_exchange_rates WHERE rate_date BETWEEN %s AND %s", (start, end))
