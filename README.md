@@ -548,6 +548,9 @@ deploy key and shows where to add it. Run it again to update to the latest `main
 and the data. Create the tunnel and its public hostname (`http://web:5050`) as in "Named tunnel"
 above.
 
+To clone a running installation (all data, accounts, conversations and settings) to a server in
+one go, give Claude Code on that computer the prompt in [docs/clone-to-server-prompt.md](docs/clone-to-server-prompt.md).
+
 To copy the FNSrooms data already imported elsewhere (e.g. a year of history on your computer)
 instead of downloading it from the FNS API again, export it there and import it on the server:
 
