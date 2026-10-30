@@ -13,10 +13,15 @@ WITH k AS (
 ), t AS (
     SELECT hotel_id, coalesce(min(stay_date) FILTER (WHERE NOT is_actual), max(stay_date) + 1) AS today
     FROM k GROUP BY hotel_id
+), cc AS (
+    -- Hotels imported from FNSrooms have no total in v_daily_kpis: their gross revenue is the sum
+    -- of every cost centre's production that day.
+    SELECT hotel_id, prod_date, sum(amount) AS total FROM pms.fns_production_cc GROUP BY 1, 2
 )
 SELECT k.hotel_code, t.today, k.stay_date, k.rooms_available, k.rooms_sold, k.room_revenue,
-       k.total_revenue
+       greatest(cc.total, k.total_revenue, k.room_revenue) AS total_revenue  -- never below the rooms
 FROM k JOIN t USING (hotel_id)
+LEFT JOIN cc ON cc.hotel_id = k.hotel_id AND cc.prod_date = k.stay_date
 WHERE k.stay_date BETWEEN t.today - 740 AND t.today + 29
 ORDER BY 1, 3"""
 
@@ -192,7 +197,7 @@ def build(daily_rows: list[list[Any]], moves: dict[str, tuple[int, int]],
     """Per hotel code, from DAILY's rows and MOVES' counts."""
     hotels: dict[str, tuple[date, dict[date, Day]]] = {}
     for code, today, stay_date, avail, sold, revenue, gross in daily_rows:
-        # Hotels imported from FNSrooms have no total revenue (NULL): gross is at least the rooms.
+        # DAILY already makes gross at least the room revenue; this covers rows from elsewhere.
         hotels.setdefault(code, (_day(today), {}))[1][_day(stay_date)] = (
             _num(avail), _num(sold), _num(revenue), _num(revenue if gross is None else gross))
     return {code: summarize(code, today, days, moves.get(code), period) for code, (today, days) in hotels.items()}
