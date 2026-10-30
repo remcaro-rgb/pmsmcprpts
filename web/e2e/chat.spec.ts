@@ -117,8 +117,9 @@ test("the home screen shows the key figures, recommendations and questions", asy
   await open(page);
   // Key figures for the picked hotel; picking another one is remembered.
   const kpis = page.getByTestId("kpis");
-  await expect(kpis.getByRole("listitem")).toHaveCount(6);
+  await expect(kpis.getByRole("listitem")).toHaveCount(7);
   await expect(kpis).toContainText("Occupancy today");
+  await expect(kpis).toContainText("Gross Revenue");
   await expect(kpis).toContainText(/€\d/);
   await expect(page.getByTestId("data-freshness")).toContainText("Sample data");
   await page.getByLabel("Hotel", { exact: true }).selectOption("OPO");
@@ -163,6 +164,7 @@ test("the period picker changes the key figures and is remembered", async ({ pag
   await picker.selectOption("ytd");
   await expect(kpis).toContainText("ADR · this year");
   await expect(kpis).toContainText("Room revenue · this year");
+  await expect(kpis).toContainText("Gross Revenue · this year");
   await page.reload();
   await expect(page.getByTestId("kpis")).toContainText("ADR · this year");
   await page.getByLabel("Period", { exact: true }).filter({ visible: true }).selectOption("mtd");
@@ -366,9 +368,9 @@ test("on phones the key figures fit on screen without trend lines", async ({ pag
   await open(page);
   const kpis = page.getByTestId("kpis");
   const box = await kpis.boundingBox();
-  expect(box!.y + box!.height).toBeLessThan(844); // all six, no swiping
+  expect(box!.y + box!.height).toBeLessThan(844); // all seven, no swiping
   expect(box!.width).toBeLessThanOrEqual(390);
-  await expect(kpis.locator("svg")).toHaveCount(5); // the trend lines are there (arrivals has none)...
+  await expect(kpis.locator("svg")).toHaveCount(6); // the trend lines are there (arrivals has none)...
   for (const line of await kpis.locator("svg").all()) await expect(line).toBeHidden(); // ...but hidden
   const questions = page.getByRole("region", { name: "What would you like to know?" });
   await expect(questions.locator("button:visible").filter({ hasNotText: /^(All|Occupancy|Rates|Channels|Bookings|Forecast|Charts & documents)$/ })).toHaveCount(4);

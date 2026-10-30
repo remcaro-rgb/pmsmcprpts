@@ -19,7 +19,8 @@ HOTEL = {
     "hotel_code": "FRA", "name": "Fragata <Cartagena>", "currency": "COP", "today": "2026-10-24",
     "occupancy_today": 0.784, "occupancy_today_change_pp": -0.061, "arrivals_today": 14, "departures_today": 9,
     "adr_period": 412300, "adr_period_change": 0.082, "revpar_period": 318900, "revpar_period_change": 0.125,
-    "revenue_period": 186_400_000, "revenue_period_change": -0.12, "occupancy_next_30": 0.612,
+    "revenue_period": 186_400_000, "revenue_period_change": -0.12, "gross_revenue_period": 248_900_000,
+    "gross_revenue_period_change": 0.167, "occupancy_next_30": 0.612,
     "revenue_next_30": 527_000_000, "series": {},
     "alerts": [{"key": "occupancy_today", "value": -0.061}, {"key": "revenue", "value": -0.12}],
 }
@@ -52,6 +53,9 @@ def test_render_in_spanish_escapes_and_has_every_part():
     assert "COP 412,300" in body and "+8.2% vs 2025" in body and "COP 527 M reservados" in body
     assert "Alerta:" in body and "Raise the holiday rate" in body and 'href="https://hotel.example"' in body
     assert "07:00" in text
+    assert "Ingresos habitaciones del mes: COP 186.4 M" in text and "Gross Revenue del mes: COP 248.9 M (+16.7% vs 2025)" in text
+    assert "Ocupación 30 días: 61.2%" in text and "Reservado 30 días" not in text
+    assert body.count("<tr>") == 3 + 3 and 'colspan="3"' in body  # 7 tiles: 3 + 3 + 1 across the full width
 
 
 def test_next_run():

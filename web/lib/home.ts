@@ -19,6 +19,8 @@ export type HotelOverview = {
   revpar_period_change: number | null;
   revenue_period: number;
   revenue_period_change: number | null;
+  gross_revenue_period: number;
+  gross_revenue_period_change: number | null;
   occupancy_next_30: number | null;
   revenue_next_30: number;
   series: Record<string, (number | null)[]>;

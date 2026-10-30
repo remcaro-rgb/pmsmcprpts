@@ -15,6 +15,7 @@ type Tile = {
   tone: "up" | "down" | "flat";
   series?: (number | null)[];
   ask: string;
+  wide?: boolean; // two columns on tablets and up, last on phones (so the rest pair up)
 };
 
 function KpiGrid({ hotel, onAsk }: { hotel: HotelOverview; onAsk: (q: string) => void }) {
@@ -47,15 +48,19 @@ function KpiGrid({ hotel, onAsk }: { hotel: HotelOverview; onAsk: (q: string) =>
       tone: trend(hotel.revenue_period_change), series: hotel.series.revenue_period, ask: t.kpiAsk.revenue(h, p),
     },
     {
+      key: "gross", label: t.kpiGrossRevenue(p), value: m(hotel.gross_revenue_period), sub: vs(change(hotel.gross_revenue_period_change, locale)),
+      tone: trend(hotel.gross_revenue_period_change), series: hotel.series.gross_revenue_period, ask: t.kpiAsk.gross(h, p), wide: true,
+    },
+    {
       key: "next30", label: t.kpiNext30, value: pct(hotel.occupancy_next_30, locale), sub: t.kpiOnBooks(money(hotel.revenue_next_30, hotel.currency, locale, 100_000)),
       tone: "flat", series: hotel.series.occupancy_next_30, ask: t.kpiAsk.next30(h),
     },
   ];
   const badge = { up: "bg-green-50 text-green-700 dark:bg-green-950 dark:text-green-400", down: "bg-red-50 text-red-700 dark:bg-red-950 dark:text-red-400", flat: "bg-stone-100 text-stone-600 dark:bg-stone-800 dark:text-stone-300" };
   return (
-    <ul className="grid grid-cols-2 gap-2 sm:grid-cols-3 sm:gap-2.5 xl:grid-cols-6" aria-label={t.kpis} data-testid="kpis">
+    <ul className="grid grid-cols-2 gap-2 sm:grid-cols-4 sm:gap-2.5" aria-label={t.kpis} data-testid="kpis">
       {tiles.map((k) => (
-        <li key={k.key}>
+        <li key={k.key} className={k.wide ? "order-last col-span-2 sm:order-none" : undefined}>
           <button
             onClick={() => onAsk(k.ask)}
             title={k.ask}
@@ -78,9 +83,9 @@ function KpiGrid({ hotel, onAsk }: { hotel: HotelOverview; onAsk: (q: string) =>
 
 function KpiSkeleton() {
   return (
-    <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-6" aria-busy="true">
-      {[0, 1, 2, 3, 4, 5].map((i) => (
-        <div key={i} className="h-[88px] animate-pulse rounded-2xl bg-stone-200/70 sm:h-[112px] dark:bg-stone-800/70" />
+    <div className="grid grid-cols-2 gap-2 sm:grid-cols-4" aria-busy="true">
+      {[0, 1, 2, 3, 4, 5, 6].map((i) => (
+        <div key={i} className={`${i === 5 ? "order-last col-span-2 sm:order-none " : ""}h-[88px] animate-pulse rounded-2xl bg-stone-200/70 sm:h-[112px] dark:bg-stone-800/70`} />
       ))}
     </div>
   );

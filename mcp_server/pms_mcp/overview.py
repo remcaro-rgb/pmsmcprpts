@@ -8,13 +8,14 @@ from typing import Any
 # Daily rows around each hotel's "today" (its first stay date that isn't an actual yet).
 DAILY = """
 WITH k AS (
-    SELECT hotel_id, hotel_code, stay_date, is_actual, rooms_available, rooms_sold, room_revenue
+    SELECT hotel_id, hotel_code, stay_date, is_actual, rooms_available, rooms_sold, room_revenue, total_revenue
     FROM pms.v_daily_kpis {where}
 ), t AS (
     SELECT hotel_id, coalesce(min(stay_date) FILTER (WHERE NOT is_actual), max(stay_date) + 1) AS today
     FROM k GROUP BY hotel_id
 )
-SELECT k.hotel_code, t.today, k.stay_date, k.rooms_available, k.rooms_sold, k.room_revenue
+SELECT k.hotel_code, t.today, k.stay_date, k.rooms_available, k.rooms_sold, k.room_revenue,
+       k.total_revenue
 FROM k JOIN t USING (hotel_id)
 WHERE k.stay_date BETWEEN t.today - 740 AND t.today + 29
 ORDER BY 1, 3"""
@@ -64,14 +65,18 @@ def _day(v: Any) -> date:
     return v if isinstance(v, date) else date.fromisoformat(str(v)[:10])
 
 
-def _sums(days: dict[date, tuple[float, float, float]], start: date, end: date) -> tuple[float, float, float]:
-    avail = sold = revenue = 0.0
+Day = tuple[float, float, float, float]  # rooms available, rooms sold, room revenue, gross (total) revenue
+NO_DAY: Day = (0.0, 0.0, 0.0, 0.0)
+
+
+def _sums(days: dict[date, Day], start: date, end: date) -> Day:
+    avail = sold = revenue = gross = 0.0
     d = start
     while d <= end:
-        a, s, r = days.get(d, (0.0, 0.0, 0.0))
-        avail, sold, revenue = avail + a, sold + s, revenue + r
+        a, s, r, g = days.get(d, NO_DAY)
+        avail, sold, revenue, gross = avail + a, sold + s, revenue + r, gross + g
         d += timedelta(days=1)
-    return avail, sold, revenue
+    return avail, sold, revenue, gross
 
 
 def _ratio(n: float, d: float) -> float | None:
@@ -127,12 +132,12 @@ def alerts(figures: dict[str, Any]) -> list[dict[str, Any]]:
     return out
 
 
-def summarize(code: str, today: date, days: dict[date, tuple[float, float, float]],
+def summarize(code: str, today: date, days: dict[date, Day],
               moves: tuple[int, int] | None, period: str = "mtd") -> dict[str, Any]:
-    """Key figures for one hotel from its daily (rooms available, rooms sold, room revenue)."""
+    """Key figures for one hotel from its daily (rooms available, rooms sold, room revenue, gross revenue)."""
     month_start, month_end, ly_start, ly_end = period_range(today, period)
-    a, s, r = _sums(days, month_start, month_end)
-    la, ls, lr = _sums(days, ly_start, ly_end)
+    a, s, r, g = _sums(days, month_start, month_end)
+    la, ls, lr, lg = _sums(days, ly_start, ly_end)
     adr, adr_ly = _ratio(r, s), _ratio(lr, ls)
     revpar, revpar_ly = _ratio(r, a), _ratio(lr, la)
 
@@ -140,21 +145,22 @@ def summarize(code: str, today: date, days: dict[date, tuple[float, float, float
     occ_today = _ratio(*_sums(days, today, today)[1::-1])
     occ_ly = _ratio(*_sums(days, today - timedelta(days=364), today - timedelta(days=364))[1::-1])
 
-    fa, fs, fr = _sums(days, today, today + timedelta(days=29))
+    fa, fs, fr, _ = _sums(days, today, today + timedelta(days=29))
 
     def daily(start: date, n: int, pick) -> list[float | None]:
         out = []
         for i in range(n):
-            da, ds, dr = days.get(start + timedelta(days=i), (0.0, 0.0, 0.0))
+            da, ds, dr, _ = days.get(start + timedelta(days=i), NO_DAY)
             out.append(pick(da, ds, dr))
         return out
 
     series_start = today - timedelta(days=SERIES_DAYS)
-    running, cumulative = 0.0, []
-    for _, _, dr in (days.get(month_start + timedelta(days=i), (0.0, 0.0, 0.0))
-                     for i in range((month_end - month_start).days + 1)):
-        running += dr
+    running, running_gross, cumulative, cumulative_gross = 0.0, 0.0, [], []
+    for _, _, dr, dg in (days.get(month_start + timedelta(days=i), NO_DAY)
+                         for i in range((month_end - month_start).days + 1)):
+        running, running_gross = running + dr, running_gross + dg
         cumulative.append(round(running, 2))
+        cumulative_gross.append(round(running_gross, 2))
     figures = {
         "hotel_code": code,
         "today": today.isoformat(),
@@ -166,12 +172,14 @@ def summarize(code: str, today: date, days: dict[date, tuple[float, float, float
         "adr_period": adr, "adr_period_change": _change(adr, adr_ly),
         "revpar_period": revpar, "revpar_period_change": _change(revpar, revpar_ly),
         "revenue_period": round(r, 2), "revenue_period_change": _change(r, lr),
+        "gross_revenue_period": round(g, 2), "gross_revenue_period_change": _change(g, lg),
         "occupancy_next_30": _ratio(fs, fa), "revenue_next_30": round(fr, 2),
         "series": {
             "occupancy": daily(series_start, SERIES_DAYS, lambda a, s, r: _ratio(s, a)),
             "adr": daily(series_start, SERIES_DAYS, lambda a, s, r: _ratio(r, s)),
             "revpar": daily(series_start, SERIES_DAYS, lambda a, s, r: _ratio(r, a)),
             "revenue_period": cumulative,
+            "gross_revenue_period": cumulative_gross,
             "occupancy_next_30": daily(today, 30, lambda a, s, r: _ratio(s, a)),
         },
     }
@@ -182,7 +190,8 @@ def summarize(code: str, today: date, days: dict[date, tuple[float, float, float
 def build(daily_rows: list[list[Any]], moves: dict[str, tuple[int, int]],
           period: str = "mtd") -> dict[str, dict[str, Any]]:
     """Per hotel code, from DAILY's rows and MOVES' counts."""
-    hotels: dict[str, tuple[date, dict[date, tuple[float, float, float]]]] = {}
-    for code, today, stay_date, avail, sold, revenue in daily_rows:
-        hotels.setdefault(code, (_day(today), {}))[1][_day(stay_date)] = (_num(avail), _num(sold), _num(revenue))
+    hotels: dict[str, tuple[date, dict[date, Day]]] = {}
+    for code, today, stay_date, avail, sold, revenue, gross in daily_rows:
+        hotels.setdefault(code, (_day(today), {}))[1][_day(stay_date)] = (
+            _num(avail), _num(sold), _num(revenue), _num(gross))
     return {code: summarize(code, today, days, moves.get(code), period) for code, (today, days) in hotels.items()}
