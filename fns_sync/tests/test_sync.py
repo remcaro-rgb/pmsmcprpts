@@ -133,6 +133,26 @@ def test_hotel_access_and_kpis(owner):
                                   "FRT")[0][0]
 
 
+def test_home_screen_gross_revenue_sums_every_cost_centre(owner):
+    """v_daily_kpis has no total for FNS hotels; the overview's daily rows add up the cost centres."""
+    from pms_mcp.overview import DAILY, build
+    sync()[0].run(owner, today=TODAY)
+    rows = readonly(DAILY.format(where="WHERE hotel_code = 'FRT'"), "FRT")
+    production = {d: float(total) for d, total in readonly(
+        "SELECT prod_date, sum(amount) FROM fns_production_cc GROUP BY 1", "FRT")}
+    assert production
+    checked = 0
+    for _, _, day, _, _, room, gross in rows:
+        assert gross >= room  # never below the rooms
+        if day in production:
+            assert float(gross) == max(production[day], float(room))
+            checked += 1
+    assert checked and any(float(g) > float(r) for *_, r, g in rows)  # some days really add other departments
+    # Period figures: gross is the cost-centre total, beside the room revenue.
+    fig = build([list(r) for r in rows], {"FRT": (0, 0)})["FRT"]
+    assert fig["gross_revenue_period"] >= fig["revenue_period"]
+
+
 @pytest.mark.anyio
 async def test_the_agents_tools_see_fragata(owner):
     from mcp.client import Client
