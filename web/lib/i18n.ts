@@ -56,6 +56,7 @@ const en = {
   kpiAdr: (p: string) => `ADR · ${p}`,
   kpiRevpar: (p: string) => `RevPAR · ${p}`,
   kpiRevenue: (p: string) => `Room revenue · ${p}`,
+  kpiGrossRevenue: (p: string) => `Gross Revenue · ${p}`,
   period: "Period",
   periods: {
     mtd: "This month", last_month: "Last month", last_7: "Last 7 days", last_30: "Last 30 days", ytd: "This year",
@@ -86,6 +87,7 @@ const en = {
     adr: (h: string, p: string) => `Why is ${h}'s ADR (${p}) different from last year? Break it down by room type and channel.`,
     revpar: (h: string, p: string) => `Explain ${h}'s RevPAR (${p}) against last year: how much comes from occupancy and how much from rate?`,
     revenue: (h: string, p: string) => `Show ${h}'s room revenue (${p}) day by day against last year.`,
+    gross: (h: string, p: string) => `Break down ${h}'s gross revenue (${p}) into rooms, food and beverage, spa and other, against last year.`,
     next30: (h: string) => `What does ${h} have on the books for the next 30 days, day by day, and where are the gaps?`,
   },
   kpisFailed: "The key figures aren't available right now.",
@@ -341,7 +343,8 @@ const es: Messages = {
   kpiMovesSub: "hoy",
   kpiAdr: (p) => `ADR · ${p}`,
   kpiRevpar: (p) => `RevPAR · ${p}`,
-  kpiRevenue: (p) => `Ingresos · ${p}`,
+  kpiRevenue: (p) => `Ingresos habitaciones · ${p}`,
+  kpiGrossRevenue: (p) => `Gross Revenue · ${p}`,
   period: "Periodo",
   periods: {
     mtd: "Este mes", last_month: "El mes pasado", last_7: "Últimos 7 días", last_30: "Últimos 30 días", ytd: "Este año",
@@ -363,7 +366,7 @@ const es: Messages = {
     revenue: (h) => `¿Por qué los ingresos por habitaciones de ${h} están por debajo del año pasado? ¿Es la ocupación o la tarifa?`,
     next_30: (h) => `¿Dónde están los huecos de ${h} en los próximos 30 días y cómo puedo llenarlos?`,
   },
-  kpiNext30: "Reservado 30 días",
+  kpiNext30: "Ocupación 30 días",
   kpiOnBooks: (money) => `${money} reservados`,
   vsYear: (change, year) => `${change} vs ${year}`,
   kpiAsk: {
@@ -372,6 +375,7 @@ const es: Messages = {
     adr: (h, p) => `¿Por qué el ADR de ${h} (${p}) es distinto al del año pasado? Desglósalo por tipo de habitación y canal.`,
     revpar: (h, p) => `Explica el RevPAR de ${h} (${p}) frente al año pasado: ¿cuánto viene de la ocupación y cuánto de la tarifa?`,
     revenue: (h, p) => `Muestra los ingresos por habitaciones de ${h} (${p}) día por día frente al año pasado.`,
+    gross: (h, p) => `Desglosa el Gross Revenue de ${h} (${p}) en habitaciones, alimentos y bebidas, spa y otros, frente al año pasado.`,
     next30: (h) => `¿Qué tiene ${h} reservado para los próximos 30 días, día por día, y dónde están los huecos?`,
   },
   kpisFailed: "Los indicadores no están disponibles en este momento.",

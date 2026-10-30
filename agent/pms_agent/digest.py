@@ -25,7 +25,8 @@ TEXT = {
         "hello_anon": "Good morning",
         "summary": "Summary of {hotel} for {date}.",
         "kpis": [("Occupancy today", "occupancy"), ("Arrivals · Departures", "moves"), ("ADR this month", "adr"),
-                 ("RevPAR this month", "revpar"), ("Room revenue this month", "revenue"), ("Booked next 30 days", "next30")],
+                 ("RevPAR this month", "revpar"), ("Room revenue this month", "revenue"), ("Gross Revenue this month", "gross"),
+                 ("Booked next 30 days", "next30")],
         "vs": "vs {year}",
         "today": "today",
         "on_books": "{money} on the books",
@@ -48,7 +49,8 @@ TEXT = {
         "hello_anon": "Buenos días",
         "summary": "Resumen de {hotel} para el {date}.",
         "kpis": [("Ocupación hoy", "occupancy"), ("Llegadas · Salidas", "moves"), ("ADR del mes", "adr"),
-                 ("RevPAR del mes", "revpar"), ("Ingresos del mes", "revenue"), ("Reservado 30 días", "next30")],
+                 ("RevPAR del mes", "revpar"), ("Ingresos habitaciones del mes", "revenue"),
+                 ("Gross Revenue del mes", "gross"), ("Ocupación 30 días", "next30")],
         "vs": "vs {year}",
         "today": "hoy",
         "on_books": "{money} reservados",
@@ -135,6 +137,8 @@ def tiles(h: dict[str, Any], language: str) -> list[tuple[str, str, str | None, 
                    tone(h.get("revpar_period_change"))),
         "revenue": (money(h.get("revenue_period"), cur), vs(signed(h.get("revenue_period_change"), "%")),
                     tone(h.get("revenue_period_change"))),
+        "gross": (money(h.get("gross_revenue_period"), cur), vs(signed(h.get("gross_revenue_period_change"), "%")),
+                  tone(h.get("gross_revenue_period_change"))),
         "next30": (pct(h.get("occupancy_next_30")),
                    t["on_books"].format(money=money(h.get("revenue_next_30"), cur, 100_000)), "flat"),
     }
@@ -167,11 +171,18 @@ def render(h: dict[str, Any], recs: list[dict[str, Any]], language: str, name: s
         bg, fg = colors[tone]
         badge = (f'<span style="background:{bg};color:{fg};border-radius:6px;padding:1px 6px;font-size:12px;'
                  f'font-weight:600">{e(sub)}</span>') if sub else ""
-        cells.append(f'<td width="33%" style="padding:5px;vertical-align:top"><div style="border:1px solid #e7e5e4;'
+        cells.append(f'<div style="border:1px solid #e7e5e4;'
                      f'border-radius:12px;padding:10px 12px"><div style="font-size:12px;color:#78716c">{e(label)}</div>'
                      f'<div style="font-size:19px;font-weight:700;color:#1c1917;margin:2px 0 4px">{e(value)}</div>'
-                     f'{badge}</div></td>')
-    rows = "".join(f"<tr>{''.join(cells[i:i + 3])}</tr>" for i in range(0, len(cells), 3))
+                     f'{badge}</div>')
+    rows = ""
+    for i in range(0, len(cells), 3):
+        row = cells[i:i + 3]
+        # A short last row stretches its last tile across the rest of the width.
+        stretch = f' colspan="{4 - len(row)}"' if len(row) < 3 else ""
+        tds = [f'<td width="33%"{stretch if j == len(row) - 1 else ""} style="padding:5px;vertical-align:top">{c}</td>'
+               for j, c in enumerate(row)]
+        rows += f"<tr>{''.join(tds)}</tr>"
     alert_html = "".join(
         f'<div style="margin:14px 0 0;padding:10px 12px;background:#fef2f2;border-radius:10px;color:#7f1d1d;'
         f'font-size:14px"><b>{e(t["alert"])}:</b> {e(a)}</div>' for a in warn)

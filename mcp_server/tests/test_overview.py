@@ -1,6 +1,6 @@
 from datetime import date
 
-from pms_mcp.overview import alerts, period_range
+from pms_mcp.overview import alerts, build, period_range
 
 
 def test_period_ranges():
@@ -19,3 +19,14 @@ def test_alerts():
     assert [a["key"] for a in alerts(base)] == ["occupancy_today", "revenue", "next_30"]
     assert alerts({**base, "occupancy_today_change_pp": None, "revenue_period_change": 0.0,
                    "occupancy_next_30": 0.8}) == []
+
+
+def test_gross_revenue_sums_every_department_beside_room_revenue():
+    today = date(2026, 10, 24)
+    # (code, today, stay date, rooms available, rooms sold, room revenue, total revenue)
+    rows = [["FRA", today, date(2026, 10, 1), 10, 5, 500, 700], ["FRA", today, date(2026, 10, 2), 10, 5, 400, 600],
+            ["FRA", today, date(2025, 10, 1), 10, 5, 300, 350], ["FRA", today, date(2025, 10, 2), 10, 5, 300, 350]]
+    h = build(rows, {"FRA": (1, 2)})["FRA"]
+    assert h["revenue_period"] == 900 and h["gross_revenue_period"] == 1300
+    assert h["revenue_period_change"] == 0.5 and h["gross_revenue_period_change"] == round(1300 / 700 - 1, 6)
+    assert h["series"]["gross_revenue_period"][:2] == [700, 1300]  # running total through the month
