@@ -192,6 +192,7 @@ def build(daily_rows: list[list[Any]], moves: dict[str, tuple[int, int]],
     """Per hotel code, from DAILY's rows and MOVES' counts."""
     hotels: dict[str, tuple[date, dict[date, Day]]] = {}
     for code, today, stay_date, avail, sold, revenue, gross in daily_rows:
+        # Hotels imported from FNSrooms have no total revenue (NULL): gross is at least the rooms.
         hotels.setdefault(code, (_day(today), {}))[1][_day(stay_date)] = (
-            _num(avail), _num(sold), _num(revenue), _num(gross))
+            _num(avail), _num(sold), _num(revenue), _num(revenue if gross is None else gross))
     return {code: summarize(code, today, days, moves.get(code), period) for code, (today, days) in hotels.items()}
