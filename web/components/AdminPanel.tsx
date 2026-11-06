@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import type { Account, Hotel } from "@/lib/agent";
+import FnsPanel from "./FnsPanel";
 import { useI18n } from "./I18n";
 
 const MIN_PASSWORD = 10; // as the agent requires
@@ -30,7 +31,7 @@ const primary = "rounded-lg bg-accent px-4 py-1.5 text-sm font-medium text-white
 
 export default function AdminPanel({ me }: { me: Account }) {
   const { t } = useI18n();
-  const [tab, setTab] = useState<"users" | "hotels">("users");
+  const [tab, setTab] = useState<"users" | "hotels" | "fns">("users");
   const [users, setUsers] = useState<Account[]>([]);
   const [hotels, setHotels] = useState<Hotel[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -85,7 +86,7 @@ export default function AdminPanel({ me }: { me: Account }) {
       </header>
 
       <nav role="tablist" className="mt-6 flex gap-1 border-b border-stone-200 dark:border-stone-800">
-        {(["users", "hotels"] as const).map((key) => (
+        {(["users", "hotels", "fns"] as const).map((key) => (
           <button
             key={key}
             role="tab"
@@ -96,7 +97,7 @@ export default function AdminPanel({ me }: { me: Account }) {
             }}
             className={`-mb-px border-b-2 px-3 py-2 text-sm ${tab === key ? "border-accent font-medium" : "border-transparent text-stone-500 hover:text-stone-800 dark:hover:text-stone-200"}`}
           >
-            {key === "users" ? t.usersTab : t.hotelsTab}
+            {key === "users" ? t.usersTab : key === "hotels" ? t.hotelsTab : t.fnsTab}
           </button>
         ))}
       </nav>
@@ -112,7 +113,9 @@ export default function AdminPanel({ me }: { me: Account }) {
         </p>
       )}
 
-      {tab === "users" ? (
+      {tab === "fns" ? (
+        <FnsPanel api={api} onNotice={setNotice} />
+      ) : tab === "users" ? (
         editing ? (
           <UserForm
             key={editing === "new" ? "new" : editing.id}

@@ -6,7 +6,7 @@ import { relay } from "@/lib/agent";
 export const dynamic = "force-dynamic";
 
 type Ctx = { params: Promise<{ path: string[] }> };
-const PATH = /^(users|hotels)(\/[1-9][0-9]{0,9})?$/;
+const PATH = /^((users|hotels)(\/[1-9][0-9]{0,9})?|fns\/hotels(\/[1-9][0-9]{0,9}(\/(run|runs))?)?|fns\/check)$/;
 const MAX_BODY = 16_000;
 
 async function forward(req: Request, ctx: Ctx, method: string): Promise<Response> {

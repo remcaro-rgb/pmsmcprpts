@@ -60,6 +60,22 @@ class Sync:
         self.sleep = sleep
         self.calls: list[dict] = []
         self.unreachable = 0
+        # Live progress for the Admin page: report(progress) after each call, when set.
+        self.report: Callable[[dict], None] | None = None
+        self.step, self.steps_done, self.steps_total, self.planned = "", 0, 0, 0
+
+    def _progress(self, method: str = "", window: str = "") -> None:
+        if self.report is None:
+            return
+        try:
+            self.report({"step": self.step, "steps_done": self.steps_done, "steps_total": self.steps_total,
+                         "method": method, "window": window, "calls": len(self.calls),
+                         "planned": max(self.planned, len(self.calls)),
+                         "rows": sum(c.get("rows", 0) for c in self.calls),
+                         "failed": sum(1 for c in self.calls if c.get("ok") is False and not c.get("optional")),
+                         "at": datetime.now().astimezone()})
+        except psycopg.Error as e:  # progress is only shown; never stop an import for it
+            log.debug("progress not saved: %s", e)
 
     # --- helpers ----------------------------------------------------------------------------------
 
@@ -74,6 +90,7 @@ class Sync:
         started = _time.monotonic()
         entry = {"method": name, "window": window}
         self.calls.append(entry)
+        self._progress(name, window)
         try:
             result = self.client.call(name, body)
             entry["ok"] = True
@@ -274,6 +291,19 @@ class Sync:
                        ("hotel_id", "stay_date", "room_type_id", "rate_id", "occupancy"), delete=window)
             self._stored(n)
 
+    def expected(self, step: str, start: date, end: date, today: date) -> int:
+        """API calls a step makes for start..end if the API accepts each range (for the progress bar;
+        a range it rejects is read again in parts, so a run can make more)."""
+        def parts(a: date, b: date, days: int = CHUNK_DAYS) -> int:
+            return len(list(windows(a, b, days))) if a <= b else 0
+        targets = len([t for t in self.cfg.exchange_to if t != (self.cfg.moneda_id or 1)])
+        daily_from = max(start, today - timedelta(days=self.cfg.refresh_days))
+        return {"master": len(MASTER_KINDS), "accounting": 3,
+                "reservations": len(RESERVATION_STATES) * parts(start, end),
+                "availability": parts(start, end), "blocks": parts(start, end),
+                "exchange": targets * parts(start, end),
+                "production": (1 if start < daily_from else 0) + parts(daily_from, end, 1)}.get(step, 1)
+
     # --- an earlier range ---------------------------------------------------------------------------
 
     def plan(self, start: date, end: date, only: set[str] | None = None) -> dict[str, int]:
@@ -303,6 +333,7 @@ class Sync:
         wanted = [s for s in HISTORY_STEPS if not only or s in only]
         run_id = store.start_run(conn, hotel_id, True)
         self.calls, self.unreachable = [], 0
+        self.report = lambda progress: store.set_progress(conn, run_id, progress)  # noqa: E731
         log.info("FNS import for %s (alojamiento %s): history %s..%s for %s", cfg.hotel_code, cfg.alojamiento_id,
                  start, end, ", ".join(wanted))
         ctx: dict[str, Any] = {}
@@ -320,11 +351,15 @@ class Sync:
         if "accounting" in order and not cfg.moneda_id and not store.has_accounting(conn, hotel_id):
             order.remove("accounting")  # the hotel's currency comes from the accounting entries
             order.insert(0, "accounting")
+        self.steps_total, self.steps_done = len(order), 0
+        self.planned = sum(self.expected(n, start, end, today) for n in order)
         status, loaded = "ok", []
         try:
             for name in order:
                 if name != "accounting" and "moneda_id" not in ctx:  # amounts need the currency
                     ctx["moneda_id"], _ = store.hotel_currency(conn, hotel_id, cfg)
+                self.step = name
+                self._progress()
                 first = len(self.calls)
                 try:
                     steps[name]()
@@ -335,11 +370,14 @@ class Sync:
                     store.extend_history(conn, hotel_id, name, start)
                     loaded.append(name)
                     log.info("%s: %s..%s loaded", name, start, end)
+                self.steps_done += 1
         except (AuthError, StopRun) as e:
             log.error("%s", e)
             status = "failed"
         if status == "ok" and len(loaded) < len(order):
             status = "partial"
+        self.step = ""
+        self._progress()
         store.finish_run(conn, run_id, status, self.calls)
         rows = sum(c.get("rows", 0) for c in self.calls)
         log.info("FNS history import %s: %s calls, %s rows stored", status, len(self.calls), rows)
@@ -364,6 +402,7 @@ class Sync:
         backfilling = [s for s in wanted if s not in loaded]
         run_id = store.start_run(conn, hotel_id, bool(backfilling))
         self.calls, self.unreachable = [], 0
+        self.report = lambda progress: store.set_progress(conn, run_id, progress)  # noqa: E731
         log.info("FNS import for %s (alojamiento %s): %s", cfg.hotel_code, cfg.alojamiento_id,
                  f"loading history from {history_from} for {', '.join(backfilling)}" if backfilling
                  else f"daily refresh from {refresh_from}")
@@ -372,26 +411,39 @@ class Sync:
             return refresh_from if step in loaded else history_from
 
         ahead = lambda days: today + timedelta(days=days)  # noqa: E731
+        ranges = {
+            "revenue": (since("revenue"), ahead(cfg.forward_days)),
+            "production_cc": (since("production_cc"), today),
+            "sales_reservations": (since("sales_reservations"), ahead(SALES_AHEAD_DAYS)),
+            "reservations": (since("reservations"), today),
+            "availability": (today, ahead(min(cfg.forward_days, AVAILABILITY_AHEAD_DAYS))),
+            "blocks": (refresh_from, ahead(BLOCKS_AHEAD_DAYS)),
+            "pos": (since("pos"), today),
+            "accounting": (since("accounting"), today),
+            "exchange": (since("exchange"), today),
+            "production": (since("production"), today),
+        }
         ctx: dict[str, Any] = {}
         steps = {
             "master": lambda: self.master(conn, hotel_id),
-            "revenue": lambda: self.revenue(conn, hotel_id, ctx["moneda_id"], since("revenue"), ahead(cfg.forward_days)),
-            "production_cc": lambda: self.production_cc(conn, hotel_id, ctx["moneda_id"], since("production_cc"), today),
-            "sales_reservations": lambda: self.sales_reservations(conn, hotel_id, since("sales_reservations"),
-                                                                  ahead(SALES_AHEAD_DAYS)),
-            "reservations": lambda: self.reservations(conn, hotel_id, since("reservations"), today),
-            "availability": lambda: self.availability(conn, hotel_id, today,
-                                                      ahead(min(cfg.forward_days, AVAILABILITY_AHEAD_DAYS))),
-            "blocks": lambda: self.blocks(conn, hotel_id, refresh_from, ahead(BLOCKS_AHEAD_DAYS)),
-            "pos": lambda: self.pos(conn, hotel_id, since("pos"), today),
-            "accounting": lambda: self.accounting(conn, hotel_id, since("accounting"), today),
-            "exchange": lambda: self.exchange(conn, ctx["moneda_id"], since("exchange"), today),
-            "production": lambda: self.production(conn, hotel_id, ctx["moneda_id"], since("production"), today, today),
+            "revenue": lambda: self.revenue(conn, hotel_id, ctx["moneda_id"], *ranges["revenue"]),
+            "production_cc": lambda: self.production_cc(conn, hotel_id, ctx["moneda_id"], *ranges["production_cc"]),
+            "sales_reservations": lambda: self.sales_reservations(conn, hotel_id, *ranges["sales_reservations"]),
+            "reservations": lambda: self.reservations(conn, hotel_id, *ranges["reservations"]),
+            "availability": lambda: self.availability(conn, hotel_id, *ranges["availability"]),
+            "blocks": lambda: self.blocks(conn, hotel_id, *ranges["blocks"]),
+            "pos": lambda: self.pos(conn, hotel_id, *ranges["pos"]),
+            "accounting": lambda: self.accounting(conn, hotel_id, *ranges["accounting"]),
+            "exchange": lambda: self.exchange(conn, ctx["moneda_id"], *ranges["exchange"]),
+            "production": lambda: self.production(conn, hotel_id, ctx["moneda_id"], *ranges["production"], today),
         }
         order = list(STEPS)
         if not cfg.moneda_id and not store.has_accounting(conn, hotel_id):
             order.remove("accounting")  # the hotel's currency comes from the accounting entries
             order.insert(1, "accounting")
+        self.steps_total, self.steps_done = len([n for n in order if not only or n in only]), 0
+        self.planned = sum(self.expected(n, *ranges.get(n, (today, today)), today) for n in order
+                           if not only or n in only)
         status = "ok"
         try:
             for name in order:
@@ -401,6 +453,8 @@ class Sync:
                     log.info("amounts in %s (FNS currency id %s)", currency, ctx["moneda_id"])
                 if only and name not in only:
                     continue
+                self.step = name
+                self._progress()
                 first = len(self.calls)
                 try:
                     steps[name]()
@@ -413,12 +467,15 @@ class Sync:
                     store.mark_loaded(conn, hotel_id, name, history_from)
                     loaded.add(name)
                     log.info("%s: history loaded", name)
+                self.steps_done += 1
             store.set_total_rooms(conn, hotel_id)
         except (AuthError, StopRun) as e:
             log.error("%s", e)
             status = "failed"
         if status == "ok" and any(not c.get("ok") and not c.get("optional") for c in self.calls):
             status = "partial"
+        self.step = ""
+        self._progress()
         store.finish_run(conn, run_id, status, self.calls)
         rows = sum(c.get("rows", 0) for c in self.calls)
         pending = [s for s in wanted if s not in loaded]

@@ -8,10 +8,13 @@
     python -m fns_sync history --from 2025-01-01          # load it (up to the day before the history
                                                           # already loaded; --to to choose; --pause 30)
     python -m fns_sync status           # the last imports
-    python -m fns_sync daemon           # import every day at FNS_SYNC_TIME (what the fns-sync service runs)
+    python -m fns_sync daemon           # import every hotel daily (what the fns-sync service runs)
 
-Settings come from the environment: FNS_USER, FNS_PASSWORD, FNS_CENTRAL_ID, FNS_ALOJAMIENTO_ID and
-FNS_DATABASE_URL (the database owner); see .env.example for the optional ones.
+The hotels are added in the website's Admin page (FNS import), which shows each import's progress;
+the hotel in .env (FNS_ALOJAMIENTO_ID...) is added on the service's first start. Commands take
+--hotel CODE when there is more than one. Settings come from the environment: FNS_DATABASE_URL (the
+database owner), FNS_USER and FNS_PASSWORD (the FNS account of the hotels without their own),
+FNS_SECRET_KEY (decrypts the accounts saved in the Admin page); see .env.example for the others.
 """
 
 import argparse
@@ -33,6 +36,7 @@ from .sync import HISTORY_STEPS, STEPS, Sync
 
 log = logging.getLogger("fns_sync")
 DB_RETRY_SECONDS = 30
+POLL_SECONDS = 15  # how often the service looks for hotels to import (new ones, "Import now")
 FIELD_NAME = re.compile(r"[A-Za-z_@ ]{1,30}")
 
 
@@ -164,78 +168,167 @@ def status(cfg: Config) -> None:
                   f"{len(calls)} calls, {rows} rows" + (f", {len(failed)} failed" if failed else ""))
             for c in failed[:5]:
                 print(f"    {c.get('method')} {c.get('window', '')}: {c.get('error')}")
-        for (hotel_id, code) in conn.execute("SELECT id, code FROM pms.hotels WHERE alojamiento_id = %s",
-                                             (cfg.alojamiento_id,)).fetchall():
+        for (hotel_id, code) in conn.execute("SELECT id, code FROM pms.hotels WHERE id IN "
+                                             "(SELECT hotel_id FROM pms.fns_sync_runs) ORDER BY id").fetchall():
             pending = [s for s in HISTORY_STEPS if s not in store.loaded_steps(conn, hotel_id)]
             print(f"{code}: history loaded for all steps" if not pending
                   else f"{code}: history still to load for {', '.join(pending)} (the next run continues)")
 
 
 def next_run(cfg: Config, now: datetime) -> datetime:
-    at = datetime.combine(now.date(), cfg.run_at, tzinfo=cfg.tz)
+    at = datetime.combine(now.astimezone(cfg.tz).date(), cfg.run_at, tzinfo=cfg.tz)
     return at if at > now else at + timedelta(days=1)
 
 
-def _state(cfg: Config) -> tuple[set[str], datetime | None]:
-    """The history steps still to load, and when the last import that stored data started."""
-    with _connect(cfg) as conn:
-        store.ensure_schema(conn)
-        row = conn.execute(
-            "SELECT h.id, (SELECT max(r.started_at) FROM pms.fns_sync_runs r WHERE r.hotel_id = h.id "
-            "AND r.status IN ('ok', 'partial')) FROM pms.hotels h WHERE h.alojamiento_id = %s",
-            (cfg.alojamiento_id,)).fetchone()
-        pending = set(HISTORY_STEPS) - (store.loaded_steps(conn, row[0]) if row else set())
-    return pending, row[1] if row else None
+def last_slot(cfg: Config, now: datetime) -> datetime:
+    """The latest daily import time (FNS_SYNC_TIME, hotel time) at or before now."""
+    at = datetime.combine(now.astimezone(cfg.tz).date(), cfg.run_at, tzinfo=cfg.tz)
+    return at if at <= now else at - timedelta(days=1)
 
 
-def daemon(cfg: Config) -> None:
-    """Import now unless today's import already ran (and loaded all the history), then every day at
-    FNS_SYNC_TIME. A run the API cut short is retried after FNS_RETRY_MINUTES."""
+def due(cfg: Config, row: dict, times: dict, pending: bool, now: datetime) -> str | None:
+    """Why the hotel's import should run now, or None. times: store.run_times."""
+    if times["status"] == "running":
+        return None
+    retry = timedelta(minutes=cfg.retry_minutes)
+    waited = times["finished"] is None or times["finished"] + retry <= now
+    if row.get("run_requested_at") and (times["started"] is None or row["run_requested_at"] > times["started"]):
+        return "requested in the Admin page"
+    if times["started"] is None:
+        return "first import"
+    if pending:
+        return "history still to load" if waited else None
+    slot = last_slot(cfg, now)
+    if times["last_ok"] is None or times["last_ok"] < slot:
+        return "daily import" if times["started"] < slot or waited else None
+    return None
+
+
+def import_hotel(base: Config, conn: psycopg.Connection, row: dict, make_sync=Sync) -> dict | None:
+    """One import of a pms.fns_hotels hotel; a hotel whose settings can't be used gets a failed run
+    with the reason (shown in the Admin page) instead."""
+    try:
+        cfg = base.for_hotel(row)
+    except ValueError as e:
+        log.error("%s", e)
+        cfg = base.for_hotel(row, account=False)
+        hotel_id = store.ensure_hotel(conn, cfg)
+        store.link_hotel(conn, row["id"], hotel_id)
+        store.finish_run(conn, store.start_run(conn, hotel_id, False), "failed",
+                         [{"method": "settings", "ok": False, "error": str(e)}])
+        return None
+    hotel_id = store.ensure_hotel(conn, cfg)
+    store.link_hotel(conn, row["id"], hotel_id)
+    sync = make_sync(cfg)
+    try:
+        return sync.run(conn)
+    finally:
+        sync.client.close()
+
+
+def due_hotels(base: Config, conn: psycopg.Connection, now: datetime) -> list[tuple[dict, str]]:
+    """The hotels to import now and why: the ones asked for in the Admin page first, then in the
+    order they were added."""
+    found = []
+    for row in store.fns_hotels(conn):
+        cfg = base.for_hotel(row, account=False)
+        hotel_id = row["hotel_id"]
+        pending = bool(set(HISTORY_STEPS) - (store.loaded_steps(conn, hotel_id) if hotel_id else set()))
+        reason = due(cfg, row, store.run_times(conn, hotel_id) if hotel_id else
+                     {"started": None, "finished": None, "status": None, "last_ok": None}, pending, now)
+        if reason:
+            found.append((row, reason))
+    found.sort(key=lambda f: f[1] != "requested in the Admin page")
+    return found
+
+
+def next_due(base: Config, conn: psycopg.Connection, now: datetime) -> tuple[dict, str] | None:
+    found = due_hotels(base, conn, now)
+    return found[0] if found else None
+
+
+def daemon(base: Config, poll: float = POLL_SECONDS) -> None:
+    """Imports every hotel in pms.fns_hotels (the Admin page; the one in .env is added on the first
+    start), one at a time: a new hotel loads its history first, then each imports daily at its
+    FNS_SYNC_TIME (hotel time). A run the API cut short is retried after FNS_RETRY_MINUTES."""
     stop = {"now": False}
     signal.signal(signal.SIGTERM, lambda *_: stop.update(now=True))
     signal.signal(signal.SIGINT, lambda *_: stop.update(now=True))
-    while True:
+
+    def wait(seconds: float) -> None:
+        end = time.monotonic() + seconds
+        while not stop["now"] and time.monotonic() < end:
+            time.sleep(min(1, seconds))  # short, so docker compose stop ends it promptly
+
+    started = False
+    while not stop["now"]:
         try:
-            pending, last = _state(cfg)
-            break
+            with _connect(base) as conn:
+                if not started:
+                    store.ensure_schema(conn)
+                    store.add_env_hotel(conn, base)
+                    if store.interrupt_running(conn):
+                        log.info("an import was interrupted when the service stopped; it continues now")
+                    started = True
+                    log.info("importing %s", ", ".join(r["code"] for r in store.fns_hotels(conn)) or
+                             "no hotels yet: add one in the website's Admin page (FNS import)")
+                while not stop["now"]:
+                    found = next_due(base, conn, datetime.now().astimezone())
+                    if found is None:
+                        wait(poll)
+                        continue
+                    row, reason = found
+                    log.info("%s: %s", row["code"], reason)
+                    try:
+                        import_hotel(base, conn, row)
+                    except (OSError, RuntimeError, ValueError) as e:
+                        log.error("%s: import failed: %s", row["code"], e)
+                        wait(poll)
         except psycopg.OperationalError as e:
             # The database container may still be starting (or restarting): wait for it quietly.
             log.warning("database not reachable (%s); retrying in %d s", str(e).strip(), DB_RETRY_SECONDS)
-            end = time.monotonic() + DB_RETRY_SECONDS
-            while not stop["now"] and time.monotonic() < end:
-                time.sleep(1)
-            if stop["now"]:
-                return
-    due = bool(pending) or last is None or last.astimezone(cfg.tz).date() < datetime.now(cfg.tz).date()
-    while not stop["now"]:
-        retry = False
-        if due:
-            try:
-                result = run_once(cfg, None)
-                retry = result["status"] == "failed" or bool(result["pending"])
-            except (psycopg.Error, OSError, RuntimeError) as e:
-                log.error("import failed: %s", e)
-                retry = True
-        now = datetime.now(cfg.tz)
-        wake = next_run(cfg, now)
-        if retry:
-            wake = min(wake, now + timedelta(minutes=cfg.retry_minutes))
-        log.info("next import at %s", wake.strftime("%Y-%m-%d %H:%M %Z"))
-        while not stop["now"] and datetime.now(cfg.tz) < wake:
-            time.sleep(1)  # short, so docker compose stop ends it promptly
-        due = True
+            wait(DB_RETRY_SECONDS)
+        except psycopg.Error as e:
+            log.error("import failed: %s", e)
+            wait(DB_RETRY_SECONDS)
+
+
+def resolve(base: Config, code: str | None) -> Config:
+    """The hotel a command is for: --hotel CODE, else the one in .env, else the only one added."""
+    if code is None and base.has_hotel and not base.database_url:
+        return Config.from_env()
+    try:
+        with _connect(base) as conn:
+            rows = store.fns_hotels(conn, enabled_only=False) \
+                if conn.execute("SELECT to_regclass('pms.fns_hotels')").fetchone()[0] else []
+    except psycopg.OperationalError:
+        rows = []
+    if code:
+        row = next((r for r in rows if r["code"] == code.upper()), None)
+        if row is None:
+            raise ValueError(f"no hotel {code.upper()}; hotels: {', '.join(r['code'] for r in rows) or 'none'}")
+        return base.for_hotel(row)
+    if base.has_hotel:  # the .env hotel, with its settings from the Admin page once it has been added
+        row = next((r for r in rows if r["alojamiento_id"] == base.alojamiento_id), None)
+        return base.for_hotel(row) if row else Config.from_env()
+    if len(rows) == 1:
+        return base.for_hotel(rows[0])
+    raise ValueError("choose a hotel with --hotel CODE (" + (", ".join(r["code"] for r in rows) or
+                     "none added yet: add one in the Admin page, or set FNS_ALOJAMIENTO_ID") + ")")
 
 
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(prog="fns_sync", description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest="command", required=True)
-    c = sub.add_parser("check")
+    hotel = argparse.ArgumentParser(add_help=False)
+    hotel.add_argument("--hotel", metavar="CODE", help="the hotel (its code); default: the one in .env, or the only one")
+    c = sub.add_parser("check", parents=[hotel])
     c.add_argument("--date", type=date.fromisoformat, help="check this day (YYYY-MM-DD) instead of today")
-    r = sub.add_parser("run")
+    r = sub.add_parser("run", parents=[hotel])
     r.add_argument("--backfill", action="store_true", help="reload FNS_BACKFILL_DAYS of history")
     r.add_argument("--only", help="comma-separated steps, e.g. revenue,reservations")
-    h = sub.add_parser("history", help="load an earlier range of history")
+    h = sub.add_parser("history", parents=[hotel], help="load an earlier range of history")
     h.add_argument("--from", dest="start", type=date.fromisoformat, required=True, help="first day (YYYY-MM-DD)")
     h.add_argument("--to", dest="end", type=date.fromisoformat,
                    help="last day (default: the day before the history already loaded)")
@@ -249,18 +342,19 @@ def main(argv=None) -> int:
     for name in ("httpx2", "httpx", "httpcore"):  # one line per request otherwise
         logging.getLogger(name).setLevel(logging.WARNING)
     try:
-        cfg = Config.from_env()
+        base = Config.from_env(require_hotel=False)
+        if args.command == "daemon":
+            daemon(base)
+            return 0
+        if args.command == "status":
+            status(base)
+            return 0
+        cfg = resolve(base, args.hotel)
     except ValueError as e:
         print(f"fns_sync: {e}", file=sys.stderr)
         return 2
     if args.command == "check":
         return check(cfg, args.date)
-    if args.command == "status":
-        status(cfg)
-        return 0
-    if args.command == "daemon":
-        daemon(cfg)
-        return 0
     if args.command == "history":
         if args.pause is not None:
             cfg = dataclasses.replace(cfg, pause=max(0.0, args.pause))

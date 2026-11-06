@@ -82,8 +82,9 @@ the MCP server connects with it.
 
 ## FNSrooms import
 
-`fns_sync/` imports a real hotel (Fragata) from the [FNSrooms PMS API](https://ms.fnsmanager.com/api-doc/pms/)
-every night, and the assistant answers questions about it next to the sample hotels. It calls all
+`fns_sync/` imports real hotels (Fragata, and any other added in the Admin page) from the
+[FNSrooms PMS API](https://ms.fnsmanager.com/api-doc/pms/) every night, and the assistant answers
+questions about them next to the sample hotels. It calls all
 13 read methods of the API and stores their data in `fns_*` tables (`db/init/06_fns.sql`, every
 column documented in the database), with the same per-hotel access as the rest: users see Fragata
 only when an administrator assigns it to them.
@@ -111,40 +112,59 @@ and errors; a failing call doesn't stop the others, and wrong credentials stop t
 stops answering (3 calls in a row), the run stops and tries again `FNS_RETRY_MINUTES` (60) later,
 resuming with the steps whose history isn't loaded yet; `fns_sync status` lists them.
 
+**Add hotels in the website.** In **Admin → FNS import**, an administrator adds a hotel with
+the same details Fragata needs: its FNS alojamiento and central IDs (and PMS ID if it has one),
+its name and short code for the reports, city, country, time zone, currency (FNS currency ID and
+code; empty: taken from its accounting), the daily import time and how much history to load. Its
+FNS user and password are optional: left empty, the account in `.env` (`FNS_USER`,
+`FNS_PASSWORD`) is used; entered, the password is saved encrypted with `FNS_SECRET_KEY` and never
+shown again. **Check connection** asks FNS for the hotel's room types before anything is saved.
+
+Within a minute the importer starts the new hotel's first import: its whole history, as Fragata's
+first import did, then a daily import at its time (hotel time), refreshing the last 7 days and the
+next ones on the books. Hotels are imported one at a time (a new hotel's history can take an hour
+or more; the others wait their turn). Each hotel's card shows its state (importing, waiting to
+start, up to date, paused), and while an import runs, a progress bar with the step it is on, the
+API calls made of those planned, the rows saved and any failed calls; then its history (how many
+of its 8 parts are loaded and from which day), the next import, the last import's result with its
+errors, and the recent imports. **Import now** runs it again at once and **Pause** stops the
+daily imports. The hotel appears in the Admin page's user list after its first import starts:
+tick it for the users who should see it.
+
 **Set it up** (on the computer that runs Docker; the credentials stay in its `.env`):
 
-1. Add the credentials FNSrooms gave you to `.env`, plus the hotel's time zone and currency if
-   you know them, and turn the service on:
+1. Add the FNS account FNSrooms gave you and a key for the passwords saved per hotel to `.env`,
+   and turn the importer on (`scripts/deploy_ubuntu.sh` does this for you):
 
    ```bash
    FNS_USER=...
    FNS_PASSWORD=...
-   FNS_CENTRAL_ID=...
-   FNS_ALOJAMIENTO_ID=...
-   FNS_TIMEZONE=America/Bogota      # the hotel's time zone
-   FNS_CURRENCY=COP                 # optional; otherwise taken from the accounting data
+   FNS_SECRET_KEY=...               # e.g. the output of: openssl rand -hex 32
    COMPOSE_PROFILES=fns
    ```
 
-2. Check that the API answers (it calls each method once for yesterday and today and shows only
-   the structure of the answers, no guest data):
+   A hotel can also come from `.env` (`FNS_CENTRAL_ID`, `FNS_ALOJAMIENTO_ID`, `FNS_TIMEZONE`,
+   `FNS_CURRENCY`, `FNS_HOTEL_NAME`, `FNS_HOTEL_CODE`...): it is added to the list on the
+   importer's first start (an existing installation's Fragata keeps its data and history), and
+   from then on it's edited in the Admin page.
 
-   ```bash
-   docker compose run --rm fns-sync python -m fns_sync check
-   ```
-
-3. Start it. The first import runs at once (about 50 calls; their time depends on how fast the
-   API answers); after that it runs every night at `FNS_SYNC_TIME` (03:00):
+2. Start it, then add hotels in **Admin → FNS import**:
 
    ```bash
    docker compose up -d --build
-   docker compose logs -f fns-sync                                   # follow the first import
+   docker compose logs -f fns-sync                                   # follow the imports
    docker compose run --rm fns-sync python -m fns_sync status        # the last imports
    ```
 
-4. In the website's **Admin** page, tick Fragata (code `FRA`) for the users who should see it.
+3. To check the API by hand (each method once for yesterday and today; only the structure of the
+   answers is shown, no guest data): `docker compose run --rm fns-sync python -m fns_sync check
+   --hotel FRA`.
 
-To import again now: `docker compose run --rm fns-sync python -m fns_sync run` (`--backfill` reloads
+4. In the website's **Admin** page, tick the hotel (e.g. Fragata, code `FRA`) for the users who
+   should see it.
+
+To import again from the command line: `docker compose run --rm fns-sync python -m fns_sync run
+--hotel FRA` (`--backfill` reloads
 the history; `--only revenue,reservations` limits the steps). Don't reseed the sample data with
 `db/seed.py --reset` afterwards: it empties all hotels, Fragata included (the next import reloads
 it).

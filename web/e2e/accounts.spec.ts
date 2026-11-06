@@ -80,3 +80,53 @@ test("administrators manage users, and users see only their hotels", async ({ pa
   await page.getByRole("button", { name: "Delete user" }).click();
   await expect(page.getByRole("row", { name: new RegExp(user.email) })).toHaveCount(0);
 });
+
+test("administrators add a hotel from FNS and see its import waiting to start", async ({ page }) => {
+  const stamp = Date.now() % 1_000_000;
+  const code = `E2E${stamp % 10000}`;
+  await signIn(page, ACCOUNTS_ADMIN.email, ACCOUNTS_ADMIN.password);
+  await expect(page.getByTestId("kpis")).toBeVisible();
+  await page.goto("/admin");
+  await page.getByRole("tab", { name: "FNS import" }).click();
+  await page.getByRole("button", { name: "Add hotel" }).click();
+
+  await page.getByLabel("Alojamiento ID").fill(String(500_000_000 + stamp));
+  await page.getByLabel("Central ID").fill("4284");
+  // The server's account is used when none is entered (the password field stays off).
+  await expect(page.getByText("Leave both empty to use the server's FNS account.")).toBeVisible();
+  await expect(page.getByLabel("FNS password")).toBeDisabled();
+  // Nothing answers at this test's FNS address: the check says so before anything is saved.
+  await page.getByRole("button", { name: "Check connection" }).click();
+  await expect(page.getByTestId("fns-check")).toContainText("FNS didn't answer");
+
+  await page.getByLabel("Name").fill("E2E Hotel");
+  await page.getByLabel("Code", { exact: true }).fill(code.toLowerCase());
+  await page.getByLabel("City").fill("Cartagena");
+  await page.getByLabel("Time zone").fill("America/Bogota");
+  await page.getByLabel("Currency code (optional)").fill("COP");
+  await page.getByLabel("Daily import at (hotel time)").fill("04:15");
+  await page.getByRole("button", { name: "Add and start the import" }).click();
+
+  await expect(page.getByRole("status").filter({ hasText: "Its first import starts within a minute" })).toBeVisible();
+  const card = page.getByTestId(`fns-hotel-${code}`);
+  await expect(card).toContainText("E2E Hotel");
+  await expect(card.getByTestId("fns-state")).toHaveText("Waiting to start");
+  await expect(card).toContainText("History: 0 of 8 parts loaded");
+  await expect(card.getByRole("button", { name: "Import now" })).toBeDisabled();
+
+  // A code another hotel has is refused with the reason.
+  await page.getByRole("button", { name: "Add hotel" }).click();
+  await page.getByLabel("Alojamiento ID").fill(String(600_000_000 + stamp));
+  await page.getByLabel("Central ID").fill("4284");
+  await page.getByLabel("Name").fill("Clash");
+  await page.getByLabel("Code", { exact: true }).fill("LIS");
+  await page.getByRole("button", { name: "Add and start the import" }).click();
+  await expect(page.getByRole("alert").filter({ hasText: "already uses the code LIS" })).toBeVisible();
+  await page.getByRole("button", { name: "Cancel" }).click();
+
+  // Paused hotels say so, and resume.
+  await card.getByRole("button", { name: "Pause" }).click();
+  await expect(card.getByRole("button", { name: "Resume" })).toBeVisible();
+  await card.getByRole("button", { name: "Resume" }).click();
+  await expect(card.getByRole("button", { name: "Pause" })).toBeVisible();
+});

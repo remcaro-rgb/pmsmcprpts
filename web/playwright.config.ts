@@ -93,6 +93,8 @@ function accountsServers(appDsn: string): { command: string; url: string; env: R
       url: `${agent}/api/health`,
       env: {
         PYTHONPATH: "../agent", PMS_MCP_URL: `${mcp}/mcp`, PMS_MCP_TOKEN: SERVICE_TOKEN, PMS_APP_DATABASE_URL: appDsn,
+        // The Admin page's FNS import; nothing answers at FNS_BASE_URL, so "Check connection" fails.
+        FNS_USER: "e2e-fns", FNS_PASSWORD: "e2e-fns-secret", FNS_SECRET_KEY: "e2e-secret-key", FNS_BASE_URL: "http://127.0.0.1:9",
       },
       reuseExistingServer: !process.env.CI,
     },
