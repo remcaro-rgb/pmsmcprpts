@@ -6,7 +6,7 @@ import { relay } from "@/lib/agent";
 export const dynamic = "force-dynamic";
 
 type Ctx = { params: Promise<{ path: string[] }> };
-const PATH = /^((users|hotels)(\/[1-9][0-9]{0,9})?|fns\/hotels(\/[1-9][0-9]{0,9}(\/(run|runs))?)?|fns\/check)$/;
+const PATH = /^((users|hotels)(\/[1-9][0-9]{0,9})?|fns\/hotels(\/[1-9][0-9]{0,9}(\/(run|runs))?)?|fns\/check|fns\/log(\/[1-9][0-9]{0,18})?)$/;
 const MAX_BODY = 16_000;
 
 async function forward(req: Request, ctx: Ctx, method: string): Promise<Response> {
@@ -17,7 +17,10 @@ async function forward(req: Request, ctx: Ctx, method: string): Promise<Response
     body = await req.text();
     if (body.length > MAX_BODY) return Response.json({ detail: "Request too large." }, { status: 413 });
   }
-  return relay(req, `/api/admin/${path}`, method, body);
+  // Filters of the import log (dates, hotel, levels, text) travel as the query string.
+  const query = method === "GET" ? new URL(req.url).search : "";
+  if (query.length > 2000) return Response.json({ detail: "Request too large." }, { status: 413 });
+  return relay(req, `/api/admin/${path}${query}`, method, body);
 }
 
 export const GET = (req: Request, ctx: Ctx) => forward(req, ctx, "GET");

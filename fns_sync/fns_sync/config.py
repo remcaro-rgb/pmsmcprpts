@@ -69,6 +69,8 @@ class Config:
     pause: float = 1.0
     # After a run the API cut short, try again this many minutes later instead of the next night.
     retry_minutes: int = 60
+    # Days the import log (Admin page) keeps its lines.
+    log_days: int = 90
     # Decrypts the FNS passwords saved per hotel in the Admin page.
     secret_key: str = field(default="", repr=False)
 
@@ -118,6 +120,7 @@ class Config:
             forward_days=_int(env, "FNS_FORWARD_DAYS", 365),
             backfill_days=_int(env, "FNS_BACKFILL_DAYS", 365),
             retry_minutes=_int(env, "FNS_RETRY_MINUTES", 60),
+            log_days=_int(env, "FNS_LOG_DAYS", 90),
             secret_key=env.get("FNS_SECRET_KEY") or "",
         )
 

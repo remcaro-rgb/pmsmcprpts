@@ -29,7 +29,7 @@ from datetime import date, datetime, timedelta
 
 import psycopg
 
-from . import store
+from . import runlog, store
 from .client import ENDPOINTS, AuthError, FNSClient, FNSError, MissingRate
 from .config import Config
 from .sync import HISTORY_STEPS, STEPS, Sync
@@ -210,12 +210,13 @@ def import_hotel(base: Config, conn: psycopg.Connection, row: dict, make_sync=Sy
     try:
         cfg = base.for_hotel(row)
     except ValueError as e:
-        log.error("%s", e)
         cfg = base.for_hotel(row, account=False)
         hotel_id = store.ensure_hotel(conn, cfg)
         store.link_hotel(conn, row["id"], hotel_id)
-        store.finish_run(conn, store.start_run(conn, hotel_id, False), "failed",
-                         [{"method": "settings", "ok": False, "error": str(e)}])
+        run_id = store.start_run(conn, hotel_id, False)
+        with runlog.context(hotel_id=hotel_id, run_id=run_id):
+            log.error("%s", e)
+        store.finish_run(conn, run_id, "failed", [{"method": "settings", "ok": False, "error": str(e)}])
         return None
     hotel_id = store.ensure_hotel(conn, cfg)
     store.link_hotel(conn, row["id"], hotel_id)
@@ -278,12 +279,14 @@ def daemon(base: Config, poll: float = POLL_SECONDS) -> None:
                         wait(poll)
                         continue
                     row, reason = found
-                    log.info("%s: %s", row["code"], reason)
-                    try:
-                        import_hotel(base, conn, row)
-                    except (OSError, RuntimeError, ValueError) as e:
-                        log.error("%s: import failed: %s", row["code"], e)
-                        wait(poll)
+                    with runlog.context(hotel_id=row["hotel_id"]):
+                        log.info("%s: %s", row["code"], reason)
+                        try:
+                            import_hotel(base, conn, row)
+                        except (OSError, RuntimeError, ValueError) as e:
+                            log.error("%s: import failed: %s", row["code"], e)
+                            wait(poll)
+                    store.prune_log(conn, base.log_days)
         except psycopg.OperationalError as e:
             # The database container may still be starting (or restarting): wait for it quietly.
             log.warning("database not reachable (%s); retrying in %d s", str(e).strip(), DB_RETRY_SECONDS)
@@ -343,6 +346,8 @@ def main(argv=None) -> int:
         logging.getLogger(name).setLevel(logging.WARNING)
     try:
         base = Config.from_env(require_hotel=False)
+        if args.command in ("daemon", "run", "history"):
+            runlog.install(base.database_url)  # the Admin page's import log
         if args.command == "daemon":
             daemon(base)
             return 0

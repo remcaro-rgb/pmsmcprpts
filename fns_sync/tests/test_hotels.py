@@ -163,3 +163,44 @@ def test_import_now_goes_first_and_env_hotel_is_added_once(owner):
     assert first["name"] == "From env"  # afterwards the Admin page's settings win
     second = add(owner, alojamiento_id=ALOJ + 1, code="SECOND", run_requested_at=datetime.now().astimezone())
     assert due(owner) == [(second["id"], "requested in the Admin page"), (first["id"], "first import")]
+
+
+@db
+def test_the_import_log_keeps_each_call_with_its_request_and_answer(owner):
+    from fns_sync import runlog
+
+    row = add(owner)
+    fake = FakeFNS(ALOJ, TODAY)
+
+    def make_sync(cfg):
+        s = Sync(cfg, FNSClient(cfg, transport=fake.transport(), sleep=lambda s: None), sleep=lambda s: None)
+        run = s.run
+        s.run = lambda conn: run(conn, today=TODAY)
+        return s
+
+    dbname = psycopg.conninfo.conninfo_to_dict(DSN)["dbname"]
+    handler = runlog.install(psycopg.conninfo.make_conninfo(ADMIN_URL, dbname=dbname))
+    try:
+        result = cli.import_hotel(BASE, owner, row, make_sync=make_sync)
+    finally:
+        cli.log.removeHandler(handler)
+        handler.close()
+    with owner.cursor(row_factory=dict_row) as cur:
+        lines = cur.execute("SELECT l.* FROM pms.fns_sync_log l JOIN pms.fns_sync_runs r ON r.id = l.run_id "
+                            "WHERE r.id = %s ORDER BY l.id", (result["run_id"],)).fetchall()
+    hotel_id = owner.execute("SELECT hotel_id FROM pms.fns_hotels WHERE id = %s", (row["id"],)).fetchone()[0]
+    assert {line["hotel_id"] for line in lines} == {hotel_id}
+    calls = [line for line in lines if line["command"]]
+    assert len(calls) == len(result["calls"])  # one line per API call
+    revenue = next(line for line in calls if line["message"].startswith("revenue "))
+    assert revenue["level"] == "info" and "answered (HTTP 200 in" in revenue["message"]
+    assert revenue["command"].startswith("curl -sS -X POST 'https://ms.fnsmanager.com/v1/ventas/revenue.php' "
+                                         "-u \"$FNS_USER:$FNS_PASSWORD\"")
+    assert PASSWORD not in revenue["command"] and '"alojamiento_id":987655' in revenue["command"]
+    assert revenue["output"].startswith("HTTP 200 in") and "num_hab_tot" in revenue["output"]
+    # The list FNS refuses and the days without an exchange rate are warnings, not failures.
+    warnings = [line["message"] for line in lines if line["level"] == "warning"]
+    assert any(m.startswith("master usuariosGastro: ") and "HTTP 422" in m for m in warnings)
+    assert any("No existe tipo de cambio" in m for m in warnings)
+    assert not [line for line in lines if line["level"] == "error"]
+    assert lines[-1]["message"].startswith("FNS import ok: ") and lines[-1]["level"] == "info"

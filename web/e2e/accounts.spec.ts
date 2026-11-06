@@ -130,3 +130,22 @@ test("administrators add a hotel from FNS and see its import waiting to start", 
   await card.getByRole("button", { name: "Resume" }).click();
   await expect(card.getByRole("button", { name: "Pause" })).toBeVisible();
 });
+
+test("administrators filter the import log", async ({ page }) => {
+  await signIn(page, ACCOUNTS_ADMIN.email, ACCOUNTS_ADMIN.password);
+  await expect(page.getByTestId("kpis")).toBeVisible();
+  await page.goto("/admin");
+  await page.getByRole("tab", { name: "Import log" }).click();
+  const log = page.getByTestId("fns-log");
+  await expect(log.getByLabel("From")).toBeVisible();
+  await expect(log.getByLabel("To")).toBeVisible();
+  await expect(log.getByLabel("Hotel")).toBeVisible();
+  for (const status of ["Failed", "Warning", "Information"]) await expect(log.getByRole("checkbox", { name: new RegExp(status) })).toBeChecked();
+  // A search nothing matches empties the list; so does choosing no status.
+  await log.getByLabel("Search").fill("no-such-line-anywhere");
+  await expect(log.getByText("No log lines match these filters.")).toBeVisible();
+  await expect(log.getByTestId("log-count-error")).toHaveText("0");
+  await log.getByLabel("Search").fill("");
+  for (const status of ["Failed", "Warning", "Information"]) await log.getByRole("checkbox", { name: new RegExp(status) }).uncheck();
+  await expect(log.getByTestId("log-line")).toHaveCount(0);
+});

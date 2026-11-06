@@ -26,6 +26,7 @@ FIELDS = ("alojamiento_id", "central_id", "pms_id", "code", "name", "city", "cou
           "currency", "sync_time", "backfill_days", "enabled")
 COLUMNS = ", ".join(f"f.{c}" for c in (*FIELDS, "id", "fns_user", "run_requested_at", "hotel_id", "created_at"))
 UNIQUE = {"fns_hotels_alojamiento_id_key": "alojamiento_id", "fns_hotels_code_key": "code"}
+LOG_LEVELS = ("error", "warning", "info")
 # A hotel waiting this long while nothing imports: the fns-sync service is probably not running.
 SERVICE_SILENT = timedelta(minutes=3)
 
@@ -158,6 +159,52 @@ class FnsHotels:
                 "JOIN pms.fns_hotels f ON f.hotel_id = r.hotel_id WHERE f.id = %s ORDER BY r.id DESC LIMIT %s",
                 (fns_hotel_id, limit))).fetchall()
         return [_summary(dict(r)) for r in rows]
+
+    async def log(self, since: datetime | None = None, until: datetime | None = None, hotel_id: int | None = None,
+                  levels: list[str] | None = None, search: str | None = None, before_id: int | None = None,
+                  limit: int = 100) -> dict[str, Any]:
+        """The import log, newest first, filtered; with the number of lines of each level that match
+        (before paging), and the id to ask for the next page with (before_id)."""
+        where, params = ["true"], []
+        if since:
+            where.append("l.at >= %s")
+            params.append(since)
+        if until:
+            where.append("l.at < %s")
+            params.append(until)
+        if hotel_id:
+            where.append("l.hotel_id = %s")
+            params.append(hotel_id)
+        if search:
+            where.append("(l.message ILIKE %s OR l.command ILIKE %s)")
+            params += [f"%{search}%"] * 2
+        base = " AND ".join(where)
+        chosen = [lv for lv in (levels or []) if lv in LOG_LEVELS] or list(LOG_LEVELS)
+        async with await self._connect() as conn:
+            await self._ready(conn)
+            counts = {r["level"]: r["n"] for r in await (await conn.execute(
+                f"SELECT l.level, count(*) AS n FROM pms.fns_sync_log l WHERE {base} GROUP BY 1", params)).fetchall()}
+            rows = await (await conn.execute(
+                f"SELECT l.id, l.at, l.level, l.message, l.hotel_id, h.code, l.run_id, l.command IS NOT NULL AS has_command, "
+                f"l.output IS NOT NULL AS has_output FROM pms.fns_sync_log l LEFT JOIN pms.hotels h ON h.id = l.hotel_id "
+                f"WHERE {base} AND l.level = ANY(%s){' AND l.id < %s' if before_id else ''} ORDER BY l.id DESC LIMIT %s",
+                [*params, chosen, *([before_id] if before_id else []), limit + 1])).fetchall()
+        more = len(rows) > limit
+        rows = rows[:limit]
+        return {"entries": rows, "counts": {lv: counts.get(lv, 0) for lv in LOG_LEVELS},
+                "next_before_id": rows[-1]["id"] if more else None}
+
+    async def log_entry(self, entry_id: int) -> dict[str, Any]:
+        """One line with its request (curl) and the API's answer."""
+        async with await self._connect() as conn:
+            await self._ready(conn)
+            row = await (await conn.execute(
+                "SELECT l.id, l.at, l.level, l.message, l.hotel_id, h.code, l.run_id, l.command, l.output "
+                "FROM pms.fns_sync_log l LEFT JOIN pms.hotels h ON h.id = l.hotel_id WHERE l.id = %s",
+                (entry_id,))).fetchone()
+        if row is None:
+            raise UserError("Log line not found (lines older than FNS_LOG_DAYS are deleted).", 404)
+        return row
 
     # --- changes ---------------------------------------------------------------------------------------
 
