@@ -44,14 +44,17 @@ const button = "rounded-lg border border-stone-200 px-3 py-1.5 text-sm hover:bg-
 const primary = "rounded-lg bg-accent px-4 py-1.5 text-sm font-medium text-white hover:opacity-90 disabled:opacity-50";
 
 const ID = /^[1-9][0-9]{0,9}$/;
+// Optional IDs: empty or 0 means none.
+const OPTIONAL_ID = /^[0-9]{0,10}$/;
+const optionalId = (v: string) => (Number(v.trim()) > 0 ? Number(v.trim()) : null);
 
 /** The body the agent expects: numbers as numbers, empty optional fields left out (or cleared). */
 function body(form: Form, editing: boolean): Record<string, unknown> {
   const num = (v: string) => (v.trim() ? Number(v) : null);
   const out: Record<string, unknown> = {
-    alojamiento_id: num(form.alojamiento_id), central_id: num(form.central_id), pms_id: num(form.pms_id),
+    alojamiento_id: num(form.alojamiento_id), central_id: optionalId(form.central_id), pms_id: optionalId(form.pms_id),
     code: form.code.trim().toUpperCase(), name: form.name.trim(), city: form.city.trim(), country: form.country.trim(),
-    timezone: form.timezone.trim(), moneda_id: num(form.moneda_id), currency: form.currency.trim().toUpperCase(),
+    timezone: form.timezone.trim(), moneda_id: optionalId(form.moneda_id), currency: form.currency.trim().toUpperCase(),
     sync_time: form.sync_time, backfill_days: num(form.backfill_days), fns_user: form.fns_user.trim(), enabled: form.enabled,
   };
   if (form.fns_password) out.fns_password = form.fns_password;
@@ -311,6 +314,7 @@ function HotelForm({
     </div>
   );
   const id = { inputMode: "numeric", pattern: ID.source, maxLength: 10 };
+  const optional = { ...id, pattern: OPTIONAL_ID.source };
   const ownAccount = form.fns_user.trim() !== "";
   const accountHint = list?.default_account ? t.fnsAccountDefault : t.fnsAccountRequired;
 
@@ -331,8 +335,8 @@ function HotelForm({
         <legend className="text-sm font-semibold text-stone-600 dark:text-stone-300">{t.fnsSectionIds}</legend>
         <div className="grid gap-4 sm:grid-cols-3">
           {field("alojamiento_id", t.fnsAlojamientoId, { ...id, required: true })}
-          {field("central_id", t.fnsCentralIdOptional, id)}
-          {field("pms_id", t.fnsPmsId, id)}
+          {field("central_id", t.fnsCentralIdOptional, optional)}
+          {field("pms_id", t.fnsPmsId, optional)}
         </div>
       </fieldset>
 
@@ -357,7 +361,7 @@ function HotelForm({
               setCheck({ ok: true, message: t.fnsChecking });
               const r = await api("fns/check", "POST", {
                 alojamiento_id: Number(form.alojamiento_id),
-                pms_id: form.pms_id ? Number(form.pms_id) : undefined,
+                pms_id: optionalId(form.pms_id) ?? undefined,
                 fns_user: form.fns_user.trim() || undefined,
                 fns_password: form.fns_password || undefined,
                 hotel: hotel?.id,
@@ -390,7 +394,7 @@ function HotelForm({
           ))}
         </datalist>
         <div className="grid gap-4 sm:grid-cols-2">
-          {field("moneda_id", t.fnsMonedaId, id)}
+          {field("moneda_id", t.fnsMonedaId, optional)}
           {field("currency", t.fnsCurrency, { pattern: "[A-Za-z]{3}", maxLength: 3 })}
         </div>
         <p className="text-xs text-stone-500">{t.fnsCurrencyHint}</p>

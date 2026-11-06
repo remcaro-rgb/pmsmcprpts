@@ -93,6 +93,8 @@ test("administrators add a hotel from FNS and see its import waiting to start", 
   await page.getByLabel("Alojamiento ID").fill(String(500_000_000 + stamp));
   // The central ID is optional: left empty here.
   await expect(page.getByLabel("Central ID (optional)")).not.toHaveAttribute("required", "");
+  // 0 in an optional ID means none.
+  await page.getByLabel("PMS ID (optional)").fill("0");
   // The server's account is used when none is entered (the password field stays off).
   await expect(page.getByText("Leave both empty to use the server's FNS account.")).toBeVisible();
   await expect(page.getByLabel("FNS password")).toBeDisabled();
@@ -123,6 +125,11 @@ test("administrators add a hotel from FNS and see its import waiting to start", 
   await page.getByLabel("Code", { exact: true }).fill("LIS");
   await page.getByRole("button", { name: "Add and start the import" }).click();
   await expect(page.getByRole("alert").filter({ hasText: "already uses the code LIS" })).toBeVisible();
+  // A refused field is named.
+  await page.getByLabel("Code", { exact: true }).fill("OK1");
+  await page.getByLabel("Name").fill(" ");
+  await page.getByRole("button", { name: "Add and start the import" }).click();
+  await expect(page.getByRole("alert").filter({ hasText: "Check these fields: Name." })).toBeVisible();
   await page.getByRole("button", { name: "Cancel" }).click();
 
   // Paused hotels say so, and resume.
