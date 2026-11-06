@@ -7,6 +7,7 @@ from typing import Any, Iterable
 
 import psycopg
 from psycopg import sql
+from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
 from .config import Config
@@ -169,3 +170,58 @@ def last_runs(conn: psycopg.Connection, limit: int = 10) -> list[tuple]:
     return conn.execute("SELECT r.id, h.code, r.started_at, r.finished_at, r.status, r.backfill, r.calls "
                         "FROM pms.fns_sync_runs r LEFT JOIN pms.hotels h ON h.id = r.hotel_id "
                         "ORDER BY r.id DESC LIMIT %s", (limit,)).fetchall()
+
+
+# --- the hotels to import (pms.fns_hotels, managed in the Admin page) -------------------------------
+
+HOTEL_COLUMNS = ("id, alojamiento_id, central_id, pms_id, code, name, city, country, timezone, moneda_id, currency, "
+                 "sync_time, backfill_days, fns_user, fns_password, enabled, run_requested_at, hotel_id")
+
+
+def add_env_hotel(conn: psycopg.Connection, cfg: Config) -> None:
+    """Adds the hotel set in .env (FNS_ALOJAMIENTO_ID...) to pms.fns_hotels the first time, with the
+    account in .env; afterwards it is edited in the Admin page."""
+    if not cfg.has_hotel:
+        return
+    with conn.transaction():
+        conn.execute(
+            "INSERT INTO pms.fns_hotels (alojamiento_id, central_id, pms_id, code, name, city, country, timezone, "
+            "moneda_id, currency, sync_time, backfill_days, hotel_id) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, "
+            "%s, %s, (SELECT id FROM pms.hotels WHERE alojamiento_id = %s)) ON CONFLICT DO NOTHING",
+            (cfg.alojamiento_id, cfg.central_id, cfg.pms_id, cfg.hotel_code, cfg.hotel_name, cfg.hotel_city,
+             cfg.hotel_country, cfg.timezone, cfg.moneda_id, cfg.currency, cfg.run_at, cfg.backfill_days,
+             cfg.alojamiento_id))
+
+
+def fns_hotels(conn: psycopg.Connection, enabled_only: bool = True) -> list[dict]:
+    with conn.cursor(row_factory=dict_row) as cur:
+        return cur.execute(f"SELECT {HOTEL_COLUMNS} FROM pms.fns_hotels "
+                           f"{'WHERE enabled ' if enabled_only else ''}ORDER BY id").fetchall()
+
+
+def link_hotel(conn: psycopg.Connection, fns_hotel_id: int, hotel_id: int) -> None:
+    with conn.transaction():
+        conn.execute("UPDATE pms.fns_hotels SET hotel_id = %s WHERE id = %s AND hotel_id IS DISTINCT FROM %s",
+                     (hotel_id, fns_hotel_id, hotel_id))
+
+
+def run_times(conn: psycopg.Connection, hotel_id: int | None) -> dict:
+    """The hotel's last import (started, finished, status) and when the last one that stored data started."""
+    last = conn.execute("SELECT started_at, finished_at, status FROM pms.fns_sync_runs WHERE hotel_id = %s "
+                        "ORDER BY id DESC LIMIT 1", (hotel_id,)).fetchone() or (None, None, None)
+    ok = conn.execute("SELECT max(started_at) FROM pms.fns_sync_runs WHERE hotel_id = %s AND status IN ('ok', 'partial')",
+                      (hotel_id,)).fetchone()[0]
+    return {"started": last[0], "finished": last[1], "status": last[2], "last_ok": ok}
+
+
+def interrupt_running(conn: psycopg.Connection) -> int:
+    """Imports left 'running' by a stopped service (only one service imports at a time)."""
+    with conn.transaction():
+        return conn.execute("UPDATE pms.fns_sync_runs SET status = 'failed', finished_at = coalesce(finished_at, now()) "
+                            "WHERE status = 'running'").rowcount
+
+
+def set_progress(conn: psycopg.Connection, run_id: int, progress: dict) -> None:
+    with conn.transaction():
+        conn.execute("UPDATE pms.fns_sync_runs SET progress = %s WHERE id = %s",
+                     (Jsonb(json.loads(json.dumps(progress, default=str))), run_id))

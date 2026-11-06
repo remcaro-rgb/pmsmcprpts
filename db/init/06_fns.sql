@@ -357,6 +357,48 @@ CREATE TABLE IF NOT EXISTS fns_sync_steps (
 );
 REVOKE ALL ON fns_sync_steps FROM pms_readonly;
 
+-- Live progress of a running import (step, calls made of those planned, rows), for the Admin page.
+ALTER TABLE fns_sync_runs ADD COLUMN IF NOT EXISTS progress jsonb;
+
+-- The hotels the fns-sync service imports, added in the website's Admin page (the one in .env is
+-- added on the service's first start). hotel_id is set by the first import, which creates the
+-- hotels row. fns_password is encrypted with FNS_SECRET_KEY; both credentials empty: the FNS
+-- account in .env (FNS_USER, FNS_PASSWORD).
+CREATE TABLE IF NOT EXISTS fns_hotels (
+    id               serial PRIMARY KEY,
+    alojamiento_id   integer NOT NULL UNIQUE CHECK (alojamiento_id > 0),
+    central_id       integer NOT NULL CHECK (central_id > 0),
+    pms_id           integer CHECK (pms_id > 0),
+    code             text NOT NULL UNIQUE CHECK (code ~ '^[A-Z0-9_-]{2,12}$'),
+    name             text NOT NULL CHECK (btrim(name) <> ''),
+    city             text NOT NULL DEFAULT '',
+    country          text NOT NULL DEFAULT '',
+    timezone         text NOT NULL DEFAULT 'Europe/Madrid',
+    moneda_id        integer CHECK (moneda_id > 0),
+    currency         text CHECK (currency ~ '^[A-Z]{3}$'),
+    sync_time        time NOT NULL DEFAULT '03:00',
+    backfill_days    integer NOT NULL DEFAULT 365 CHECK (backfill_days BETWEEN 1 AND 3660),
+    fns_user         text,
+    fns_password     text,
+    enabled          boolean NOT NULL DEFAULT true,
+    run_requested_at timestamptz,  -- "Import now" in the Admin page
+    hotel_id         integer UNIQUE REFERENCES hotels ON DELETE SET NULL,
+    created_at       timestamptz NOT NULL DEFAULT now(),
+    updated_at       timestamptz NOT NULL DEFAULT now()
+);
+COMMENT ON TABLE fns_hotels IS 'Hotels imported from FNSrooms and their import settings (fns-sync service).';
+REVOKE ALL ON fns_hotels FROM pms_readonly;
+
+-- The agent's role (05_users.sh) manages them from the Admin page and reads the import log.
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'pms_app') THEN
+        GRANT SELECT, INSERT, UPDATE ON fns_hotels TO pms_app;
+        GRANT USAGE ON SEQUENCE fns_hotels_id_seq TO pms_app;
+        GRANT SELECT ON fns_sync_runs, fns_sync_steps TO pms_app;
+    END IF;
+END $$;
+
 CREATE INDEX IF NOT EXISTS fns_reservations_arrival ON fns_reservations (hotel_id, arrival);
 CREATE INDEX IF NOT EXISTS fns_reservations_booked ON fns_reservations (hotel_id, booked_at);
 CREATE INDEX IF NOT EXISTS fns_sales_reservations_arrival ON fns_sales_reservations (hotel_id, arrival);

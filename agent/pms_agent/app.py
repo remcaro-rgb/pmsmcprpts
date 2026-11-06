@@ -7,6 +7,7 @@ import re
 import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from datetime import time as dt_time
 from pathlib import Path
 from typing import Any, Literal
 
@@ -19,6 +20,7 @@ from pydantic import BaseModel, Field, field_validator
 from .config import Settings
 from .conversations import ConversationStore
 from .digest import Digest
+from .fns_hotels import FnsHotels
 from .prompts import MESSAGES
 from .loop import ChatAgent
 from .recommend import DailyRecommendations, Overviews
@@ -134,6 +136,47 @@ class NewUser(UserFields):
 class HotelIds(BaseModel):
     alojamiento_id: int | None = Field(default=None, gt=0, le=2_147_483_647)
     pms_id: int | None = Field(default=None, gt=0, le=2_147_483_647)
+
+
+class FnsHotelFields(BaseModel):
+    """A hotel imported from FNSrooms (Admin page); on update, only the fields sent change. An empty
+    fns_user: the FNS account in the server's .env."""
+    alojamiento_id: int | None = Field(default=None, gt=0, le=2_147_483_647)
+    central_id: int | None = Field(default=None, gt=0, le=2_147_483_647)
+    pms_id: int | None = Field(default=None, gt=0, le=2_147_483_647)
+    code: str | None = Field(default=None, pattern=r"^[A-Za-z0-9_-]{2,12}$")
+    name: str | None = Field(default=None, min_length=1, max_length=200)
+    city: str | None = Field(default=None, max_length=100)
+    country: str | None = Field(default=None, max_length=100)
+    timezone: str | None = Field(default=None, max_length=64)
+    moneda_id: int | None = Field(default=None, gt=0, le=2_147_483_647)
+    currency: str | None = Field(default=None, pattern=r"^([A-Za-z]{3})?$")
+    sync_time: dt_time | None = None
+    backfill_days: int | None = Field(default=None, ge=1, le=3660)
+    fns_user: str | None = Field(default=None, max_length=200)
+    fns_password: str | None = Field(default=None, max_length=200)
+    enabled: bool | None = None
+
+    @field_validator("currency", "fns_user", "city", "country")
+    @classmethod
+    def _empty(cls, v):
+        return v.strip() if isinstance(v, str) else v
+
+
+class NewFnsHotel(FnsHotelFields):
+    alojamiento_id: int = Field(gt=0, le=2_147_483_647)
+    central_id: int = Field(gt=0, le=2_147_483_647)
+    code: str = Field(pattern=r"^[A-Za-z0-9_-]{2,12}$")
+    name: str = Field(min_length=1, max_length=200)
+    timezone: str = Field(min_length=1, max_length=64)
+
+
+class FnsCheck(BaseModel):
+    alojamiento_id: int = Field(gt=0, le=2_147_483_647)
+    pms_id: int | None = Field(default=None, gt=0, le=2_147_483_647)
+    fns_user: str | None = Field(default=None, max_length=200)
+    fns_password: str | None = Field(default=None, max_length=200)
+    hotel: int | None = Field(default=None, gt=0)  # a saved hotel: its account when none is given
 
 
 class SignIn(BaseModel):
@@ -264,6 +307,56 @@ def create_app(settings: Settings | None = None, client: Any = None, mcp_target:
     async def delete_user(user_id: int, acting: User = Depends(admin)) -> None:
         try:
             await need_directory().delete(user_id, acting.email)
+        except UserError as e:
+            raise user_error(e) from None
+
+    fns = FnsHotels(settings.app_database_url, settings.fns_secret_key, settings.fns_user, settings.fns_password,
+                    settings.fns_base_url) if settings.app_database_url else None
+
+    def need_fns() -> FnsHotels:
+        if fns is None:
+            raise HTTPException(404, "User accounts are not enabled (set PMS_APP_DATABASE_URL).")
+        return fns
+
+    @app.get("/api/admin/fns/hotels")
+    async def list_fns_hotels(_: User = Depends(admin)) -> dict[str, Any]:
+        try:
+            return await need_fns().listing()
+        except UserError as e:
+            raise user_error(e) from None
+
+    @app.post("/api/admin/fns/hotels", status_code=201)
+    async def add_fns_hotel(body: NewFnsHotel, _: User = Depends(admin)) -> dict[str, Any]:
+        try:
+            return await need_fns().create(body.model_dump(exclude_none=True))
+        except UserError as e:
+            raise user_error(e) from None
+
+    @app.patch("/api/admin/fns/hotels/{hotel_id}")
+    async def update_fns_hotel(hotel_id: int, body: FnsHotelFields, _: User = Depends(admin)) -> dict[str, Any]:
+        try:
+            return await need_fns().update(hotel_id, body.model_dump(exclude_unset=True))
+        except UserError as e:
+            raise user_error(e) from None
+
+    @app.post("/api/admin/fns/hotels/{hotel_id}/run")
+    async def run_fns_hotel(hotel_id: int, _: User = Depends(admin)) -> dict[str, Any]:
+        try:
+            return await need_fns().request_run(hotel_id)
+        except UserError as e:
+            raise user_error(e) from None
+
+    @app.get("/api/admin/fns/hotels/{hotel_id}/runs")
+    async def fns_hotel_runs(hotel_id: int, _: User = Depends(admin)) -> dict[str, Any]:
+        try:
+            return {"runs": await need_fns().runs(hotel_id)}
+        except UserError as e:
+            raise user_error(e) from None
+
+    @app.post("/api/admin/fns/check")
+    async def check_fns_account(body: FnsCheck, _: User = Depends(admin)) -> dict[str, Any]:
+        try:
+            return await need_fns().verify(body.model_dump(exclude_none=True), body.hotel)
         except UserError as e:
             raise user_error(e) from None
 

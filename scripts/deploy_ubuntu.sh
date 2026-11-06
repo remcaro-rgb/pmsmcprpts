@@ -165,6 +165,7 @@ ask_secret ANTHROPIC_API_KEY "Anthropic API key (input hidden)"
 ask_secret CLOUDFLARE_TUNNEL_TOKEN "Cloudflare tunnel token (input hidden)"
 [ -n "$(env_get WEB_SESSION_SECRET)" ] || env_set WEB_SESSION_SECRET "$(secret)"
 [ -n "$(env_get PMS_MCP_SERVICE_TOKEN)" ] || env_set PMS_MCP_SERVICE_TOKEN "$(secret)"
+[ -n "$(env_get FNS_SECRET_KEY)" ] || env_set FNS_SECRET_KEY "$(secret)"   # FNS passwords saved per hotel
 [ -n "$(env_get WEB_AUTH)" ] || env_set WEB_AUTH password   # sign in with user accounts
 env_set PMS_USER_DIRECTORY true
 env_set WEB_PUBLIC_URL "https://$HOSTNAME_"
@@ -190,10 +191,9 @@ fi
 step "Building and starting the MCP server, agent, website and tunnel (a few minutes the first time)"
 compose up -d --build mcp agent web
 compose up -d tunnel
-if [ -n "$(env_get FNS_USER)" ]; then
-  echo "FNS settings found: starting the daily FNSrooms import"
-  compose --profile fns up -d --build fns-sync
-fi
+# The FNSrooms importer: the hotels added in the Admin page (FNS import), plus the one in .env.
+echo "Starting the FNSrooms importer (hotels are added in the website's Admin page)"
+compose --profile fns up -d --build fns-sync
 
 # --- 5. First administrator ----------------------------------------------------------------------
 for _ in $(seq 60); do

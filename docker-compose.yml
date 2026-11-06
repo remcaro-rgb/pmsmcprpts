@@ -93,6 +93,12 @@ services:
       # The day's recommendations are prepared then (after the nightly FNSrooms import).
       PMS_PREPARE_TIME: ${PMS_PREPARE_TIME:-05:00}
       PMS_SITE_URL: ${WEB_PUBLIC_URL:-http://localhost:5050}
+      # Admin page, FNS import: the FNS account of the hotels without their own, the key their own
+      # accounts' passwords are encrypted with (the same in fns-sync), and "Check connection".
+      FNS_USER: ${FNS_USER:-}
+      FNS_PASSWORD: ${FNS_PASSWORD:-}
+      FNS_SECRET_KEY: ${FNS_SECRET_KEY:-}
+      FNS_BASE_URL: ${FNS_BASE_URL:-https://ms.fnsmanager.com}
     volumes:
       - artifacts:/artifacts:ro
       - agentdata:/data
@@ -129,8 +135,9 @@ services:
     depends_on:
       - agent
 
-  # Daily import from the FNSrooms PMS API (FNS_* in .env; on with COMPOSE_PROFILES=fns).
-  # Run by hand: docker compose run --rm fns-sync python -m fns_sync check|run|status
+  # Daily import from the FNSrooms PMS API of every hotel added in the Admin page (FNS import),
+  # plus the one in .env (FNS_ALOJAMIENTO_ID...) on its first start; on with COMPOSE_PROFILES=fns.
+  # Run by hand: docker compose run --rm fns-sync python -m fns_sync check|run|status [--hotel CODE]
   fns-sync:
     build: ./fns_sync
     profiles: ["fns"]
@@ -151,6 +158,9 @@ services:
       FNS_SYNC_TIME: ${FNS_SYNC_TIME:-03:00}
       FNS_BACKFILL_DAYS: ${FNS_BACKFILL_DAYS:-365}
       FNS_PAUSE: ${FNS_PAUSE:-1}
+      FNS_RETRY_MINUTES: ${FNS_RETRY_MINUTES:-60}
+      FNS_SECRET_KEY: ${FNS_SECRET_KEY:-}
+      FNS_BASE_URL: ${FNS_BASE_URL:-https://ms.fnsmanager.com}
     volumes:
       - ./db/init/06_fns.sql:/app/schema.sql:ro
     depends_on:

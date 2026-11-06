@@ -28,6 +28,13 @@ class Settings:
     # The user directory (db/init/05_users.sh), as the pms_app role. When set, the website's users
     # sign in with these accounts, administrators manage them, and chat requires an active user.
     app_database_url: str | None = field(default_factory=lambda: os.environ.get("PMS_APP_DATABASE_URL") or None)
+    # Hotels imported from FNSrooms (fns_hotels.py, the Admin page's FNS import): the FNS account of
+    # the hotels without their own, and the key their own accounts' passwords are encrypted with
+    # (the same in the fns-sync service).
+    fns_user: str = field(default_factory=lambda: os.environ.get("FNS_USER") or "")
+    fns_password: str = field(default_factory=lambda: os.environ.get("FNS_PASSWORD") or "", repr=False)
+    fns_secret_key: str = field(default_factory=lambda: os.environ.get("FNS_SECRET_KEY") or "", repr=False)
+    fns_base_url: str = field(default_factory=lambda: os.environ.get("FNS_BASE_URL") or "https://ms.fnsmanager.com")
     # When the day's recommendations are made again (the hotels' time zone).
     timezone: str = field(default_factory=lambda: os.environ.get("PMS_TIMEZONE", "UTC"))
     # The daily email (digest.py): sent through this SMTP server at PMS_DIGEST_TIME (PMS_TIMEZONE)
