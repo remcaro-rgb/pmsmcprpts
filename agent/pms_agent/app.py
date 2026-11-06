@@ -166,7 +166,6 @@ class FnsHotelFields(BaseModel):
 
 class NewFnsHotel(FnsHotelFields):
     alojamiento_id: int = Field(gt=0, le=2_147_483_647)
-    central_id: int = Field(gt=0, le=2_147_483_647)
     code: str = Field(pattern=r"^[A-Za-z0-9_-]{2,12}$")
     name: str = Field(min_length=1, max_length=200)
     timezone: str = Field(min_length=1, max_length=64)

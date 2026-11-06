@@ -181,7 +181,7 @@ function HotelCard({
         </span>
       </div>
       <p className="mt-1 text-xs text-stone-500">
-        {t.fnsAlojamientoId} {h.alojamiento_id} · {t.fnsCentralId} {h.central_id} · {h.timezone} · {h.currency ?? "—"}
+        {t.fnsAlojamientoId} {h.alojamiento_id}{h.central_id ? ` · ${t.fnsCentralId} ${h.central_id}` : ""} · {h.timezone} · {h.currency ?? "—"}
       </p>
 
       {h.current && (
@@ -284,7 +284,7 @@ function HotelForm({
   const [form, setForm] = useState<Form>(
     hotel
       ? {
-          alojamiento_id: String(hotel.alojamiento_id), central_id: String(hotel.central_id), pms_id: hotel.pms_id ? String(hotel.pms_id) : "",
+          alojamiento_id: String(hotel.alojamiento_id), central_id: hotel.central_id ? String(hotel.central_id) : "", pms_id: hotel.pms_id ? String(hotel.pms_id) : "",
           code: hotel.code, name: hotel.name, city: hotel.city, country: hotel.country, timezone: hotel.timezone,
           moneda_id: hotel.moneda_id ? String(hotel.moneda_id) : "", currency: hotel.currency ?? "", sync_time: hotel.sync_time,
           backfill_days: String(hotel.backfill_days), fns_user: hotel.fns_user ?? "", fns_password: "", enabled: hotel.enabled,
@@ -331,7 +331,7 @@ function HotelForm({
         <legend className="text-sm font-semibold text-stone-600 dark:text-stone-300">{t.fnsSectionIds}</legend>
         <div className="grid gap-4 sm:grid-cols-3">
           {field("alojamiento_id", t.fnsAlojamientoId, { ...id, required: true })}
-          {field("central_id", t.fnsCentralId, { ...id, required: true })}
+          {field("central_id", t.fnsCentralIdOptional, id)}
           {field("pms_id", t.fnsPmsId, id)}
         </div>
       </fieldset>

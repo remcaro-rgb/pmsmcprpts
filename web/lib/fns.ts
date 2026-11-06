@@ -27,7 +27,7 @@ export type FnsRun = {
 export type FnsHotel = {
   id: number;
   alojamiento_id: number;
-  central_id: number;
+  central_id: number | null;
   pms_id: number | null;
   code: string;
   name: string;

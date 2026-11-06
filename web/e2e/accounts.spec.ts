@@ -91,7 +91,8 @@ test("administrators add a hotel from FNS and see its import waiting to start", 
   await page.getByRole("button", { name: "Add hotel" }).click();
 
   await page.getByLabel("Alojamiento ID").fill(String(500_000_000 + stamp));
-  await page.getByLabel("Central ID").fill("4284");
+  // The central ID is optional: left empty here.
+  await expect(page.getByLabel("Central ID (optional)")).not.toHaveAttribute("required", "");
   // The server's account is used when none is entered (the password field stays off).
   await expect(page.getByText("Leave both empty to use the server's FNS account.")).toBeVisible();
   await expect(page.getByLabel("FNS password")).toBeDisabled();

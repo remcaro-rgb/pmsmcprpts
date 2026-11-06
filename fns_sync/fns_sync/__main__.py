@@ -68,7 +68,7 @@ def check(cfg: Config, day: date | None = None) -> int:
     client = FNSClient(cfg, retries=0)
     today = day or datetime.now(cfg.tz).date()
     y, t = (today - timedelta(days=1)).isoformat(), today.isoformat()
-    a, c = cfg.alojamiento_id, cfg.central_id
+    a, c = cfg.alojamiento_id, cfg.central
     common = {"alojamiento_id": a, "start_date": y, "end_date": t}
     bodies = {
         "master": {"filter": {"central_id": "", "alojamiento_id": a, "listado": "th,cc,canales,segmentos"}},

@@ -188,7 +188,7 @@ class Sync:
             if target == moneda_id:
                 continue
             body = lambda a, b: self._filter(  # noqa: E731
-                central_id=self.cfg.central_id, start_date=iso(a), end_date=iso(b),
+                central_id=self.cfg.central, start_date=iso(a), end_date=iso(b),
                 moneda_src_id=moneda_id, moneda_dst_id=target)
             # In 30-day parts: a whole year at once makes the API stop answering for minutes.
             for a, b, payload in self._ranged("exchange", body, start, end, f"{moneda_id}->{target} ", optional=True,
@@ -208,7 +208,7 @@ class Sync:
 
     def production_cc(self, conn, hotel_id: int, moneda_id: int, start: date, end: date) -> None:
         body = lambda a, b: {"filter": self._filter(  # noqa: E731
-            alojamiento_id=self.cfg.alojamiento_id, central_id=self.cfg.central_id, start_date=iso(a),
+            alojamiento_id=self.cfg.alojamiento_id, central_id=self.cfg.central, start_date=iso(a),
             end_date=iso(b), moneda_id=moneda_id, impuesto=0)}
         for a, b, payload in self._ranged("production_cc", body, start, end):
             self._stored(store.save(conn, "fns_production_cc", hotel_id,
@@ -221,7 +221,7 @@ class Sync:
         it. The history before the refresh window is one call (stored as one period); the recent
         days are one call each, so they stay daily."""
         body = lambda a, b: {"filter": self._filter(  # noqa: E731
-            alojamiento_id=self.cfg.alojamiento_id, central_id=self.cfg.central_id, start_date=iso(a),
+            alojamiento_id=self.cfg.alojamiento_id, central_id=self.cfg.central, start_date=iso(a),
             end_date=iso(b), moneda_id=moneda_id, impuesto=0, fecha_simulacion=iso(today), fuente="",
             total=0), "group": ["canal_id", "segmento_id"]}
 
@@ -254,7 +254,7 @@ class Sync:
 
     def pos(self, conn, hotel_id: int, start: date, end: date) -> None:
         body = lambda a, b: {"filter": self._filter(  # noqa: E731
-            central_id=self.cfg.central_id, alojamiento_id=self.cfg.alojamiento_id, start_date=iso(a),
+            central_id=self.cfg.central, alojamiento_id=self.cfg.alojamiento_id, start_date=iso(a),
             end_date=iso(b), tipo=0)}
         for a, b, payload in self._ranged("pos", body, start, end):
             self._stored(store.save(conn, "fns_pos_sales", hotel_id, parse.pos(payload),
@@ -264,7 +264,7 @@ class Sync:
     def reservations(self, conn, hotel_id: int, start: date, end: date) -> None:
         for state in RESERVATION_STATES:
             body = lambda a, b: {"filter": {  # noqa: E731
-                "central_id": self.cfg.central_id, "alojamiento_id": self.cfg.alojamiento_id,
+                "central_id": self.cfg.central, "alojamiento_id": self.cfg.alojamiento_id,
                 "start_date": iso(a), "end_date": iso(b), "estado": state,
                 "verTitular": 1, "verHuespedes": 1, "verDetalles": 1, "verInhouse": 1}}
             # The cancelled and modified searches only add updates.
@@ -282,7 +282,7 @@ class Sync:
 
     def blocks(self, conn, hotel_id: int, start: date, end: date) -> None:
         body = lambda a, b: {"filter": {  # noqa: E731
-            "central_id": self.cfg.central_id, "alojamiento_id": self.cfg.alojamiento_id,
+            "central_id": self.cfg.central, "alojamiento_id": self.cfg.alojamiento_id,
             "start_date": iso(a), "end_date": iso(b)}}
         for a, b, payload in self._ranged("blocks", body, start, end, max_days=CHUNK_DAYS):
             if payload is not None:
@@ -291,7 +291,7 @@ class Sync:
 
     def availability(self, conn, hotel_id: int, start: date, end: date) -> None:
         body = lambda a, b: {"filter": {  # noqa: E731
-            "start_date": iso(a), "end_date": iso(b), "central_id": self.cfg.central_id,
+            "start_date": iso(a), "end_date": iso(b), "central_id": self.cfg.central,
             "alojamiento_id": self.cfg.alojamiento_id}}
         for a, b, payload in self._ranged("availability", body, start, end, max_days=CHUNK_DAYS):
             if payload is None:

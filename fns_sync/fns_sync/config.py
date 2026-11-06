@@ -42,7 +42,7 @@ def _seconds(env, name, default):
 class Config:
     user: str
     password: str = field(repr=False)
-    central_id: int
+    central_id: int  # 0: not known (the API is then sent central_id "", as for the methods that don't need it)
     alojamiento_id: int
     pms_id: int | None = None
     database_url: str = ""
@@ -83,7 +83,7 @@ class Config:
         """require_hotel=False: the settings shared by every hotel (the hotel itself may come from
         pms.fns_hotels; FNS_ALOJAMIENTO_ID then only adds that hotel on the first start)."""
         env = os.environ if env is None else env
-        required = ("FNS_USER", "FNS_PASSWORD", "FNS_CENTRAL_ID", "FNS_ALOJAMIENTO_ID") if require_hotel else ()
+        required = ("FNS_USER", "FNS_PASSWORD", "FNS_ALOJAMIENTO_ID") if require_hotel else ()
         missing = [n for n in required if not (env.get(n) or "").strip()]
         if missing:
             raise ValueError(f"Set {', '.join(missing)} in .env (credentials from FNSrooms).")
@@ -102,7 +102,7 @@ class Config:
         return cls(
             user=(env.get("FNS_USER") or "").strip(),
             password=env.get("FNS_PASSWORD") or "",
-            central_id=_int(env, "FNS_CENTRAL_ID", 0 if not require_hotel else None, positive=require_hotel),
+            central_id=_int(env, "FNS_CENTRAL_ID", 0, positive=False),
             alojamiento_id=_int(env, "FNS_ALOJAMIENTO_ID", 0 if not require_hotel else None, positive=require_hotel),
             pms_id=_int(env, "FNS_PMS_ID", 0, positive=False) or None,
             database_url=(env.get("FNS_DATABASE_URL") or env.get("DATABASE_URL") or "").strip(),
@@ -126,7 +126,12 @@ class Config:
 
     @property
     def has_hotel(self) -> bool:
-        return self.alojamiento_id > 0 and self.central_id > 0
+        return self.alojamiento_id > 0
+
+    @property
+    def central(self) -> int | str:
+        """central_id for the API: the hotel's central, or "" when it has none set."""
+        return self.central_id or ""
 
     def for_hotel(self, row: dict, account: bool = True) -> "Config":
         """This configuration for a pms.fns_hotels row: its ids, name and schedule, and its own FNS
@@ -144,7 +149,7 @@ class Config:
             raise ValueError(f"hotel {row['code']}: no FNS account. Enter one in the Admin page, or set FNS_USER "
                              "and FNS_PASSWORD in .env.")
         return dataclasses.replace(
-            self, user=user, password=password, central_id=row["central_id"], alojamiento_id=row["alojamiento_id"],
+            self, user=user, password=password, central_id=row.get("central_id") or 0, alojamiento_id=row["alojamiento_id"],
             pms_id=row.get("pms_id") or None, hotel_code=row["code"], hotel_name=row["name"],
             hotel_city=row.get("city") or "", hotel_country=row.get("country") or "",
             timezone=_timezone(row.get("timezone") or self.timezone, f"hotel {row['code']} time zone"),
