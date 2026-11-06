@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import type { Account, Hotel } from "@/lib/agent";
+import FnsLog from "./FnsLog";
 import FnsPanel from "./FnsPanel";
 import { useI18n } from "./I18n";
 
@@ -31,7 +32,7 @@ const primary = "rounded-lg bg-accent px-4 py-1.5 text-sm font-medium text-white
 
 export default function AdminPanel({ me }: { me: Account }) {
   const { t } = useI18n();
-  const [tab, setTab] = useState<"users" | "hotels" | "fns">("users");
+  const [tab, setTab] = useState<"users" | "hotels" | "fns" | "log">("users");
   const [users, setUsers] = useState<Account[]>([]);
   const [hotels, setHotels] = useState<Hotel[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -85,8 +86,8 @@ export default function AdminPanel({ me }: { me: Account }) {
         <a href="/" className="ml-auto text-sm text-accent hover:underline">{t.backToChat}</a>
       </header>
 
-      <nav role="tablist" className="mt-6 flex gap-1 border-b border-stone-200 dark:border-stone-800">
-        {(["users", "hotels", "fns"] as const).map((key) => (
+      <nav role="tablist" className="mt-6 flex gap-1 overflow-x-auto border-b border-stone-200 dark:border-stone-800">
+        {(["users", "hotels", "fns", "log"] as const).map((key) => (
           <button
             key={key}
             role="tab"
@@ -95,9 +96,9 @@ export default function AdminPanel({ me }: { me: Account }) {
               setTab(key);
               setNotice(null);
             }}
-            className={`-mb-px border-b-2 px-3 py-2 text-sm ${tab === key ? "border-accent font-medium" : "border-transparent text-stone-500 hover:text-stone-800 dark:hover:text-stone-200"}`}
+            className={`-mb-px shrink-0 whitespace-nowrap border-b-2 px-3 py-2 text-sm ${tab === key ? "border-accent font-medium" : "border-transparent text-stone-500 hover:text-stone-800 dark:hover:text-stone-200"}`}
           >
-            {key === "users" ? t.usersTab : key === "hotels" ? t.hotelsTab : t.fnsTab}
+            {{ users: t.usersTab, hotels: t.hotelsTab, fns: t.fnsTab, log: t.logTab }[key]}
           </button>
         ))}
       </nav>
@@ -113,7 +114,9 @@ export default function AdminPanel({ me }: { me: Account }) {
         </p>
       )}
 
-      {tab === "fns" ? (
+      {tab === "log" ? (
+        <FnsLog api={api} />
+      ) : tab === "fns" ? (
         <FnsPanel api={api} onNotice={setNotice} />
       ) : tab === "users" ? (
         editing ? (

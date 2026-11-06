@@ -225,3 +225,9 @@ def set_progress(conn: psycopg.Connection, run_id: int, progress: dict) -> None:
     with conn.transaction():
         conn.execute("UPDATE pms.fns_sync_runs SET progress = %s WHERE id = %s",
                      (Jsonb(json.loads(json.dumps(progress, default=str))), run_id))
+
+
+def prune_log(conn: psycopg.Connection, days: int) -> int:
+    with conn.transaction():
+        return conn.execute("DELETE FROM pms.fns_sync_log WHERE at < now() - make_interval(days => %s)",
+                            (days,)).rowcount

@@ -74,6 +74,7 @@ class FNSClient:
         self.config = config
         self.retries = retries
         self.sleep = sleep
+        self.last: dict[str, str] = {}
         self.http = httpx2.Client(base_url=config.base_url, auth=(config.user, config.password),
                                   timeout=httpx2.Timeout(300, connect=20), transport=transport,
                                   headers={"Accept": "application/json"})
@@ -81,25 +82,43 @@ class FNSClient:
     def close(self) -> None:
         self.http.close()
 
+    def curl(self, path: str, body: dict[str, Any]) -> str:
+        """The request as a curl command that reads the account from .env (set -a; source .env)."""
+        data = json.dumps(body, ensure_ascii=False, separators=(",", ":")).replace("'", "'\\''")
+        return (f"curl -sS -X POST '{self.config.base_url}{path}' -u \"$FNS_USER:$FNS_PASSWORD\" "
+                f"-H 'Content-Type: application/json' -H 'Accept: application/json' -d '{data}'")
+
     def call(self, name: str, body: dict[str, Any]) -> Any:
         """The decoded JSON response, or None when the API has no data for the request (404, or a
         "No se han encontrado..." message)."""
         path = ENDPOINTS[name]
+        # The request and its answers, for the import log (the password is never in it).
+        self.last = {"command": self.curl(path, body), "output": ""}
+        attempts: list[str] = []
         for attempt in range(self.retries + 1):
+            started = time.monotonic()
+            took = lambda: f"{time.monotonic() - started:.1f} s"  # noqa: E731
             try:
                 r = self.http.post(path, json=body)
             except httpx2.ReadTimeout as e:
                 # Not retried: the same request would be as slow. The caller can ask for less.
+                attempts.append(f"no answer after {took()} ({e.__class__.__name__}: {e})")
+                self.last["output"] = "\n".join(attempts)
                 raise TooSlow(f"{path}: no answer within {self.http.timeout.read:.0f} s") from e
             except httpx2.TransportError as e:
+                attempts.append(f"could not connect after {took()} ({e.__class__.__name__}: {e})")
+                self.last["output"] = "\n".join(attempts)
                 if attempt == self.retries:
                     raise Unreachable(f"{path}: could not reach the API ({e.__class__.__name__}: {e})") from e
                 self.sleep(2 ** (attempt + 1))
                 continue
+            attempts.append(f"HTTP {r.status_code} in {took()}")
             if r.status_code >= 500 and attempt < self.retries:
+                attempts[-1] += f": {r.text[:300]}"
                 self.sleep(2 ** (attempt + 1))
                 continue
             break
+        self.last["output"] = "\n".join(attempts) + "\n" + r.text
         try:
             payload = r.json()
         except (json.JSONDecodeError, ValueError):

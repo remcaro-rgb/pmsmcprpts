@@ -7,6 +7,7 @@ import re
 import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from datetime import datetime
 from datetime import time as dt_time
 from pathlib import Path
 from typing import Any, Literal
@@ -350,6 +351,27 @@ def create_app(settings: Settings | None = None, client: Any = None, mcp_target:
     async def fns_hotel_runs(hotel_id: int, _: User = Depends(admin)) -> dict[str, Any]:
         try:
             return {"runs": await need_fns().runs(hotel_id)}
+        except UserError as e:
+            raise user_error(e) from None
+
+    @app.get("/api/admin/fns/log")
+    async def fns_log(since: datetime | None = Query(default=None), until: datetime | None = Query(default=None),
+                      hotel: int | None = Query(default=None, gt=0),
+                      level: list[Literal["error", "warning", "info"]] = Query(default=[]),
+                      q: str | None = Query(default=None, max_length=200),
+                      before: int | None = Query(default=None, gt=0),
+                      limit: int = Query(default=100, ge=1, le=500), _: User = Depends(admin)) -> dict[str, Any]:
+        """The import log: since/until (ISO date-times), hotel (its id), level (any of error, warning,
+        info), q (text in the line or its request); before (an id) for the next page."""
+        try:
+            return await need_fns().log(since, until, hotel, list(level), (q or "").strip() or None, before, limit)
+        except UserError as e:
+            raise user_error(e) from None
+
+    @app.get("/api/admin/fns/log/{entry_id}")
+    async def fns_log_entry(entry_id: int, _: User = Depends(admin)) -> dict[str, Any]:
+        try:
+            return await need_fns().log_entry(entry_id)
         except UserError as e:
             raise user_error(e) from None
 

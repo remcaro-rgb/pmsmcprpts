@@ -12,7 +12,7 @@ from typing import Any, Callable, Iterator
 
 import psycopg
 
-from . import parse, store
+from . import parse, runlog, store
 from .client import AuthError, FNSClient, FNSError, MissingRate, TooSlow, Unreachable
 from .config import Config
 
@@ -33,6 +33,8 @@ STEPS = ("master", "revenue", "production_cc", "sales_reservations", "reservatio
 # Steps that load FNS_BACKFILL_DAYS of history the first time (then only the recent days).
 HISTORY_STEPS = ("revenue", "production_cc", "sales_reservations", "reservations", "pos", "accounting", "exchange",
                  "production")
+# How a finished import shows in the import log.
+LOG_LEVEL = {"ok": logging.INFO, "partial": logging.WARNING, "failed": logging.ERROR}
 # Calls in a row that may fail to connect before the run gives up (the API is down or blocking us).
 MAX_UNREACHABLE = 3
 
@@ -85,23 +87,35 @@ class Sync:
             f["pms_id"] = self.cfg.pms_id
         return f
 
-    def _call(self, name: str, body: dict, window: str = "", optional: bool = False) -> Any:
-        """Calls the API; on failure records it and returns None (AuthError stops the run)."""
+    def _call(self, name: str, body: dict, window: str = "", optional: bool = False,
+              splittable: bool = False) -> Any:
+        """Calls the API; on failure records it and returns None (AuthError stops the run). Each call
+        goes to the import log with its request and answer: information when it answered, a warning
+        when the run goes on without it (optional, or read again in parts: splittable), else an error."""
         started = _time.monotonic()
         entry = {"method": name, "window": window}
         self.calls.append(entry)
         self._progress(name, window)
+        label = f"{name} {window}".strip()
+
+        def logged(level: int, message: str) -> None:
+            last = getattr(self.client, "last", None) or {}
+            log.log(level, "%s: %s", label, message, extra={"command": last.get("command"), "output": last.get("output")})
+
         try:
             result = self.client.call(name, body)
             entry["ok"] = True
             self.unreachable = 0
+            status = ((getattr(self.client, "last", None) or {}).get("output") or "").split("\n", 1)[0]
+            logged(logging.INFO, f"answered{f' ({status})' if status else ''}" if result is not None else "no data")
             return result
         except AuthError as e:
             entry.update(ok=False, error=str(e))
+            logged(logging.ERROR, str(e))
             raise
         except Unreachable as e:
             entry.update(ok=False, error=str(e))
-            log.warning("%s %s: %s", name, window, e)
+            logged(logging.WARNING if optional else logging.ERROR, str(e))
             self.unreachable += 1
             if self.unreachable >= MAX_UNREACHABLE:
                 raise StopRun(f"the FNS API didn't answer {self.unreachable} calls in a row; stopping this run "
@@ -110,11 +124,11 @@ class Sync:
         except MissingRate as e:
             # The days without a rate yet are read again by the next nights' refresh.
             entry.update(ok=False, error=str(e), optional=True, split=True)
-            log.warning("%s %s: %s", name, window, e)
+            logged(logging.WARNING, f"{e} (read again on the next imports)")
             return None
         except (TooSlow, FNSError) as e:
             entry.update(ok=False, error=str(e), optional=optional, split=True)
-            log.warning("%s %s: %s", name, window, e)
+            logged(logging.WARNING if optional or splittable else logging.ERROR, str(e))
             return None
         finally:
             entry["seconds"] = round(_time.monotonic() - started, 2)
@@ -130,7 +144,7 @@ class Sync:
         rejects or is too slow with is made again in CHUNK_DAYS parts. Answers may be None (no data)."""
         span = max_days or max((end - start).days + 1, 1)
         for a, b in windows(start, end, span):
-            payload = self._call(name, body(a, b), f"{label}{a}..{b}", optional)
+            payload = self._call(name, body(a, b), f"{label}{a}..{b}", optional, splittable=(b - a).days >= CHUNK_DAYS)
             entry = self.calls[-1]
             if entry.get("ok"):
                 yield a, b, payload
@@ -319,6 +333,11 @@ class Sync:
 
     def history(self, conn: psycopg.Connection, start: date, end: date, today: date | None = None,
                 only: set[str] | None = None) -> dict:
+        with runlog.context():
+            return self._history(conn, start, end, today, only)
+
+    def _history(self, conn: psycopg.Connection, start: date, end: date, today: date | None,
+                 only: set[str] | None) -> dict:
         """Load the history steps for an earlier range start..end (e.g. the rest of a year before the
         first import's history), each method in as few calls as the API allows. Recorded as a run;
         returns {"run_id", "status", "calls", "rows", "loaded", "failed_steps"}."""
@@ -334,6 +353,7 @@ class Sync:
         run_id = store.start_run(conn, hotel_id, True)
         self.calls, self.unreachable = [], 0
         self.report = lambda progress: store.set_progress(conn, run_id, progress)  # noqa: E731
+        runlog.update(hotel_id=hotel_id, run_id=run_id)
         log.info("FNS import for %s (alojamiento %s): history %s..%s for %s", cfg.hotel_code, cfg.alojamiento_id,
                  start, end, ", ".join(wanted))
         ctx: dict[str, Any] = {}
@@ -380,7 +400,7 @@ class Sync:
         self._progress()
         store.finish_run(conn, run_id, status, self.calls)
         rows = sum(c.get("rows", 0) for c in self.calls)
-        log.info("FNS history import %s: %s calls, %s rows stored", status, len(self.calls), rows)
+        log.log(LOG_LEVEL[status], "FNS history import %s: %s calls, %s rows stored", status, len(self.calls), rows)
         return {"run_id": run_id, "status": status, "calls": self.calls, "rows": rows, "loaded": loaded,
                 "failed_steps": [s for s in order if s not in loaded]}
 
@@ -388,6 +408,11 @@ class Sync:
 
     def run(self, conn: psycopg.Connection, backfill: bool | None = None, today: date | None = None,
             only: set[str] | None = None) -> dict:
+        with runlog.context():
+            return self._run(conn, backfill, today, only)
+
+    def _run(self, conn: psycopg.Connection, backfill: bool | None, today: date | None,
+             only: set[str] | None) -> dict:
         """Import everything; returns {"run_id", "status", "calls", "rows", "backfill", "pending"}.
         Each history step loads FNS_BACKFILL_DAYS until it has done so once (backfill=True: again),
         so an interrupted first import resumes where it stopped."""
@@ -403,6 +428,7 @@ class Sync:
         run_id = store.start_run(conn, hotel_id, bool(backfilling))
         self.calls, self.unreachable = [], 0
         self.report = lambda progress: store.set_progress(conn, run_id, progress)  # noqa: E731
+        runlog.update(hotel_id=hotel_id, run_id=run_id)
         log.info("FNS import for %s (alojamiento %s): %s", cfg.hotel_code, cfg.alojamiento_id,
                  f"loading history from {history_from} for {', '.join(backfilling)}" if backfilling
                  else f"daily refresh from {refresh_from}")
@@ -479,7 +505,7 @@ class Sync:
         store.finish_run(conn, run_id, status, self.calls)
         rows = sum(c.get("rows", 0) for c in self.calls)
         pending = [s for s in wanted if s not in loaded]
-        log.info("FNS import %s: %s calls, %s rows stored%s", status, len(self.calls), rows,
+        log.log(LOG_LEVEL[status], "FNS import %s: %s calls, %s rows stored%s", status, len(self.calls), rows,
                  f"; history still to load: {', '.join(pending)}" if pending else "")
         return {"run_id": run_id, "status": status, "calls": self.calls, "rows": rows,
                 "backfill": bool(backfilling), "pending": pending}

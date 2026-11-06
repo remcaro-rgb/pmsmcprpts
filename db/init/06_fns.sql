@@ -389,13 +389,30 @@ CREATE TABLE IF NOT EXISTS fns_hotels (
 COMMENT ON TABLE fns_hotels IS 'Hotels imported from FNSrooms and their import settings (fns-sync service).';
 REVOKE ALL ON fns_hotels FROM pms_readonly;
 
+-- The importer's log, shown in the Admin page (Import log): each line with its hotel and import,
+-- and for an API call the request (a curl command without the password) and what the API answered.
+-- Lines older than FNS_LOG_DAYS (90) are deleted.
+CREATE TABLE IF NOT EXISTS fns_sync_log (
+    id       bigserial PRIMARY KEY,
+    at       timestamptz NOT NULL DEFAULT now(),
+    hotel_id integer REFERENCES hotels ON DELETE CASCADE,
+    run_id   bigint REFERENCES fns_sync_runs ON DELETE SET NULL,
+    level    text NOT NULL CHECK (level IN ('error', 'warning', 'info')),
+    message  text NOT NULL,
+    command  text,
+    output   text
+);
+CREATE INDEX IF NOT EXISTS fns_sync_log_at ON fns_sync_log (at DESC);
+CREATE INDEX IF NOT EXISTS fns_sync_log_hotel ON fns_sync_log (hotel_id, at DESC);
+REVOKE ALL ON fns_sync_log FROM pms_readonly;
+
 -- The agent's role (05_users.sh) manages them from the Admin page and reads the import log.
 DO $$
 BEGIN
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'pms_app') THEN
         GRANT SELECT, INSERT, UPDATE ON fns_hotels TO pms_app;
         GRANT USAGE ON SEQUENCE fns_hotels_id_seq TO pms_app;
-        GRANT SELECT ON fns_sync_runs, fns_sync_steps TO pms_app;
+        GRANT SELECT ON fns_sync_runs, fns_sync_steps, fns_sync_log TO pms_app;
     END IF;
 END $$;
 

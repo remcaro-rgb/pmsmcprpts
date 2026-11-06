@@ -63,3 +63,39 @@ export function percent(p: FnsProgress | undefined): number {
   if (!p?.planned) return 0;
   return Math.max(1, Math.min(99, Math.round(((p.calls ?? 0) / p.planned) * 100)));
 }
+
+export const LOG_LEVELS = ["error", "warning", "info"] as const;
+export type FnsLogLevel = (typeof LOG_LEVELS)[number];
+
+export type FnsLogEntry = {
+  id: number;
+  at: string;
+  level: FnsLogLevel;
+  message: string;
+  hotel_id: number | null;
+  code: string | null;
+  run_id: number | null;
+  command?: string | null; // a single line's, with its output
+  output?: string | null;
+};
+
+export type FnsLogPage = {
+  entries: FnsLogEntry[];
+  counts: Record<FnsLogLevel, number>;
+  next_before_id: number | null;
+};
+
+/** The import log's query string: whole local days from..to, a hotel, the statuses and a search. */
+export function logQuery(f: { from: string; to: string; hotel?: string; levels: readonly FnsLogLevel[]; q?: string; before?: number }): string {
+  const p = new URLSearchParams();
+  const start = new Date(`${f.from}T00:00:00`);
+  const end = new Date(`${f.to}T00:00:00`);
+  end.setDate(end.getDate() + 1); // through the end of the last day
+  if (!Number.isNaN(start.getTime())) p.set("since", start.toISOString());
+  if (!Number.isNaN(end.getTime())) p.set("until", end.toISOString());
+  if (f.hotel) p.set("hotel", f.hotel);
+  for (const lv of f.levels) p.append("level", lv);
+  if (f.q) p.set("q", f.q);
+  if (f.before) p.set("before", String(f.before));
+  return `?${p.toString()}`;
+}

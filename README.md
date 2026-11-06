@@ -131,6 +131,15 @@ errors, and the recent imports. **Import now** runs it again at once and **Pause
 daily imports. The hotel appears in the Admin page's user list after its first import starts:
 tick it for the users who should see it.
 
+**Import log.** **Admin → Import log** lists everything the importer logged, newest first:
+each FNS API call (information when FNS answered, a warning when the import goes on without it,
+e.g. a list FNS doesn't offer or a day without an exchange rate, failed otherwise) with the curl
+command that made it and what FNS answered, and each import's result. Filter by dates, hotel,
+status (failed, warning, information) and text; open a line to see and copy its command and
+output. The command reads the FNS account from `.env` (`set -a; source .env; set +a` first), so
+the password is never in the log. Lines are kept `FNS_LOG_DAYS` (90) days in `fns_sync_log`; of a
+successful answer the first 2,000 characters are kept, of a failed one 20,000.
+
 **Set it up** (on the computer that runs Docker; the credentials stay in its `.env`):
 
 1. Add the FNS account FNSrooms gave you and a key for the passwords saved per hotel to `.env`,

@@ -156,3 +156,53 @@ async def test_checking_the_account_with_fns(site):
     # A saved hotel's own account, without typing its password again.
     saved = await fns.create({**NEW, "fns_user": "fns-user", "fns_password": "fns-secret"})
     assert (await fns.verify({"alojamiento_id": ALOJ, "fns_user": "fns-user"}, saved["id"]))["ok"]
+
+
+@needs_db
+@pytest.mark.anyio
+async def test_the_import_log_filters_and_shows_each_call(site):
+    http, as_admin, _ = site
+    hotel = (await http.post("/api/admin/fns/hotels", headers=as_admin, json=NEW)).json()
+    now = datetime.now().astimezone()
+    with owner() as c:  # what the fns-sync service writes
+        hotel_id = c.execute("INSERT INTO pms.hotels (code, name, city, country, star_rating, total_rooms, currency, "
+                             "timezone, opened_on, alojamiento_id, pms_id) VALUES ('NUE', 'Hotel Nuevo', '', '', 3, 0, "
+                             "'COP', 'America/Bogota', current_date, %s, %s) RETURNING id",
+                             (ALOJ, 900_000_000 + ALOJ)).fetchone()[0]
+        c.execute("UPDATE pms.fns_hotels SET hotel_id = %s WHERE id = %s", (hotel_id, hotel["id"]))
+        lines = [(now - timedelta(days=3), "info", "revenue 2026-01-01..2026-01-31: answered (HTTP 200 in 1.2 s)",
+                  "curl -sS -X POST 'https://ms.fnsmanager.com/v1/ventas/revenue.php' -d '{}'", "HTTP 200 in 1.2 s\n{}"),
+                 (now - timedelta(hours=2), "warning", "master usuariosGastro: Listado no disponible (HTTP 422)",
+                  "curl -sS -X POST 'https://ms.fnsmanager.com/v1/maestros/alojamiento.php'", "HTTP 422 in 0.3 s"),
+                 (now - timedelta(hours=1), "error", "pos 2026-01-01..2026-01-30: HTTP 500", "curl pos", "HTTP 500"),
+                 (now, "info", "FNS import partial: 3 calls, 10 rows stored", None, None)]
+        for at, level, message, command, output in lines:
+            c.execute("INSERT INTO pms.fns_sync_log (at, hotel_id, level, message, command, output) "
+                      "VALUES (%s, %s, %s, %s, %s, %s)", (at, hotel_id, level, message, command, output))
+
+    async def get(**params):
+        r = await http.get("/api/admin/fns/log", headers=as_admin, params={"hotel": hotel_id, **params})
+        assert r.status_code == 200, r.text
+        return r.json()
+
+    everything = await get()
+    assert [e["level"] for e in everything["entries"]] == ["info", "error", "warning", "info"]  # newest first
+    assert everything["counts"] == {"error": 1, "warning": 1, "info": 2}
+    assert everything["entries"][0]["code"] == "NUE" and "command" not in everything["entries"][0]
+    problems = await get(level=["error", "warning"])
+    assert [e["level"] for e in problems["entries"]] == ["error", "warning"]
+    recent = await get(since=(now - timedelta(days=1)).isoformat())
+    assert len(recent["entries"]) == 3 and recent["counts"]["info"] == 1
+    older = await get(until=(now - timedelta(days=1)).isoformat())
+    assert [e["message"][:7] for e in older["entries"]] == ["revenue"]
+    assert [e["level"] for e in (await get(q="usuariosGastro"))["entries"]] == ["warning"]
+    page = await get(limit=2)
+    assert len(page["entries"]) == 2 and page["next_before_id"]
+    rest = await get(limit=2, before=page["next_before_id"])
+    assert [e["level"] for e in rest["entries"]] == ["warning", "info"] and rest["next_before_id"] is None
+
+    # One line with its request and answer.
+    entry = (await http.get(f"/api/admin/fns/log/{problems['entries'][1]['id']}", headers=as_admin)).json()
+    assert entry["command"].startswith("curl -sS -X POST") and entry["output"] == "HTTP 422 in 0.3 s"
+    assert (await http.get("/api/admin/fns/log/999999999", headers=as_admin)).status_code == 404
+    assert (await http.get("/api/admin/fns/log")).status_code == 403  # administrators only
