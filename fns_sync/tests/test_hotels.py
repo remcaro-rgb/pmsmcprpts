@@ -63,6 +63,17 @@ def test_when_a_hotel_is_imported():
     assert cli.due(cfg, asked, {**ran(at(20, 3)), "status": "running"}, False, at(20, 23, 1)) is None
 
 
+def test_a_hotel_without_a_central_id_sends_it_empty():
+    cfg = BASE.for_hotel({**ROW, "central_id": None})
+    assert (cfg.central_id, cfg.central, BASE.for_hotel(ROW).central) == (0, "", 4274)
+    sent = []
+    s = Sync(cfg, FNSClient(cfg, transport=FakeFNS(ALOJ, TODAY).transport(), sleep=lambda s: None),
+             sleep=lambda s: None)
+    s.client.call = lambda name, body: sent.append(body) or None
+    s.blocks(None, 1, TODAY, TODAY)  # with no answer, nothing to store
+    assert sent[0]["filter"]["central_id"] == "" and sent[0]["filter"]["alojamiento_id"] == ALOJ
+
+
 def test_each_hotel_uses_its_account_or_the_one_in_env():
     assert (BASE.for_hotel(ROW).user, BASE.for_hotel(ROW).password) == (USER, PASSWORD)
     own = {**ROW, "fns_user": "other", "fns_password": encrypt("other-secret", "test-key")}

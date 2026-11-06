@@ -93,6 +93,13 @@ async def test_adding_a_hotel_queues_its_first_import(site):
                                   json={**NEW, "alojamiento_id": ALOJ + 1, "code": "OK", "fns_user": "x"})
     assert no_password.status_code == 400 and "password" in no_password.json()["detail"]
 
+    # The central ID is optional.
+    no_central = await http.post("/api/admin/fns/hotels", headers=as_admin,
+                                 json={k: v for k, v in {**NEW, "alojamiento_id": ALOJ + 1, "code": "NOC"}.items()
+                                       if k != "central_id"})
+    assert no_central.status_code == 201, no_central.text
+    assert no_central.json()["central_id"] is None
+
     # Back to the account in .env; paused; then edited.
     r = await http.patch(f"/api/admin/fns/hotels/{hotel['id']}", headers=as_admin,
                          json={"fns_user": "", "enabled": False, "name": "Hotel Nuevo Centro"})

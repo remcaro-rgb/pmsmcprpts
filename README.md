@@ -113,7 +113,7 @@ stops answering (3 calls in a row), the run stops and tries again `FNS_RETRY_MIN
 resuming with the steps whose history isn't loaded yet; `fns_sync status` lists them.
 
 **Add hotels in the website.** In **Admin → FNS import**, an administrator adds a hotel with
-the same details Fragata needs: its FNS alojamiento and central IDs (and PMS ID if it has one),
+the same details Fragata needs: its FNS alojamiento ID (and central and PMS IDs if it has them),
 its name and short code for the reports, city, country, time zone, currency (FNS currency ID and
 code; empty: taken from its accounting), the daily import time and how much history to load. Its
 FNS user and password are optional: left empty, the account in `.env` (`FNS_USER`,

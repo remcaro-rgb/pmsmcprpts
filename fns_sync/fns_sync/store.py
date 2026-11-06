@@ -188,7 +188,7 @@ def add_env_hotel(conn: psycopg.Connection, cfg: Config) -> None:
             "INSERT INTO pms.fns_hotels (alojamiento_id, central_id, pms_id, code, name, city, country, timezone, "
             "moneda_id, currency, sync_time, backfill_days, hotel_id) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, "
             "%s, %s, (SELECT id FROM pms.hotels WHERE alojamiento_id = %s)) ON CONFLICT DO NOTHING",
-            (cfg.alojamiento_id, cfg.central_id, cfg.pms_id, cfg.hotel_code, cfg.hotel_name, cfg.hotel_city,
+            (cfg.alojamiento_id, cfg.central_id or None, cfg.pms_id, cfg.hotel_code, cfg.hotel_name, cfg.hotel_city,
              cfg.hotel_country, cfg.timezone, cfg.moneda_id, cfg.currency, cfg.run_at, cfg.backfill_days,
              cfg.alojamiento_id))
 

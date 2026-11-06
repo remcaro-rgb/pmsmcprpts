@@ -367,7 +367,7 @@ ALTER TABLE fns_sync_runs ADD COLUMN IF NOT EXISTS progress jsonb;
 CREATE TABLE IF NOT EXISTS fns_hotels (
     id               serial PRIMARY KEY,
     alojamiento_id   integer NOT NULL UNIQUE CHECK (alojamiento_id > 0),
-    central_id       integer NOT NULL CHECK (central_id > 0),
+    central_id       integer CHECK (central_id > 0),  -- optional
     pms_id           integer CHECK (pms_id > 0),
     code             text NOT NULL UNIQUE CHECK (code ~ '^[A-Z0-9_-]{2,12}$'),
     name             text NOT NULL CHECK (btrim(name) <> ''),
@@ -386,6 +386,7 @@ CREATE TABLE IF NOT EXISTS fns_hotels (
     created_at       timestamptz NOT NULL DEFAULT now(),
     updated_at       timestamptz NOT NULL DEFAULT now()
 );
+ALTER TABLE fns_hotels ALTER COLUMN central_id DROP NOT NULL;  -- databases from before it was optional
 COMMENT ON TABLE fns_hotels IS 'Hotels imported from FNSrooms and their import settings (fns-sync service).';
 REVOKE ALL ON fns_hotels FROM pms_readonly;
 
