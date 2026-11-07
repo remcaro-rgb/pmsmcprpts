@@ -163,6 +163,11 @@ class FnsHotelFields(BaseModel):
     def _empty(cls, v):
         return v.strip() if isinstance(v, str) else v
 
+    @field_validator("central_id", "pms_id", "moneda_id", mode="before")
+    @classmethod
+    def _no_id(cls, v):
+        return None if v in (0, "0", "") else v  # an optional ID left at 0: none
+
 
 class NewFnsHotel(FnsHotelFields):
     alojamiento_id: int = Field(gt=0, le=2_147_483_647)
@@ -177,6 +182,11 @@ class FnsCheck(BaseModel):
     fns_user: str | None = Field(default=None, max_length=200)
     fns_password: str | None = Field(default=None, max_length=200)
     hotel: int | None = Field(default=None, gt=0)  # a saved hotel: its account when none is given
+
+    @field_validator("pms_id", mode="before")
+    @classmethod
+    def _no_id(cls, v):
+        return None if v in (0, "0", "") else v
 
 
 class SignIn(BaseModel):

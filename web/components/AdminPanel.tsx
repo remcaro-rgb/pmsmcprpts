@@ -40,6 +40,16 @@ export default function AdminPanel({ me }: { me: Account }) {
   // null: no form; "new": creating; a user: editing them.
   const [editing, setEditing] = useState<Account | "new" | null>(null);
 
+  /** The fields a request was refused for (the agent's validation errors), in words. */
+  const invalid = useCallback(
+    (detail: unknown) => {
+      if (tab === "users" || !Array.isArray(detail)) return t.invalidFields;
+      const names = detail.map((d) => d?.loc?.at?.(-1)).filter((n): n is string => typeof n === "string");
+      return t.checkFields([...new Set(names)].map((n) => t.fieldNames[n] ?? n).join(", "));
+    },
+    [t, tab],
+  );
+
   /** Calls the admin API; returns the JSON body, or null after showing the error. */
   const api = useCallback(
     async (path: string, method = "GET", body?: unknown) => {
@@ -53,7 +63,7 @@ export default function AdminPanel({ me }: { me: Account }) {
         if (r.status === 204) return {};
         const data = await r.json().catch(() => ({}));
         if (!r.ok) {
-          setError(typeof data.detail === "string" ? data.detail : t.invalidFields);
+          setError(typeof data.detail === "string" ? data.detail : invalid(data.detail));
           return null;
         }
         return data;
@@ -62,7 +72,7 @@ export default function AdminPanel({ me }: { me: Account }) {
         return null;
       }
     },
-    [t],
+    [t, invalid],
   );
 
   const load = useCallback(async () => {
