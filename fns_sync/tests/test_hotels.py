@@ -78,6 +78,21 @@ def test_a_hotel_without_a_central_id_leaves_it_out():
     assert "central_id" not in sent[1]["filter"] and sent[1]["filter"]["listado"] == "th"
 
 
+def test_a_pms_id_of_0_is_sent():
+    # Some accounts refuse payments, POS and sales by reservation without pms_id 0.
+    sent = []
+    for pms_id, expected in ((0, 0), (None, "-"), (77, 77)):
+        cfg = BASE.for_hotel({**ROW, "pms_id": pms_id})
+        s = Sync(cfg, FNSClient(cfg, transport=FakeFNS(ALOJ, TODAY).transport(), sleep=lambda s: None),
+                 sleep=lambda s: None)
+        s.client.call = lambda name, body: sent.append(body) or None
+        s.accounting(None, 1, TODAY, TODAY)  # with no answers, nothing to store
+        assert {b["filter"].get("pms_id", "-") for b in sent} == {expected}
+        sent.clear()
+    assert Config.from_env({"FNS_PMS_ID": "0"}, require_hotel=False).pms_id == 0
+    assert Config.from_env({"FNS_PMS_ID": ""}, require_hotel=False).pms_id is None
+
+
 def test_each_hotel_uses_its_account_or_the_one_in_env():
     assert (BASE.for_hotel(ROW).user, BASE.for_hotel(ROW).password) == (USER, PASSWORD)
     own = {**ROW, "fns_user": "other", "fns_password": encrypt("other-secret", "test-key")}

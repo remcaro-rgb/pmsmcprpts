@@ -88,8 +88,8 @@ class Sync:
 
     def _filter(self, **fields: Any) -> dict:
         f = dict(fields)
-        if self.cfg.pms_id:
-            f["pms_id"] = self.cfg.pms_id
+        if self.cfg.pms_id is not None:
+            f["pms_id"] = self.cfg.pms_id  # 0 too: accounts that need it refuse some methods without it
         return f
 
     def _call(self, name: str, body: dict, window: str = "", optional: bool = False,

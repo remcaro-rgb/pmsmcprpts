@@ -344,7 +344,7 @@ class FnsHotels:
         aloj, central = data["alojamiento_id"], data.get("central_id")
         today = datetime.now().date()
         days = {"start_date": (today - timedelta(days=1)).isoformat(), "end_date": today.isoformat()}
-        extra = {"pms_id": data["pms_id"]} if data.get("pms_id") else {}
+        extra = {"pms_id": data["pms_id"]} if data.get("pms_id") is not None else {}  # 0 too
         # Some accounts refuse central_id "" or 0 as wrong credentials: left out when there is none.
         blank = {"central_id": ""} if central else {}
         checks: list[dict[str, Any]] = []

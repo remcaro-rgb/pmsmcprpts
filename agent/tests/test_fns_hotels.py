@@ -111,11 +111,12 @@ async def test_adding_a_hotel_queues_its_first_import(site):
                                        if k != "central_id"})
     assert no_central.status_code == 201, no_central.text
     assert no_central.json()["central_id"] is None
-    # 0 in an optional ID means none.
+    # 0 in an optional ID means none...
     zeros = await http.patch(f"/api/admin/fns/hotels/{no_central.json()['id']}", headers=as_admin,
                              json={"central_id": 0, "pms_id": "0", "moneda_id": 0})
     assert zeros.status_code == 200, zeros.text
-    assert (zeros.json()["central_id"], zeros.json()["pms_id"], zeros.json()["moneda_id"]) == (None, None, None)
+    # ...except the PMS ID, which is kept: some accounts need pms_id 0.
+    assert (zeros.json()["central_id"], zeros.json()["pms_id"], zeros.json()["moneda_id"]) == (None, 0, None)
     # Other refusals name the field, for the page to show.
     bad = await http.post("/api/admin/fns/hotels", headers=as_admin, json={**NEW, "alojamiento_id": -1})
     assert bad.status_code == 422 and bad.json()["detail"][0]["loc"][-1] == "alojamiento_id"

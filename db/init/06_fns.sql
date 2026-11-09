@@ -368,7 +368,7 @@ CREATE TABLE IF NOT EXISTS fns_hotels (
     id               serial PRIMARY KEY,
     alojamiento_id   integer NOT NULL UNIQUE CHECK (alojamiento_id > 0),
     central_id       integer CHECK (central_id > 0),  -- optional
-    pms_id           integer CHECK (pms_id > 0),
+    pms_id           integer CHECK (pms_id >= 0),  -- optional; 0 is sent to FNS as pms_id 0
     code             text NOT NULL UNIQUE CHECK (code ~ '^[A-Z0-9_-]{2,12}$'),
     name             text NOT NULL CHECK (btrim(name) <> ''),
     city             text NOT NULL DEFAULT '',
@@ -387,6 +387,8 @@ CREATE TABLE IF NOT EXISTS fns_hotels (
     updated_at       timestamptz NOT NULL DEFAULT now()
 );
 ALTER TABLE fns_hotels ALTER COLUMN central_id DROP NOT NULL;  -- databases from before it was optional
+ALTER TABLE fns_hotels DROP CONSTRAINT IF EXISTS fns_hotels_pms_id_check;  -- it was > 0
+ALTER TABLE fns_hotels ADD CONSTRAINT fns_hotels_pms_id_check CHECK (pms_id >= 0);
 COMMENT ON TABLE fns_hotels IS 'Hotels imported from FNSrooms and their import settings (fns-sync service).';
 REVOKE ALL ON fns_hotels FROM pms_readonly;
 

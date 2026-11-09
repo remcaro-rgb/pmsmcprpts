@@ -44,7 +44,7 @@ class Config:
     password: str = field(repr=False)
     central_id: int  # 0: not known (the API calls then leave central_id out)
     alojamiento_id: int
-    pms_id: int | None = None
+    pms_id: int | None = None  # None: not sent; 0 is sent (some accounts need pms_id 0 for some methods)
     database_url: str = ""
     base_url: str = BASE_URL
     # The hotel as it appears in the reports.
@@ -104,7 +104,7 @@ class Config:
             password=env.get("FNS_PASSWORD") or "",
             central_id=_int(env, "FNS_CENTRAL_ID", 0, positive=False),
             alojamiento_id=_int(env, "FNS_ALOJAMIENTO_ID", 0 if not require_hotel else None, positive=require_hotel),
-            pms_id=_int(env, "FNS_PMS_ID", 0, positive=False) or None,
+            pms_id=_int(env, "FNS_PMS_ID", 0, positive=False) if (env.get("FNS_PMS_ID") or "").strip() else None,
             database_url=(env.get("FNS_DATABASE_URL") or env.get("DATABASE_URL") or "").strip(),
             base_url=(env.get("FNS_BASE_URL") or BASE_URL).rstrip("/"),
             hotel_code=code,
@@ -158,7 +158,7 @@ class Config:
                              "and FNS_PASSWORD in .env.")
         return dataclasses.replace(
             self, user=user, password=password, central_id=row.get("central_id") or 0, alojamiento_id=row["alojamiento_id"],
-            pms_id=row.get("pms_id") or None, hotel_code=row["code"], hotel_name=row["name"],
+            pms_id=row.get("pms_id"), hotel_code=row["code"], hotel_name=row["name"],
             hotel_city=row.get("city") or "", hotel_country=row.get("country") or "",
             timezone=_timezone(row.get("timezone") or self.timezone, f"hotel {row['code']} time zone"),
             moneda_id=row.get("moneda_id") or None, currency=row.get("currency") or None,
