@@ -47,12 +47,14 @@ const ID = /^[1-9][0-9]{0,9}$/;
 // Optional IDs: empty or 0 means none.
 const OPTIONAL_ID = /^[0-9]{0,10}$/;
 const optionalId = (v: string) => (Number(v.trim()) > 0 ? Number(v.trim()) : null);
+// The PMS ID: empty means none, but 0 is sent as 0 (some FNS accounts need pms_id 0).
+const pmsId = (v: string) => (v.trim() === "" ? null : Number(v.trim()));
 
 /** The body the agent expects: numbers as numbers, empty optional fields left out (or cleared). */
 function body(form: Form, editing: boolean): Record<string, unknown> {
   const num = (v: string) => (v.trim() ? Number(v) : null);
   const out: Record<string, unknown> = {
-    alojamiento_id: num(form.alojamiento_id), central_id: optionalId(form.central_id), pms_id: optionalId(form.pms_id),
+    alojamiento_id: num(form.alojamiento_id), central_id: optionalId(form.central_id), pms_id: pmsId(form.pms_id),
     code: form.code.trim().toUpperCase(), name: form.name.trim(), city: form.city.trim(), country: form.country.trim(),
     timezone: form.timezone.trim(), moneda_id: optionalId(form.moneda_id), currency: form.currency.trim().toUpperCase(),
     sync_time: form.sync_time, backfill_days: num(form.backfill_days), fns_user: form.fns_user.trim(), enabled: form.enabled,
@@ -287,7 +289,7 @@ function HotelForm({
   const [form, setForm] = useState<Form>(
     hotel
       ? {
-          alojamiento_id: String(hotel.alojamiento_id), central_id: hotel.central_id ? String(hotel.central_id) : "", pms_id: hotel.pms_id ? String(hotel.pms_id) : "",
+          alojamiento_id: String(hotel.alojamiento_id), central_id: hotel.central_id ? String(hotel.central_id) : "", pms_id: hotel.pms_id === null ? "" : String(hotel.pms_id),
           code: hotel.code, name: hotel.name, city: hotel.city, country: hotel.country, timezone: hotel.timezone,
           moneda_id: hotel.moneda_id ? String(hotel.moneda_id) : "", currency: hotel.currency ?? "", sync_time: hotel.sync_time,
           backfill_days: String(hotel.backfill_days), fns_user: hotel.fns_user ?? "", fns_password: "", enabled: hotel.enabled,
@@ -362,7 +364,7 @@ function HotelForm({
               const r = await api("fns/check", "POST", {
                 alojamiento_id: Number(form.alojamiento_id),
                 central_id: optionalId(form.central_id) ?? undefined,
-                pms_id: optionalId(form.pms_id) ?? undefined,
+                pms_id: pmsId(form.pms_id) ?? undefined,
                 language: locale,
                 fns_user: form.fns_user.trim() || undefined,
                 fns_password: form.fns_password || undefined,

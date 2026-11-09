@@ -88,6 +88,10 @@ def check(cfg: Config, day: date | None = None) -> int:
         "blocks": {"filter": {**common, "central_id": c}},
         "availability": {"filter": {**common, "central_id": c}},
     }
+    if cfg.pms_id is not None:  # as the import sends it (not to the reservation, block and availability searches)
+        for name, body in bodies.items():
+            if name not in ("reservations", "blocks", "availability"):
+                (body["filter"] if "filter" in body else body)["pms_id"] = cfg.pms_id
     failures = 0
     print(f"FNS API check for alojamiento {a} (central {c or 'none'}), {y} to {t}:")
     for name in ENDPOINTS:

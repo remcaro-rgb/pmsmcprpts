@@ -144,7 +144,7 @@ class FnsHotelFields(BaseModel):
     fns_user: the FNS account in the server's .env."""
     alojamiento_id: int | None = Field(default=None, gt=0, le=2_147_483_647)
     central_id: int | None = Field(default=None, gt=0, le=2_147_483_647)
-    pms_id: int | None = Field(default=None, gt=0, le=2_147_483_647)
+    pms_id: int | None = Field(default=None, ge=0, le=2_147_483_647)
     code: str | None = Field(default=None, pattern=r"^[A-Za-z0-9_-]{2,12}$")
     name: str | None = Field(default=None, min_length=1, max_length=200)
     city: str | None = Field(default=None, max_length=100)
@@ -163,10 +163,15 @@ class FnsHotelFields(BaseModel):
     def _empty(cls, v):
         return v.strip() if isinstance(v, str) else v
 
-    @field_validator("central_id", "pms_id", "moneda_id", mode="before")
+    @field_validator("central_id", "moneda_id", mode="before")
     @classmethod
     def _no_id(cls, v):
         return None if v in (0, "0", "") else v  # an optional ID left at 0: none
+
+    @field_validator("pms_id", mode="before")
+    @classmethod
+    def _pms_id(cls, v):
+        return None if v == "" else v  # 0 is kept: some accounts need pms_id 0
 
 
 class NewFnsHotel(FnsHotelFields):
@@ -179,16 +184,21 @@ class NewFnsHotel(FnsHotelFields):
 class FnsCheck(BaseModel):
     alojamiento_id: int = Field(gt=0, le=2_147_483_647)
     central_id: int | None = Field(default=None, gt=0, le=2_147_483_647)
-    pms_id: int | None = Field(default=None, gt=0, le=2_147_483_647)
+    pms_id: int | None = Field(default=None, ge=0, le=2_147_483_647)
     language: Literal["en", "es"] = "en"
     fns_user: str | None = Field(default=None, max_length=200)
     fns_password: str | None = Field(default=None, max_length=200)
     hotel: int | None = Field(default=None, gt=0)  # a saved hotel: its account when none is given
 
-    @field_validator("central_id", "pms_id", mode="before")
+    @field_validator("central_id", mode="before")
     @classmethod
     def _no_id(cls, v):
         return None if v in (0, "0", "") else v
+
+    @field_validator("pms_id", mode="before")
+    @classmethod
+    def _pms_id(cls, v):
+        return None if v == "" else v
 
 
 class SignIn(BaseModel):
