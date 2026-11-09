@@ -34,12 +34,24 @@ def owner() -> psycopg.Connection:
 
 
 def fake_fns(request: httpx2.Request) -> httpx2.Response:
+    """Like a real account that refuses central_id "" and needs the central for reservations."""
     body = json.loads(request.content)["filter"]
-    if request.headers.get("authorization") != httpx2.BasicAuth("fns-user", "fns-secret")._auth_header:
+    seen.append((request.url.path, body))
+    if request.headers.get("authorization") != httpx2.BasicAuth("fns-user", "fns-secret")._auth_header \
+            or body.get("central_id") == "":
         return httpx2.Response(403, json={"mensaje": "Los datos de acceso no son válidos"})
     if body["alojamiento_id"] != ALOJ:
         return httpx2.Response(403, json={"error": "PMS not allowed to this property"})
+    if request.url.path.endswith("listado.php") and body.get("central_id") != 4284:
+        return httpx2.Response(403, json={"mensaje": "Falta el central_id o es inválido"})
+    if request.url.path.endswith("revenue.php"):
+        return httpx2.Response(200, json={body["start_date"]: {"num_hab_tot": "22"}})
+    if request.url.path.endswith("listado.php"):
+        return httpx2.Response(200, json={"reservas": []})
     return httpx2.Response(200, json={" th": {"1": "Doble", "2": "Suite"}})
+
+
+seen: list[tuple[str, dict]] = []
 
 
 @pytest.fixture
@@ -162,12 +174,24 @@ async def test_progress_of_a_running_import_and_import_now(site):
 @pytest.mark.anyio
 async def test_checking_the_account_with_fns(site):
     _, _, fns = site
-    ok = await fns.verify({"alojamiento_id": ALOJ})  # the account in .env
-    assert ok == {"ok": True, "room_types": 2, "message": "FNS answered: 2 room types."}
+    ok = await fns.verify({"alojamiento_id": ALOJ})  # the account in .env, no central ID
+    assert ok["ok"] and ok["room_types"] == 2 and ok["message"].startswith("The account works, but not for everything")
+    assert ok["checks"] == [
+        {"name": "Room types", "ok": True, "message": "2 room types"},
+        {"name": "Revenue", "ok": True, "message": "answered"},
+        {"name": "Reservations", "ok": False, "message": "need the central ID: enter it to import reservations"}]
+    # Without a central ID, central_id is left out (this account refuses "" as wrong credentials).
+    assert all("central_id" not in body for _, body in seen)
+    seen.clear()
+    full = await fns.verify({"alojamiento_id": ALOJ, "central_id": 4284}, language="es")
+    assert full["message"] == "La cuenta funciona para este hotel." and all(c["ok"] for c in full["checks"])
+    assert [c["name"] for c in full["checks"]] == ["Tipos de habitación", "Ingresos", "Reservas"]
+    # "" was refused, then tried without it, as the import does.
+    assert [body.get("central_id", "-") for _, body in seen] == ["", "-", "-", 4284]
     wrong_hotel = await fns.verify({"alojamiento_id": ALOJ + 1})
     assert not wrong_hotel["ok"] and "PMS not allowed" in wrong_hotel["message"]
     wrong_password = await fns.verify({"alojamiento_id": ALOJ, "fns_user": "fns-user", "fns_password": "nope"})
-    assert not wrong_password["ok"] and "HTTP 403" in wrong_password["message"]
+    assert not wrong_password["ok"] and "HTTP 403" in wrong_password["message"] and not wrong_password["checks"]
     # A saved hotel's own account, without typing its password again.
     saved = await fns.create({**NEW, "fns_user": "fns-user", "fns_password": "fns-secret"})
     assert (await fns.verify({"alojamiento_id": ALOJ, "fns_user": "fns-user"}, saved["id"]))["ok"]

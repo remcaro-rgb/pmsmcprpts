@@ -19,6 +19,38 @@ from .users import UserError
 
 FNS_URL = "https://ms.fnsmanager.com"
 MASTER = "/v1/maestros/alojamiento.php"
+REVENUE = "/v1/ventas/revenue.php"
+RESERVATIONS = "/v1/reservas/listado.php"
+CHECK_TEXT = {
+    "en": {
+        "no_account": "Enter the FNS account (user and password): the server's .env has none.",
+        "refused": lambda why: f"FNS refused the account for this hotel ({why}). Check the user, the password and "
+                               "the alojamiento ID.",
+        "no_answer": lambda kind: f"FNS didn't answer ({kind}). Try again in a few minutes.",
+        "room_types": "Room types", "revenue": "Revenue", "reservations": "Reservations",
+        "room_types_ok": lambda n: f"{n} room types",
+        "no_room_types": "none for this alojamiento ID: check the ID",
+        "answered": "answered",
+        "needs_central": "need the central ID: enter it to import reservations",
+        "all_ok": "The account works for this hotel.",
+        "some_failed": "The account works, but not for everything: the parts marked ✕ won't be imported until "
+                       "that is fixed (in FNS, or here).",
+    },
+    "es": {
+        "no_account": "Escribe la cuenta de FNS (usuario y contraseña): el .env del servidor no tiene una.",
+        "refused": lambda why: f"FNS rechazó la cuenta para este hotel ({why}). Revisa el usuario, la contraseña y "
+                               "el ID de alojamiento.",
+        "no_answer": lambda kind: f"FNS no respondió ({kind}). Inténtalo de nuevo en unos minutos.",
+        "room_types": "Tipos de habitación", "revenue": "Ingresos", "reservations": "Reservas",
+        "room_types_ok": lambda n: f"{n} tipos de habitación",
+        "no_room_types": "ninguno para este ID de alojamiento: revisa el ID",
+        "answered": "respondió",
+        "needs_central": "necesitan el ID de central: escríbelo para importar las reservas",
+        "all_ok": "La cuenta funciona para este hotel.",
+        "some_failed": "La cuenta funciona, pero no para todo: lo marcado con ✕ no se importará hasta corregirlo "
+                       "(en FNS o aquí).",
+    },
+}
 # fns_sync.sync.HISTORY_STEPS: each loads the history once; a hotel is ready when all have.
 HISTORY_STEPS = ("revenue", "production_cc", "sales_reservations", "reservations", "pos", "accounting", "exchange",
                  "production")
@@ -295,41 +327,67 @@ class FnsHotels:
 
     # --- checking an account -----------------------------------------------------------------------
 
-    async def verify(self, data: dict[str, Any], fns_hotel_id: int | None = None) -> dict[str, Any]:
-        """Asks FNS for the hotel's room types with the account given (else the hotel's saved one, else
-        the one in .env), so a mistyped id or password shows before the import starts."""
+    async def verify(self, data: dict[str, Any], fns_hotel_id: int | None = None,
+                     language: str = "en") -> dict[str, Any]:
+        """Tries the account given (else the hotel's saved one, else the one in .env) with three
+        small requests: the hotel's room types, yesterday's and today's revenue, and their
+        reservations (which need the central ID). Each is reported on its own, so a mistyped ID or
+        password, or a method the account may not use, shows before the import starts."""
+        say = CHECK_TEXT.get(language, CHECK_TEXT["en"])
         user, password = (data.get("fns_user") or "").strip(), data.get("fns_password") or ""
         if user and not password and fns_hotel_id:
             password = await self._saved_password(fns_hotel_id, user)
         if not user:
             user, password = self.user, self.password
         if not user or not password:
-            raise UserError("Enter the FNS account (user and password): the server's .env has none.")
-        body = {"filter": {"central_id": "", "alojamiento_id": data["alojamiento_id"], "listado": "th"}}
-        if data.get("pms_id"):
-            body["filter"]["pms_id"] = data["pms_id"]
+            raise UserError(say["no_account"])
+        aloj, central = data["alojamiento_id"], data.get("central_id")
+        today = datetime.now().date()
+        days = {"start_date": (today - timedelta(days=1)).isoformat(), "end_date": today.isoformat()}
+        extra = {"pms_id": data["pms_id"]} if data.get("pms_id") else {}
+        # Some accounts refuse central_id "" or 0 as wrong credentials: left out when there is none.
+        blank = {"central_id": ""} if central else {}
+        checks: list[dict[str, Any]] = []
         try:
             async with httpx2.AsyncClient(base_url=self.base_url, auth=(user, password), transport=self.transport,
                                          timeout=httpx2.Timeout(60, connect=15),
                                          headers={"Accept": "application/json"}) as http:
-                response = await http.post(MASTER, json=body)
+                async def ask(path: str, filt: dict) -> tuple[bool, Any, str]:
+                    response = await http.post(path, json={"filter": {**filt, **extra}})
+                    try:
+                        payload = response.json()
+                    except ValueError:
+                        payload = None
+                    message = payload.get("mensaje") or payload.get("error") if isinstance(payload, dict) else None
+                    ok = response.status_code < 400 and payload is not None and not (
+                        isinstance(payload, dict) and payload and set(payload) <= {"mensaje", "error", "@attributes"})
+                    return ok, payload, f"HTTP {response.status_code}" + (f": {message}" if message else "")
+
+                ok, payload, why = await ask(MASTER, {**blank, "alojamiento_id": aloj, "listado": "th"})
+                if not ok and blank and why.startswith(("HTTP 401", "HTTP 403")):
+                    blank = {}  # some accounts refuse central_id "": as the import does, try without it
+                    ok, payload, why = await ask(MASTER, {"alojamiento_id": aloj, "listado": "th"})
+                if not ok:
+                    return {"ok": False, "message": say["refused"](why), "checks": []}
+                lists = {str(k).strip(): v for k, v in payload.items()} if isinstance(payload, dict) else {}
+                room_types = len(lists["th"]) if isinstance(lists.get("th"), dict) else 0
+                checks.append({"name": say["room_types"], "ok": room_types > 0,
+                               "message": say["room_types_ok"](room_types) if room_types else say["no_room_types"]})
+                ok, _, why = await ask(REVENUE, {**blank, "alojamiento_id": aloj, **days, "moneda_id": 1, "impuesto": 0})
+                checks.append({"name": say["revenue"], "ok": ok, "message": say["answered"] if ok else why})
+                if central:
+                    ok, _, why = await ask(RESERVATIONS, {"central_id": central, "alojamiento_id": aloj, **days,
+                                                          "estado": "Todas"})
+                    checks.append({"name": say["reservations"], "ok": ok, "message": say["answered"] if ok else why})
+                else:
+                    checks.append({"name": say["reservations"], "ok": False, "message": say["needs_central"]})
         except httpx2.HTTPError as e:
-            return {"ok": False, "message": f"FNS didn't answer ({e.__class__.__name__}). Try again in a few minutes."}
-        try:
-            payload = response.json()
-        except ValueError:
-            payload = None
-        if response.status_code >= 400 or not isinstance(payload, dict):
-            message = (payload or {}).get("mensaje") or (payload or {}).get("error") if isinstance(payload, dict) \
-                else None
-            return {"ok": False, "message": f"FNS refused it (HTTP {response.status_code})"
-                    + (f": {message}" if message else "") + ". Check the account and the alojamiento ID."}
-        lists = {str(k).strip(): v for k, v in payload.items()}  # the API's keys can have stray spaces
-        room_types = len(lists["th"]) if isinstance(lists.get("th"), dict) else 0
-        if not room_types:
-            return {"ok": True, "room_types": 0, "message": "FNS accepted the account but lists no room types for this "
-                    "alojamiento ID: check the ID."}
-        return {"ok": True, "room_types": room_types, "message": f"FNS answered: {room_types} room types."}
+            if not checks:
+                return {"ok": False, "message": say["no_answer"](e.__class__.__name__), "checks": []}
+            checks.append({"name": "FNS", "ok": False, "message": say["no_answer"](e.__class__.__name__)})
+        all_ok = all(c["ok"] for c in checks)
+        return {"ok": True, "room_types": room_types, "checks": checks,
+                "message": say["all_ok"] if all_ok else say["some_failed"]}
 
     async def _saved_password(self, fns_hotel_id: int, user: str) -> str:
         async with await self._connect() as conn:

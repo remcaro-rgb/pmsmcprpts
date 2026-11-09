@@ -178,12 +178,14 @@ class NewFnsHotel(FnsHotelFields):
 
 class FnsCheck(BaseModel):
     alojamiento_id: int = Field(gt=0, le=2_147_483_647)
+    central_id: int | None = Field(default=None, gt=0, le=2_147_483_647)
     pms_id: int | None = Field(default=None, gt=0, le=2_147_483_647)
+    language: Literal["en", "es"] = "en"
     fns_user: str | None = Field(default=None, max_length=200)
     fns_password: str | None = Field(default=None, max_length=200)
     hotel: int | None = Field(default=None, gt=0)  # a saved hotel: its account when none is given
 
-    @field_validator("pms_id", mode="before")
+    @field_validator("central_id", "pms_id", mode="before")
     @classmethod
     def _no_id(cls, v):
         return None if v in (0, "0", "") else v
@@ -387,7 +389,7 @@ def create_app(settings: Settings | None = None, client: Any = None, mcp_target:
     @app.post("/api/admin/fns/check")
     async def check_fns_account(body: FnsCheck, _: User = Depends(admin)) -> dict[str, Any]:
         try:
-            return await need_fns().verify(body.model_dump(exclude_none=True), body.hotel)
+            return await need_fns().verify(body.model_dump(exclude_none=True), body.hotel, body.language)
         except UserError as e:
             raise user_error(e) from None
 

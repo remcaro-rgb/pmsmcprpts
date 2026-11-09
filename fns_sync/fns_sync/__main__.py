@@ -32,7 +32,7 @@ import psycopg
 from . import runlog, store
 from .client import ENDPOINTS, AuthError, FNSClient, FNSError, MissingRate
 from .config import Config
-from .sync import HISTORY_STEPS, STEPS, Sync
+from .sync import HISTORY_STEPS, STEPS, Sync, without_none
 
 log = logging.getLogger("fns_sync")
 DB_RETRY_SECONDS = 30
@@ -71,7 +71,7 @@ def check(cfg: Config, day: date | None = None) -> int:
     a, c = cfg.alojamiento_id, cfg.central
     common = {"alojamiento_id": a, "start_date": y, "end_date": t}
     bodies = {
-        "master": {"filter": {"central_id": "", "alojamiento_id": a, "listado": "th,cc,canales,segmentos"}},
+        "master": {"filter": {"central_id": cfg.central_blank, "alojamiento_id": a, "listado": "th,cc,canales,segmentos"}},
         "exchange": {"central_id": c, "start_date": y, "end_date": t, "moneda_src_id": cfg.moneda_id or 1,
                      "moneda_dst_id": 2 if (cfg.moneda_id or 1) != 2 else 1},
         "production": {"filter": {**common, "central_id": c, "moneda_id": cfg.moneda_id or 1, "impuesto": 0,
@@ -80,7 +80,7 @@ def check(cfg: Config, day: date | None = None) -> int:
         "production_cc": {"filter": {**common, "central_id": c, "moneda_id": cfg.moneda_id or 1, "impuesto": 0}},
         "sales_reservations": {"filter": common},
         "pos": {"filter": {**common, "central_id": c, "tipo": 0}},
-        "revenue": {"filter": {**common, "central_id": "", "moneda_id": cfg.moneda_id or 1, "impuesto": 0}},
+        "revenue": {"filter": {**common, "central_id": cfg.central_blank, "moneda_id": cfg.moneda_id or 1, "impuesto": 0}},
         "payments": {"filter": common},
         "invoices": {"filter": common},
         "accounting_production": {"filter": common},
@@ -89,10 +89,10 @@ def check(cfg: Config, day: date | None = None) -> int:
         "availability": {"filter": {**common, "central_id": c}},
     }
     failures = 0
-    print(f"FNS API check for alojamiento {a} (central {c}), {y} to {t}:")
+    print(f"FNS API check for alojamiento {a} (central {c or 'none'}), {y} to {t}:")
     for name in ENDPOINTS:
         try:
-            result = client.call(name, bodies[name])
+            result = client.call(name, without_none(bodies[name]))
             print(f"  OK    {ENDPOINTS[name]:34} {'no data' if result is None else _shape(result)}")
         except AuthError as e:
             print(f"  DENIED {ENDPOINTS[name]:33} {e}")

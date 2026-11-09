@@ -51,6 +51,11 @@ def windows(start: date, end: date, days: int = CHUNK_DAYS) -> Iterator[tuple[da
         start = stop + timedelta(days=1)
 
 
+def without_none(body: dict) -> dict:
+    """The body without the fields set to None (e.g. central_id for a hotel without one)."""
+    return {k: without_none(v) if isinstance(v, dict) else v for k, v in body.items() if v is not None}
+
+
 def iso(d: date) -> str:
     return d.isoformat()
 
@@ -103,7 +108,7 @@ class Sync:
             log.log(level, "%s: %s", label, message, extra={"command": last.get("command"), "output": last.get("output")})
 
         try:
-            result = self.client.call(name, body)
+            result = self.client.call(name, without_none(body))
             entry["ok"] = True
             self.unreachable = 0
             status = ((getattr(self.client, "last", None) or {}).get("output") or "").split("\n", 1)[0]
@@ -161,7 +166,8 @@ class Sync:
     def master(self, conn, hotel_id: int) -> None:
         for kind in MASTER_KINDS:
             payload = self._call("master", {"filter": self._filter(
-                central_id="", alojamiento_id=self.cfg.alojamiento_id, listado=kind)}, kind, optional=True)
+                central_id=self.cfg.central_blank, alojamiento_id=self.cfg.alojamiento_id, listado=kind)}, kind,
+                optional=True)
             if payload is not None:
                 rows = [r for r in parse.master(payload) if r["kind"] == kind] if isinstance(payload, dict) else []
                 self._stored(store.save(conn, "fns_master_items", hotel_id, rows, ("hotel_id", "kind", "item_id")))
@@ -199,7 +205,7 @@ class Sync:
 
     def revenue(self, conn, hotel_id: int, moneda_id: int, start: date, end: date) -> None:
         body = lambda a, b: {"filter": self._filter(  # noqa: E731
-            alojamiento_id=self.cfg.alojamiento_id, central_id="", start_date=iso(a), end_date=iso(b),
+            alojamiento_id=self.cfg.alojamiento_id, central_id=self.cfg.central_blank, start_date=iso(a), end_date=iso(b),
             moneda_id=moneda_id, impuesto=0)}
         for a, b, payload in self._ranged("revenue", body, start, end):
             if payload is not None:
