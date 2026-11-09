@@ -283,7 +283,7 @@ function HotelForm({
   onCancel: () => void;
   onSaved: (isNew: boolean) => Promise<void>;
 }) {
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
   const [form, setForm] = useState<Form>(
     hotel
       ? {
@@ -295,7 +295,7 @@ function HotelForm({
       : EMPTY(),
   );
   const [busy, setBusy] = useState(false);
-  const [check, setCheck] = useState<{ ok: boolean; message: string } | null>(null);
+  const [check, setCheck] = useState<{ ok: boolean; message: string; checks?: { name: string; ok: boolean; message: string }[] } | null>(null);
   const set = <K extends keyof Form>(key: K, value: Form[K]) => setForm((f) => ({ ...f, [key]: value }));
   const field = (key: keyof Omit<Form, "enabled">, label: string, extra: Record<string, unknown> = {}, hint?: string) => (
     <div className="text-sm">
@@ -361,7 +361,9 @@ function HotelForm({
               setCheck({ ok: true, message: t.fnsChecking });
               const r = await api("fns/check", "POST", {
                 alojamiento_id: Number(form.alojamiento_id),
+                central_id: optionalId(form.central_id) ?? undefined,
                 pms_id: optionalId(form.pms_id) ?? undefined,
+                language: locale,
                 fns_user: form.fns_user.trim() || undefined,
                 fns_password: form.fns_password || undefined,
                 hotel: hotel?.id,
@@ -372,11 +374,22 @@ function HotelForm({
             {t.fnsCheck}
           </button>
           {check && (
-            <span role="status" data-testid="fns-check" className={`text-sm ${check.ok ? "text-emerald-700 dark:text-emerald-400" : "text-red-700 dark:text-red-400"}`}>
+            <span role="status" data-testid="fns-check" className={`text-sm ${!check.ok ? "text-red-700 dark:text-red-400" : check.checks?.some((c) => !c.ok) ? "text-amber-700 dark:text-amber-400" : "text-emerald-700 dark:text-emerald-400"}`}>
               {check.message}
             </span>
           )}
         </div>
+        {check?.checks && check.checks.length > 0 && (
+          <ul className="space-y-0.5 text-sm" data-testid="fns-check-list">
+            {check.checks.map((c) => (
+              <li key={c.name} className="flex gap-2">
+                <span aria-hidden="true" className={c.ok ? "text-emerald-600" : "text-red-600"}>{c.ok ? "✓" : "✕"}</span>
+                <span className="font-medium">{c.name}:</span>
+                <span className="text-stone-600 dark:text-stone-400">{c.message}</span>
+              </li>
+            ))}
+          </ul>
+        )}
       </fieldset>
 
       <fieldset className="space-y-3">

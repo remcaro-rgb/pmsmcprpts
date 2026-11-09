@@ -42,7 +42,7 @@ def _seconds(env, name, default):
 class Config:
     user: str
     password: str = field(repr=False)
-    central_id: int  # 0: not known (the API is then sent central_id "", as for the methods that don't need it)
+    central_id: int  # 0: not known (the API calls then leave central_id out)
     alojamiento_id: int
     pms_id: int | None = None
     database_url: str = ""
@@ -129,9 +129,17 @@ class Config:
         return self.alojamiento_id > 0
 
     @property
-    def central(self) -> int | str:
-        """central_id for the API: the hotel's central, or "" when it has none set."""
-        return self.central_id or ""
+    def central(self) -> int | None:
+        """central_id for the API: the hotel's central, or None (left out of the call) when it has none
+        set. Some accounts refuse central_id "" or 0 as wrong credentials; without it most methods
+        answer, but the reservation search needs it."""
+        return self.central_id or None
+
+    @property
+    def central_blank(self) -> str | None:
+        """central_id for the methods that don't filter by central (master data, revenue): "" as they
+        have always been sent, or left out for a hotel without one (some accounts refuse "")."""
+        return "" if self.central_id else None
 
     def for_hotel(self, row: dict, account: bool = True) -> "Config":
         """This configuration for a pms.fns_hotels row: its ids, name and schedule, and its own FNS

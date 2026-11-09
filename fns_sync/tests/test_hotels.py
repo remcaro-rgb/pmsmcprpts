@@ -63,15 +63,19 @@ def test_when_a_hotel_is_imported():
     assert cli.due(cfg, asked, {**ran(at(20, 3)), "status": "running"}, False, at(20, 23, 1)) is None
 
 
-def test_a_hotel_without_a_central_id_sends_it_empty():
+def test_a_hotel_without_a_central_id_leaves_it_out():
+    # Some accounts refuse central_id "" (or 0) as wrong credentials; most methods answer without it.
     cfg = BASE.for_hotel({**ROW, "central_id": None})
-    assert (cfg.central_id, cfg.central, BASE.for_hotel(ROW).central) == (0, "", 4274)
+    assert (cfg.central_id, cfg.central, cfg.central_blank) == (0, None, None)
+    assert (BASE.for_hotel(ROW).central, BASE.for_hotel(ROW).central_blank) == (4274, "")
     sent = []
     s = Sync(cfg, FNSClient(cfg, transport=FakeFNS(ALOJ, TODAY).transport(), sleep=lambda s: None),
              sleep=lambda s: None)
     s.client.call = lambda name, body: sent.append(body) or None
     s.blocks(None, 1, TODAY, TODAY)  # with no answer, nothing to store
-    assert sent[0]["filter"]["central_id"] == "" and sent[0]["filter"]["alojamiento_id"] == ALOJ
+    s.master(None, 1)
+    assert sent[0]["filter"] == {"alojamiento_id": ALOJ, "start_date": str(TODAY), "end_date": str(TODAY)}
+    assert "central_id" not in sent[1]["filter"] and sent[1]["filter"]["listado"] == "th"
 
 
 def test_each_hotel_uses_its_account_or_the_one_in_env():
@@ -215,3 +219,27 @@ def test_the_import_log_keeps_each_call_with_its_request_and_answer(owner):
     assert any("No existe tipo de cambio" in m for m in warnings)
     assert not [line for line in lines if line["level"] == "error"]
     assert lines[-1]["message"].startswith("FNS import ok: ") and lines[-1]["level"] == "info"
+
+
+def test_an_account_that_refuses_a_blank_central_id_is_asked_without_it():
+    import json as _json
+
+    import httpx2
+
+    sent = []
+
+    def fns(request):
+        body = _json.loads(request.content)["filter"]
+        sent.append(dict(body))
+        if body.get("central_id") == "":
+            return httpx2.Response(403, json={"mensaje": "Los datos de acceso no son válidos"})
+        return httpx2.Response(200, json={"th": {"1": "Doble"}})
+
+    cfg = BASE.for_hotel(ROW)
+    client = FNSClient(cfg, transport=httpx2.MockTransport(fns), sleep=lambda s: None)
+    body = {"filter": {"central_id": "", "alojamiento_id": ALOJ, "listado": "th"}}
+    assert client.call("master", body) == {"th": {"1": "Doble"}}
+    assert client.call("master", body) == {"th": {"1": "Doble"}}  # the next calls go without it at once
+    assert [b.get("central_id", "-") for b in sent] == ["", "-", "-"]
+    # Real IDs are kept, and a wrong password still stops the import.
+    assert client.call("master", {"filter": {"central_id": 4274, "alojamiento_id": ALOJ}}) and sent[-1]["central_id"] == 4274

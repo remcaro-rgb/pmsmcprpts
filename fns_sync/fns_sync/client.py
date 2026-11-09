@@ -60,6 +60,13 @@ MISSING_RATE = re.compile(r"no existe tipo de cambio", re.I)
 RANGE_TOO_LONG = re.compile(r"rango de fechas no puede|superior a \d+ d[ií]as|period not valid", re.I)
 
 
+def _without_blank_central(body: dict[str, Any]) -> dict[str, Any]:
+    out = {k: v for k, v in body.items() if not (k == "central_id" and v == "")}
+    if isinstance(body.get("filter"), dict):
+        out["filter"] = _without_blank_central(body["filter"])
+    return out
+
+
 def _message(payload: Any, fallback: str) -> str:
     if isinstance(payload, dict):
         for key in ("mensaje", "error", "message"):
@@ -75,6 +82,7 @@ class FNSClient:
         self.retries = retries
         self.sleep = sleep
         self.last: dict[str, str] = {}
+        self.no_blank_central = False  # this account refuses central_id ""
         self.http = httpx2.Client(base_url=config.base_url, auth=(config.user, config.password),
                                   timeout=httpx2.Timeout(300, connect=20), transport=transport,
                                   headers={"Accept": "application/json"})
@@ -90,7 +98,20 @@ class FNSClient:
 
     def call(self, name: str, body: dict[str, Any]) -> Any:
         """The decoded JSON response, or None when the API has no data for the request (404, or a
-        "No se han encontrado..." message)."""
+        "No se han encontrado..." message). Some accounts refuse central_id "" (sent by the methods
+        that don't filter by central) as wrong credentials: then the call is made again without it,
+        and so are the next ones."""
+        if self.no_blank_central:
+            body = _without_blank_central(body)
+        try:
+            return self._call(name, body)
+        except AuthError:
+            if self.no_blank_central or _without_blank_central(body) == body:
+                raise
+            self.no_blank_central = True
+            return self._call(name, _without_blank_central(body))
+
+    def _call(self, name: str, body: dict[str, Any]) -> Any:
         path = ENDPOINTS[name]
         # The request and its answers, for the import log (the password is never in it).
         self.last = {"command": self.curl(path, body), "output": ""}
