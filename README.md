@@ -178,6 +178,16 @@ the history; `--only revenue,reservations` limits the steps). Don't reseed the s
 `db/seed.py --reset` afterwards: it empties all hotels, Fragata included (the next import reloads
 it).
 
+**Active bookings as a file.** `scripts/fns_active_bookings.sh usuario@servidor` (from your
+computer) writes `reservas_activas_YYYYMMDD.csv` with each active booking of the active hotels in
+the Admin page: hotel, guest name, booking number, check-in date and email, straight from the FNS
+API (reservas/listado, estado `activas`, the holder's details). FNS finds bookings by the day they
+were made, 30 days per call, so it looks at those made in the last `--created-days` (365) and keeps
+the stays that haven't ended (arriving today or later, or staying now); `--hotel CODE` limits it to
+one hotel. A hotel FNS refuses (e.g. reservations need its central ID) is named on the screen and
+left out; the others are in the file. On the server itself: `docker compose --profile fns run --rm
+-T fns-sync python -m fns_sync bookings > activas.csv`. The file has guests' emails: keep it private.
+
 **Load an earlier period** (e.g. the rest of a year before the loaded history) with `history`. It
 reads each method's whole range in one call where the API allows it (reservations and exchange
 rates in 30-day parts), and `--pause` sets the seconds between calls (default `FNS_PAUSE`, 1).

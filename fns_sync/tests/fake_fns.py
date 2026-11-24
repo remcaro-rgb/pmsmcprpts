@@ -157,8 +157,10 @@ class FakeFNS:
         created = self.today - timedelta(days=3)
         if created not in days:
             return []
-        state = {"Todas": "Confirmada", "canceladas": "Cancelada", "modificadas": "Modificada"}[f["estado"]]
-        loc = {"Todas": "4882407816", "canceladas": "4882407999", "modificadas": "4882407816"}[f["estado"]]
+        state = {"Todas": "Confirmada", "activas": "Confirmada", "canceladas": "Cancelada",
+                 "modificadas": "Modificada"}[f["estado"]]
+        loc = {"Todas": "4882407816", "activas": "4882407816", "canceladas": "4882407999",
+               "modificadas": "4882407816"}[f["estado"]]
         return {"92732": {  # the real API keys bookings by id
             "info": {"channel_id": 12, "reservation_ch_id": loc, "localizador": loc, "alojamiento_id": self.aloj,
                      "estado": state, "fecha_entrada": (self.today + timedelta(days=10)).isoformat(),
