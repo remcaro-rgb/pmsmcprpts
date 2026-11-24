@@ -8,6 +8,8 @@
     python -m fns_sync history --from 2025-01-01          # load it (up to the day before the history
                                                           # already loaded; --to to choose; --pause 30)
     python -m fns_sync status           # the last imports
+    python -m fns_sync bookings > activas.csv   # active bookings of the active hotels (name, booking
+                                                # number, check-in, email), from the FNS API
     python -m fns_sync daemon           # import every hotel daily (what the fns-sync service runs)
 
 The hotels are added in the website's Admin page (FNS import), which shows each import's progress;
@@ -324,6 +326,43 @@ def resolve(base: Config, code: str | None) -> Config:
                      "none added yet: add one in the Admin page, or set FNS_ALOJAMIENTO_ID") + ")")
 
 
+def bookings(base: Config, code: str | None, created_days: int, out: str | None) -> int:
+    """Active bookings of one hotel (--hotel) or of every active hotel in the Admin page, as CSV."""
+    from . import bookings as bk
+
+    problems: list[str] = []
+    if code:
+        configs = [resolve(base, code)]
+    elif not base.database_url:  # outside Docker without the database: the hotel in the environment
+        configs = [Config.from_env()] if base.has_hotel else []
+    else:
+        configs = []
+        with _connect(base) as conn:
+            store.ensure_schema(conn)
+            for row in store.fns_hotels(conn):  # the active (not paused) ones
+                try:
+                    configs.append(base.for_hotel(row))
+                except ValueError as e:
+                    problems.append(str(e))
+        if not configs and base.has_hotel:
+            configs = [Config.from_env()]
+    if not configs and not problems:
+        print("fns_sync: no active hotels; add one in the Admin page (FNS import)", file=sys.stderr)
+        return 2
+    rows, refused = bk.for_hotels(configs, datetime.now(configs[0].tz if configs else base.tz).date(),
+                                  max(1, created_days))
+    problems += refused
+    if out:
+        with open(out, "w", newline="", encoding="utf-8") as f:
+            n = bk.write_csv(rows, f)
+        print(f"{n} active bookings written to {out}", file=sys.stderr)
+    else:
+        bk.write_csv(rows, sys.stdout)
+    for p in problems:
+        print(f"fns_sync: not included: {p}", file=sys.stderr)
+    return 1 if problems else 0
+
+
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(prog="fns_sync", description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -342,6 +381,11 @@ def main(argv=None) -> int:
     h.add_argument("--only", help="comma-separated history steps, e.g. revenue,reservations")
     h.add_argument("--pause", type=float, help="seconds between API calls (default FNS_PAUSE, 1)")
     h.add_argument("--plan", action="store_true", help="show the calls it would make, without calling the API")
+    b = sub.add_parser("bookings", parents=[hotel],
+                       help="active bookings of the active hotels as CSV: name, booking number, check-in, email")
+    b.add_argument("--created-days", type=int, default=365,
+                   help="look at bookings made in the last N days (FNS searches by booking date; default 365)")
+    b.add_argument("--out", help="write the CSV to this file (default: the screen)")
     sub.add_parser("status")
     sub.add_parser("daemon")
     args = p.parse_args(argv)
@@ -358,6 +402,8 @@ def main(argv=None) -> int:
         if args.command == "status":
             status(base)
             return 0
+        if args.command == "bookings":
+            return bookings(base, args.hotel, args.created_days, args.out)
         cfg = resolve(base, args.hotel)
     except ValueError as e:
         print(f"fns_sync: {e}", file=sys.stderr)
