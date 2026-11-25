@@ -24,9 +24,11 @@ def test_active_bookings_as_csv():
     assert problems == []
     assert rows == [{"hotel": "FRT", "name": "Jorge Prieto", "booking_number": "4882407816",
                      "check_in": TODAY + timedelta(days=10), "email": "jorge@example.com"}]
-    # FNS searches by booking date, 30 days at a time: a year is 13 searches for the active ones.
+    # 30 days at a time: a year back by booking date (13 searches), then ahead by stay until 4 bring
+    # nothing new.
     searches = [body for path, body in fake.calls if path == "/v1/reservas/listado.php"]
-    assert len(searches) == 13 and {b["filter"]["estado"] for b in searches} == {"activas"}
+    assert len(searches) == 13 + 4 and {b["filter"]["estado"] for b in searches} == {"activas"}
+    assert searches[13]["filter"]["start_date"] == str(TODAY + timedelta(days=1))
     assert all(b["filter"]["central_id"] == 4274 and b["filter"]["verTitular"] == 1 for b in searches)
     out = io.StringIO()
     assert bookings.write_csv(rows, out) == 1
@@ -94,3 +96,27 @@ def test_the_command_covers_every_active_hotel(monkeypatch, tmp_path, capsys):
             assert not any(line.startswith("BKP,") for line in lines)
         finally:
             conn.execute("DELETE FROM pms.fns_hotels WHERE alojamiento_id IN (%s, %s)", (ALOJ, ALOJ + 1))
+
+
+def test_future_windows_find_bookings_by_their_stay(monkeypatch):
+    # After today FNS answers by stay: a booking made long ago only shows up there.
+    future = {"9": {"info": {"localizador": "F9", "estado": "Confirmada", "fecha_entrada": "2027-02-10",
+                             "fecha_salida": "2027-02-12"}, "titular": {"nombre": "Eva", "email": "eva@x.com"}}}
+    long_stay = {"7": {"info": {"localizador": "L7", "estado": "Confirmada", "fecha_entrada": "2025-07-03",
+                                "fecha_salida": "2027-12-31"}, "cliente": {"nombre": "Luz"}}}
+    asked = []
+
+    def call(name, body):
+        start = date.fromisoformat(body["filter"]["start_date"])
+        asked.append(start)
+        if start <= TODAY:
+            return None
+        return {**long_stay, **(future if start <= date(2027, 2, 10) else {})}
+
+    c = client(CFG, FakeFNS(ALOJ, TODAY))
+    monkeypatch.setattr(c, "call", call)
+    rows = bookings.active_bookings(CFG, c, TODAY, 30)
+    assert [r["booking_number"] for r in rows] == ["L7", "F9"]
+    # The long stay comes back every time, but only new bookings keep the search going.
+    future_asks = [d for d in asked if d > TODAY]
+    assert len(future_asks) == 1 + 4 and max(future_asks) < date(2027, 12, 31)
