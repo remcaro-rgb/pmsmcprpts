@@ -181,10 +181,11 @@ it).
 **Active bookings as a file.** `scripts/fns_active_bookings.sh usuario@servidor` (from your
 computer) writes `reservas_activas_YYYYMMDD.csv` with each active booking of the active hotels in
 the Admin page: hotel, guest name, booking number, check-in date and email, straight from the FNS
-API (reservas/listado, estado `activas`, the holder's details). FNS finds bookings by the day they
-were made, 30 days per call, so it looks at those made in the last `--created-days` (365) and keeps
-the stays that haven't ended (arriving today or later, or staying now); `--hotel CODE` limits it to
-one hotel. A hotel FNS refuses (e.g. reservations need its central ID) is named on the screen and
+API (reservas/listado, estado `activas`, the holder's details). FNS takes 30 days per call, and
+finds bookings by the day they were made for past dates but by their stay for future ones: it looks
+at those made in the last `--created-days` (365), then walks forward from today until 4 windows in a
+row bring no new booking, and keeps the stays that haven't ended (arriving today or later, or staying
+now); `--hotel CODE` limits it to one hotel. A hotel FNS refuses (e.g. reservations need its central ID) is named on the screen and
 left out; the others are in the file. On the server itself: `docker compose --profile fns run --rm
 -T fns-sync python -m fns_sync bookings > activas.csv`. The file has guests' emails: keep it private.
 

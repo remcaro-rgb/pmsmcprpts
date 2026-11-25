@@ -6,8 +6,9 @@
 #   scripts/fns_active_bookings.sh usuario@servidor --hotel FRA     # one hotel
 #   scripts/fns_active_bookings.sh usuario@servidor --created-days 730
 #
-# FNS finds bookings by the day they were made (30 days per call), so it looks at those made in the
-# last --created-days (365) and keeps the ones whose stay hasn't ended. PMS_DIR sets where the
+# FNS takes 30 days per call: up to today it finds bookings by the day they were made (the last
+# --created-days, 365), after today by their stay (until 4 windows in a row bring nothing new). It
+# keeps the stays that haven't ended. PMS_DIR sets where the
 # installation is on the server (default /opt/pmsmcprpts). The file has guests' emails: keep it
 # private.
 set -euo pipefail

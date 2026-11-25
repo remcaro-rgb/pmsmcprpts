@@ -384,7 +384,8 @@ def main(argv=None) -> int:
     b = sub.add_parser("bookings", parents=[hotel],
                        help="active bookings of the active hotels as CSV: name, booking number, check-in, email")
     b.add_argument("--created-days", type=int, default=365,
-                   help="look at bookings made in the last N days (FNS searches by booking date; default 365)")
+                   help="look at bookings made in the last N days (default 365); future stays are found "
+                        "by searching ahead from today")
     b.add_argument("--out", help="write the CSV to this file (default: the screen)")
     sub.add_parser("status")
     sub.add_parser("daemon")
